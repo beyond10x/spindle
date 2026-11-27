@@ -1379,8 +1379,11 @@ impl Host {
     /// lists them, and the cursor after the last of them ([`Page`]); with `after` at the end,
     /// none and the same cursor. Each component's store is read only after the position the
     /// cursor marks for it ([`Store::events_after`]), so a read with the cursor at the end reads
-    /// no event, however many the stores hold. Where a store was replaced since the cursor was
-    /// taken, by a reset or because the host was opened again, it is read from its start once.
+    /// no event, however many the stores hold. Where a reset replaced a store since the cursor
+    /// was taken, it is read from its start once. A cursor taken before the host was opened again
+    /// reads each store after its position, whatever sequences this run's commands take, so on a
+    /// fixed clock too; a store whose head is before that position (a memory store, empty at the
+    /// restart) is read from its start ([`Store::events_head`]).
     ///
     /// # Errors
     /// [`HostError::Cursor`] where `after` names a component this host does not run, and
@@ -1391,19 +1394,27 @@ impl Host {
             .iter()
             .map(|(name, component)| (name.clone(), component.store.generation()))
             .collect::<Vec<_>>();
-        let components = &mut self.components;
-        range::range(self.run, &stores, after, limit, |name, position, wanted| {
-            Ok(store_of(components, name)?.events_after(position, wanted)?)
-        })
+        let components = std::cell::RefCell::new(&mut self.components);
+        range::range(
+            self.run,
+            &stores,
+            after,
+            limit,
+            |name, position, wanted| {
+                Ok(store_of(&mut components.borrow_mut(), name)?.events_after(position, wanted)?)
+            },
+            |name| Ok(store_of(&mut components.borrow_mut(), name)?.events_head()?),
+        )
     }
 
     /// The cursor after the last event published, read without reading any event: each
     /// component's store answers only the position it is at ([`Store::events_head`]). A read after
     /// it ([`Host::published_after`]) answers every event published after this call, and none
-    /// before, as long as the cursor is read in this run and every store is the one it was taken
-    /// from; otherwise the stores are read from their start once, and the events of the commands
-    /// run before the last one this run ran, or, before the first, before the civil time of the
-    /// call, are skipped.
+    /// before. Read in a later run (after a restart), it answers what was committed after each
+    /// store's head, whatever sequences that run's commands take. Where a reset in this run
+    /// replaced a store since, that store is read from its start once, and the events of the
+    /// commands run before the last one this run ran, or, before the first, before the civil
+    /// time of the call, are skipped.
     ///
     /// # Errors
     /// [`HostError::Store`] where a store cannot be read.

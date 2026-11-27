@@ -171,12 +171,19 @@ impl Reader {
             stores.push((name.clone(), generation));
             handles.insert(name.as_str(), reading);
         }
-        super::range::range(self.run, &stores, after, limit, |name, position, wanted| {
-            let reading = handles
+        let handle = |name: &str| {
+            handles
                 .get(name)
-                .ok_or_else(|| HostError::Unsupported(format!("{name} is not running")))?;
-            Ok(reading.events_after(position, wanted)?)
-        })
+                .ok_or_else(|| HostError::Unsupported(format!("{name} is not running")))
+        };
+        super::range::range(
+            self.run,
+            &stores,
+            after,
+            limit,
+            |name, position, wanted| Ok(handle(name)?.events_after(position, wanted)?),
+            |name| Ok(handle(name)?.events_head()?),
+        )
     }
 
     /// The cursor after the last event published, as [`super::Host::published_head`] answers

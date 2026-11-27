@@ -21,17 +21,19 @@ const VERSION: u64 = 1;
 ///
 /// It holds the last event answered, by the sequence its command was attributed with, its
 /// component and its place among that command's events in that component's store: what the
-/// whole list orders the events by ([`super::Host::published`]). An event after it in that
-/// order is after the cursor, whichever process answered it; so a cursor taken before a restart
-/// or a reset still resumes after its last event, as long as the civil time does not go back
-/// between two processes (the sequences are civil time).
+/// whole list orders the events by ([`super::Host::published`]). Within one run, an event after
+/// it in that order is after the cursor.
 ///
 /// It also marks, for each component, the position of its store up to which every event is
 /// answered, and the run of the host and the store it was taken from. A read from the same store
-/// of the same run reads only after that position. Where the store was replaced since (a reset
-/// opens an empty memory or SQLite store, whose positions start over) or the host was opened
-/// again, the store is read from its start once and its events up to the last one answered are
-/// skipped; the cursor answered then marks the store as it is now.
+/// of the same run reads only after that position. Where this run replaced the store since (a
+/// reset opens an empty memory or SQLite store), the store is read from its start once and its
+/// events up to the last one answered are skipped, by the sequences, which grow within a run.
+/// Where the host was opened again (a restart), each store is read after the position marked for
+/// it, whatever sequences the new run's commands take, so on a fixed clock too: a store that kept
+/// its writes (SQLite, PostgreSQL) goes on from them, and a store whose head is before that
+/// position (a memory store, empty at the restart) is read from its start. The cursor answered
+/// then marks the stores as they are now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cursor {
     /// The host run the marks were taken in; `0` for none.
@@ -205,14 +207,133 @@ fn answered(keyed: &Keyed, last: Option<&Key>) -> bool {
     last.is_some_and(|last| keyed.key <= *last)
 }
 
+/// `committed`, an event of `component`'s store read after the event whose key carried
+/// `sequence` and `ordinal`, with where it stands; `sequence` and `ordinal` become its key's.
+fn placed(component: &str, sequence: &mut u64, ordinal: &mut u64, committed: Committed) -> Keyed {
+    let command = match committed.origin {
+        Some(origin) => {
+            if origin.sequence > *sequence {
+                *sequence = origin.sequence;
+                *ordinal = 0;
+            }
+            origin.command
+        }
+        None => String::new(),
+    };
+    *ordinal = ordinal.saturating_add(1);
+    Keyed {
+        key: Key {
+            sequence: *sequence,
+            component: component.to_owned(),
+            ordinal: *ordinal,
+        },
+        position: committed.position,
+        published: Published {
+            component: component.to_owned(),
+            command,
+            event: committed.event,
+        },
+    }
+}
+
+/// How a read resumes a cursor of another run ([`resumed`]).
+enum Resumed {
+    /// The rest of the write the cursor answered in part, if any, and the cursor of this run
+    /// after it, which reads on.
+    Within(Vec<Published>, Cursor),
+    /// The page answered: more of the write the cursor answered in part is left than the limit.
+    Part(Page),
+}
+
+/// Where a read in `run` resumes `after`, a cursor of another run (taken before a restart, or
+/// [`Cursor::start`]), from the stores `stores` names, each by its component and generation:
+/// `read` answers a component's events as [`range`]'s does, and `head` a component's head
+/// ([`spindle_kernel::Store::events_head`]).
+///
+/// Each store is read on after the position the cursor marks for it, whatever sequences this
+/// run's commands take: a store that keeps its writes across a restart (SQLite, PostgreSQL) goes
+/// on from the positions it kept. A store whose head is before that position holds no write
+/// there (a memory store, empty at the restart) and is read from its start. Every event after
+/// those positions is after the cursor, but for the write the cursor answered in part: it is read
+/// again, its events keyed as the cursor's run keyed them, and those up to the cursor's last are
+/// skipped. The cursor of this run starts after that write, with no event answered in this run.
+fn resumed(
+    (run, limit): (u64, usize),
+    stores: &[(String, u64)],
+    after: &Cursor,
+    read: &mut impl FnMut(&str, u64, usize) -> Result<Vec<Committed>, HostError>,
+    head: &mut impl FnMut(&str) -> Result<u64, HostError>,
+) -> Result<Resumed, HostError> {
+    let mut rest = Vec::new();
+    let mut marks = BTreeMap::new();
+    for (component, generation) in stores {
+        let kept = match after.marks.get(component) {
+            Some(mark) if mark.position == 0 || head(component)? >= mark.position => Some(*mark),
+            _ => None,
+        };
+        let mut position = kept.map_or(0, |mark| mark.position);
+        if let (Some(mark), Some(last)) = (kept, after.last.as_ref())
+            && last.component == *component
+            && (mark.sequence, mark.ordinal) < (last.sequence, last.ordinal)
+        {
+            let (mut sequence, mut ordinal) = (mark.sequence, mark.ordinal);
+            let write = read(component, mark.position, 1)?
+                .into_iter()
+                .map(|committed| placed(component, &mut sequence, &mut ordinal, committed))
+                .collect::<Vec<_>>();
+            // The write that holds the cursor's last event, as the cursor's run keyed it.
+            if write.iter().any(|keyed| keyed.key == *last) {
+                let written_at = write.first().map_or(position, |keyed| keyed.position);
+                let mut left = write
+                    .into_iter()
+                    .filter(|keyed| keyed.key > *last)
+                    .collect::<Vec<_>>();
+                if left.len() > limit {
+                    left.truncate(limit);
+                    let next = Cursor {
+                        run: after.run,
+                        last: left
+                            .last()
+                            .map(|keyed| keyed.key.clone())
+                            .or_else(|| after.last.clone()),
+                        marks: after.marks.clone(),
+                    };
+                    return Ok(Resumed::Part(Page {
+                        events: left.into_iter().map(|keyed| keyed.published).collect(),
+                        next,
+                    }));
+                }
+                position = written_at;
+                rest.extend(left.into_iter().map(|keyed| keyed.published));
+            }
+        }
+        marks.insert(
+            component.clone(),
+            Mark {
+                position,
+                ..Mark::start(*generation)
+            },
+        );
+    }
+    Ok(Resumed::Within(
+        rest,
+        Cursor {
+            run,
+            last: None,
+            marks,
+        },
+    ))
+}
+
 /// The cursor after the last event published, of the stores `stores` names, each by its
 /// component, the generation of the store held for it and its head ([`Store::events_head`]),
 /// read once `sequence` ([`super::head_sequence`]) was the sequence of the last command started,
 /// and in `run`: every event of an earlier command is at or before its store's head, and is
 /// before the cursor; every event after a store's head is after it, whatever its command. The
 /// cursor marks each store at its head, so a read with it reads only what was committed since.
-/// Where a store is read from its start (another run, a store replaced), the events of the
-/// commands before `sequence` are skipped, and those of later commands answered.
+/// Where this run replaced a store since, it is read from its start, the events of the commands
+/// before `sequence` are skipped, and those of later commands answered; another run reads each
+/// store after its head ([`range`]).
 ///
 /// [`Store::events_head`]: spindle_kernel::Store::events_head
 pub(super) fn head(run: u64, stores: &[(String, u64, u64)], sequence: u64) -> Cursor {
@@ -253,17 +374,22 @@ pub(super) fn head(run: u64, stores: &[(String, u64, u64)], sequence: u64) -> Cu
 /// holds: the events a page answers are the first `limit` of those, in the order published, and
 /// an event a store was not read as far as follows `limit` of that store's own, so no page of
 /// the whole list skips it. A store whose first events after its mark were answered already,
-/// in part of a write or before a restart, is read on past them.
+/// in part of a write or before a reset, is read on past them.
+///
+/// A cursor of another run (taken before a restart) is resumed by store position, whatever
+/// sequences this run's commands take ([`resumed`]): `head` answers a component's head
+/// ([`spindle_kernel::Store::events_head`]), read only for such a cursor.
 ///
 /// # Errors
 /// [`HostError::Cursor`] where `after` names a component `stores` does not, before anything is
-/// read; any error of `read`.
+/// read; any error of `read` or `head`.
 pub(super) fn range(
     run: u64,
     stores: &[(String, u64)],
     after: &Cursor,
     limit: usize,
     mut read: impl FnMut(&str, u64, usize) -> Result<Vec<Committed>, HostError>,
+    mut head: impl FnMut(&str) -> Result<u64, HostError>,
 ) -> Result<Page, HostError> {
     let runs = |name: &str| stores.iter().any(|(component, _)| component == name);
     if after
@@ -276,12 +402,34 @@ pub(super) fn range(
             "the cursor names a component this run does not have".to_owned(),
         ));
     }
+    if after.run == run {
+        return within(run, stores, after, limit, &mut read);
+    }
+    match resumed((run, limit), stores, after, &mut read, &mut head)? {
+        Resumed::Part(page) => Ok(page),
+        Resumed::Within(mut rest, cursor) => {
+            let mut page = within(run, stores, &cursor, limit - rest.len(), &mut read)?;
+            rest.append(&mut page.events);
+            page.events = rest;
+            Ok(page)
+        }
+    }
+}
+
+/// [`range`] for `after`, a cursor of this run, `run`.
+fn within(
+    run: u64,
+    stores: &[(String, u64)],
+    after: &Cursor,
+    limit: usize,
+    read: &mut impl FnMut(&str, u64, usize) -> Result<Vec<Committed>, HostError>,
+) -> Result<Page, HostError> {
     let mut read_from = Vec::with_capacity(stores.len());
     for (component, generation) in stores {
         let start = after
             .marks
             .get(component)
-            .filter(|mark| after.run == run && mark.generation == *generation)
+            .filter(|mark| mark.generation == *generation)
             .copied()
             .unwrap_or_else(|| Mark::start(*generation));
         let mut sequence = start.sequence;
@@ -294,31 +442,8 @@ pub(super) fn range(
             let committed = read(component, position, wanted)?;
             let answered_all = committed.len() < wanted;
             for committed in committed {
-                let command = match committed.origin {
-                    Some(origin) => {
-                        if origin.sequence > sequence {
-                            sequence = origin.sequence;
-                            ordinal = 0;
-                        }
-                        origin.command
-                    }
-                    None => String::new(),
-                };
-                ordinal = ordinal.saturating_add(1);
-                position = committed.position;
-                let next = Keyed {
-                    key: Key {
-                        sequence,
-                        component: component.clone(),
-                        ordinal,
-                    },
-                    position,
-                    published: Published {
-                        component: component.clone(),
-                        command,
-                        event: committed.event,
-                    },
-                };
+                let next = placed(component, &mut sequence, &mut ordinal, committed);
+                position = next.position;
                 if !answered(&next, after.last.as_ref()) {
                     fresh += 1;
                 }

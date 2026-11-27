@@ -59,6 +59,17 @@ are Spindle's releases.
   differ only in their header. Its UI change (an overlay reading its opener's params) does not
   reach Spindle, which builds none of ESS's UI crates (`story:ess-pin-0-99-2`).
 
+### Fixed
+
+- A `GET /api/events` cursor taken before a restart reads every event the restarted host
+  commits, once each, where on a fixed clock (`run --clock <at>` with `--state`) it skipped those
+  whose command took a sequence the cursor had passed, without an error; a cursor from
+  `published_head` read the events before the restart again. A cursor from another run reads each
+  store after the position it marks, as the history cursor does: a store that kept its writes
+  (SQLite, PostgreSQL) goes on from them, a store whose head is before that position (a memory
+  store) is read from its start, and the rest of a write the cursor answered in part is read once
+  first. A cursor from the same run reads as before (`story:events-cursor-across-restart`).
+
 ## [0.23.0] - 2026-11-27
 
 ### Added
