@@ -1,0 +1,21 @@
+format: ess/34
+system: stack
+version: v1
+summary: Racks and the items kept on them, each item with optional values of several shapes.
+domains:
+  - stack.items
+components:
+  - component: store
+    summary: Adds racks and items.
+    owns:
+      domains:
+        - stack.items
+    accepts:
+      commands:
+        - stack.items.AddRack
+        - stack.items.AddItem
+    publishes:
+      events:
+        - stack.items.RackAdded
+        - stack.items.ItemAdded
+    reached_by: in_process

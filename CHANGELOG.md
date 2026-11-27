@@ -168,6 +168,13 @@ are Spindle's releases.
 
 ### Fixed
 
+- `conform`, `run --scenario` and `spindle_conformance::HostTarget` answer an `Optional` view
+  field the row never wrote as ESS's interpreter does: `null`, unless the field carries
+  `presence: omitted_when_absent`, and `null` for a field read through a reference that names no
+  row, where the field was left out unless it carried `null_when_absent`, so a scenario's view
+  check disagreed with ESS on the same state. A served view still leaves such a field out, as
+  ESS's published contract declares it optional and not nullable
+  (`story:view-rows-absent-optional-fields`).
 - `run --scenario` names the divergent step of a scenario whose command returns a one-time
   response (`one_time_response:`), where it ended in an error: each prefix the bisection replays
   keeps only the one-time event windows anchored to its own steps, the origins it invokes and the
