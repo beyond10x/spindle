@@ -5,10 +5,11 @@
 //! wait has a hard bound. Each process gets its own `TMPDIR` inside the case's directory, so the
 //! state directory it creates can be looked for after it ends.
 //!
-//! Each case starts its processes on a loopback host of its own (`127.53.0.<n>`, [`host_of`]) at
-//! ports it holds on `127.0.0.1` until it ends ([`ports`]): no other process can take a port
-//! between the case's choice and the process's bind, and a connect, which leaves from
-//! `127.0.0.1`, never reaches itself.
+//! On Linux each case starts its processes on a loopback host of its own (`127.53.0.<n>`,
+//! [`host_of`]) at ports it holds on `127.0.0.1` until it ends ([`ports`]): no other process can
+//! take a port between the case's choice and the process's bind, and a connect, which leaves from
+//! `127.0.0.1`, never reaches itself. Elsewhere only `127.0.0.1` is a loopback address (macOS
+//! configures no other on `lo0`), so the cases listen there at ports picked and let go.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -56,7 +57,7 @@ fn environment(name: &str) -> PathBuf {
     root().join("examples/environments").join(name)
 }
 
-/// Every case of this file, in order: the `n`-th listens on `127.53.0.<n>`.
+/// Every case of this file, in order: on Linux the `n`-th listens on `127.53.0.<n>`.
 const CASES: [&str; 11] = [
     "each_case_listens_on_a_loopback_host_of_its_own",
     "three_processes_play_the_match_one_process_plays_at_the_tested_speed",
@@ -71,22 +72,26 @@ const CASES: [&str; 11] = [
     "a_connection_that_opens_and_closes_before_the_table_does_not_end_a_player",
 ];
 
-/// The loopback host the processes of `case` listen on.
+/// The loopback host the processes of `case` listen on: its own on Linux, `127.0.0.1` elsewhere.
 fn host_of(case: &str) -> Ipv4Addr {
     let place = CASES
         .iter()
         .position(|listed| *listed == case)
         .unwrap_or_else(|| panic!("{case} is not in CASES"));
-    Ipv4Addr::new(
-        127,
-        53,
-        0,
-        u8::try_from(place + 1).expect("fewer than 255 cases"),
-    )
+    if cfg!(target_os = "linux") {
+        Ipv4Addr::new(
+            127,
+            53,
+            0,
+            u8::try_from(place + 1).expect("fewer than 255 cases"),
+        )
+    } else {
+        Ipv4Addr::LOCALHOST
+    }
 }
 
 /// The addresses one case hands its processes, each on the case's own host, at a port held on
-/// `127.0.0.1` for as long as this lives.
+/// `127.0.0.1` for as long as this lives where that host is not `127.0.0.1` itself.
 struct Ports {
     addresses: Vec<SocketAddr>,
     _held: Vec<TcpListener>,
@@ -94,14 +99,18 @@ struct Ports {
 
 /// `count` addresses for the processes of `case`.
 fn ports(case: &str, count: usize) -> Ports {
-    let host = IpAddr::V4(host_of(case));
-    let held = (0..count)
+    let own = host_of(case);
+    let host = IpAddr::V4(own);
+    let mut held = (0..count)
         .map(|_| TcpListener::bind("127.0.0.1:0").expect("a loopback port"))
         .collect::<Vec<_>>();
     let addresses = held
         .iter()
         .map(|listener| SocketAddr::new(host, listener.local_addr().expect("bound").port()))
         .collect();
+    if own == Ipv4Addr::LOCALHOST {
+        held.clear();
+    }
     Ports {
         addresses,
         _held: held,
@@ -446,8 +455,9 @@ fn each_case_listens_on_a_loopback_host_of_its_own() {
     listed.sort_unstable();
     cases.sort_unstable();
     assert_eq!(cases, listed, "CASES lists every case of this file");
+    let linux = cfg!(target_os = "linux");
     let hosts = CASES.map(host_of);
-    for (case, host) in CASES.iter().zip(&hosts) {
+    for (case, host) in CASES.iter().zip(&hosts).filter(|_| linux) {
         assert!(
             host.is_loopback() && *host != Ipv4Addr::LOCALHOST,
             "{case} listens on {host}, which is not a loopback host of its own"
@@ -465,7 +475,7 @@ fn each_case_listens_on_a_loopback_host_of_its_own() {
         panic!("two addresses");
     };
     assert!(
-        TcpListener::bind((Ipv4Addr::LOCALHOST, listen.port())).is_err(),
+        !linux || TcpListener::bind((Ipv4Addr::LOCALHOST, listen.port())).is_err(),
         "the case holds 127.0.0.1:{}",
         listen.port()
     );

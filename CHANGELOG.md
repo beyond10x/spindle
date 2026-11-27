@@ -165,10 +165,10 @@ are Spindle's releases.
   (`story:environment-binds-external-decisions`).
 - `play --component` no longer links a peer to itself: a connect to a peer's port that nothing
   listens on yet can leave from that same port and reach itself, and the process then failed on
-  its own `hello`. `spindle_host::Host::connect` refuses such a
-  connection, naming the address, and the caller tries again until the peer listens; the new
-  `Host::link` makes an open connection the link to a peer, with the same refusal
-  (`story:peer-connect-test-steady`).
+  its own `hello`. `spindle_host::Host::connect` refuses such a connection, naming the address,
+  and closes it with a reset, so the peer can listen on that port at once; the caller tries again
+  until the peer listens. The new `Host::link` makes an open connection the link to a peer, with
+  the same refusal (`story:peer-connect-test-steady`).
 
 ## [0.22.0] - 2026-11-27
 

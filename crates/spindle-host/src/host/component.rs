@@ -288,6 +288,15 @@ impl Link {
 
 type Shared = Arc<Mutex<Link>>;
 
+/// Closes `stream` with a reset (`SO_LINGER` 0) rather than a `FIN`: a connection that reached
+/// itself and closed with a `FIN` stays in `TIME_WAIT` on its own address for a minute, longer
+/// than a component waits for its peers, and the peer that starts there later cannot listen.
+fn close_with_reset(stream: TcpStream) {
+    #[cfg(unix)]
+    let _ = rustix::net::sockopt::set_socket_linger(&stream, Some(Duration::ZERO));
+    drop(stream);
+}
+
 fn held(link: &Shared) -> MutexGuard<'_, Link> {
     link.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
@@ -551,8 +560,8 @@ impl Host {
     /// on it; every event bound to `peer` is carried on it.
     ///
     /// A connection whose local and peer address are one reached itself, as a connect to a port
-    /// nothing listens on yet can, leaving from that same port: it is closed and links nothing,
-    /// so the caller tries again.
+    /// nothing listens on yet can, leaving from that same port: it is closed with a reset and
+    /// links nothing, so the caller tries again, and the peer can listen on that port at once.
     ///
     /// # Errors
     /// [`HostError::Peer`] when the connection reached itself or the `hello` cannot be written;
@@ -567,7 +576,7 @@ impl Host {
             .local_addr()
             .map_err(|error| failed(error.to_string()))?;
         if stream.peer_addr().is_ok_and(|address| address == local) {
-            let _ = stream.shutdown(Shutdown::Both);
+            close_with_reset(stream);
             return Err(failed(format!(
                 "at {local} reached itself: nothing listens there yet"
             )));
