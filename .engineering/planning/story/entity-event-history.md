@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:entity-event-history
 kind: story
-status: active
+status: implemented
 title: A consumer reads the committed events of one entity instance
 relations:
 - decomposes: epic:split-run
@@ -52,10 +52,11 @@ scope:
   path: crates/spindle-telemetry/src/kernel.rs
 - confidence: inferred
   path: crates/spindle-wasm/src/worker.rs
-revision: 12
+revision: 13
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T07:28:36Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"review_outcome":8}}}
 - {from: "proposed", to: "active", at: "2026-11-27T07:28:36Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "active", to: "implemented", at: "2026-11-27T09:53:22Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"test_result":1,"review_outcome":9}}}
 ---
 # A consumer reads the committed events of one entity instance
 

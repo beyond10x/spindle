@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:health-and-graceful-drain
 kind: story
-status: active
+status: implemented
 title: A served run answers liveness and readiness, and drains on SIGTERM
 summary: Liveness and readiness routes, readiness after the seed, and SIGTERM answering the requests in flight before exit.
 relations:
@@ -49,10 +49,11 @@ scope:
   path: website/docs/concepts/observe.md
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 28
+revision: 29
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T07:28:35Z", actor: "human:operator", revision: 27, decided_on: {"recorded":{"review_outcome":8}}}
 - {from: "proposed", to: "active", at: "2026-11-27T07:28:36Z", actor: "human:operator", revision: 28, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "active", to: "implemented", at: "2026-11-27T09:53:23Z", actor: "human:operator", revision: 29, decided_on: {"recorded":{"test_result":1,"review_outcome":9}}}
 ---
 # A served run answers liveness and readiness, and drains on SIGTERM
 

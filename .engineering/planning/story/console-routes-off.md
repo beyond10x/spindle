@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:console-routes-off
 kind: story
-status: active
+status: implemented
 title: An exposed run serves no console route unless asked
 summary: One flag or environment entry turns /api/reset, /api/events, /api/model and /api/served off on every listener.
 relations:
@@ -31,10 +31,11 @@ scope:
   path: crates/spindle-ingress/src/surface.rs
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 11
+revision: 12
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T07:28:34Z", actor: "human:operator", revision: 10, decided_on: {"recorded":{"review_outcome":8}}}
 - {from: "proposed", to: "active", at: "2026-11-27T07:28:34Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "active", to: "implemented", at: "2026-11-27T09:53:22Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"test_result":1,"review_outcome":9}}}
 ---
 # An exposed run serves no console route unless asked
 

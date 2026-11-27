@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-27T09:53:23Z",
+  "actor": "human:operator",
+  "artifact": "story:one-time-response-admission",
+  "kind": "story",
+  "revision": 13,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/45972752828 (PR 94 Gate, PostgreSQL, macOS green on deaa09c2b; merged 97dedd3bb165248e6acfc61ad4b5c654c9ebed30)"
+  }
+}
