@@ -304,9 +304,11 @@ fn suite(ir: &EssIr, id: &ScenarioId, scenario: ConformanceScenario) -> Result<C
 /// ESS attaches a trace to the whole scenario: every window is anchored to one of its operations
 /// and every origin is invoked by one of its sends, so a prefix that keeps the whole trace is
 /// refused (`InvalidOneTimeResponse`). The prefix keeps the windows anchored to its own steps, the
-/// origins whose command it invokes and the required origins whose outcome it selects, as ESS
-/// would attach them to these steps; with no required origin left it carries no trace, as ESS
-/// attaches none.
+/// origins whose command it invokes and the required origins whose outcome it selects; with no
+/// required origin left it carries no trace, as ESS attaches none. Each kept window and the event
+/// catalog keep the whole scenario's `within_ms`, not the longest wait of the prefix's own steps
+/// that ESS would take attaching a trace to the prefix alone: every replay of the bisection then
+/// observes events under one bound, the one the whole scenario is replayed under.
 fn prefix(scenario: &ConformanceScenario, end: usize) -> ConformanceScenario {
     let steps = scenario.steps[..end].to_vec();
     let one_time_response = scenario.one_time_response.as_ref().and_then(|trace| {
