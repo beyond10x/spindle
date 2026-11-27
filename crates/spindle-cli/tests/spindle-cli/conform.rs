@@ -889,3 +889,18 @@ fn conform_runs_an_outcome_with_a_conversion() {
         ],
     );
 }
+
+/// `conform` on a specification whose outcomes read a value through two rows: the row the input
+/// names, then the row a field of it names, one of them owned by another component
+/// (`story:value-source-through-two-rows`).
+#[test]
+fn conform_runs_a_value_source_through_two_rows() {
+    conform_runs_every_scenario_selecting(
+        "crates/spindle-kernel/tests/fixtures/related-chain",
+        &[
+            "forge.plant.CreateInstance/created",
+            "forge.plant.BadgeWorkload/issued",
+            "forge.plant.LeaseInstance/leased",
+        ],
+    );
+}

@@ -3,7 +3,8 @@
 //!
 //! Only the sources Spindle's own specification and the `rally` example use,
 //! `{append: input.<path>}`, and a field or the state of the row an input field names
-//! (`{related: {via: input.<field>, field: …}}`), and what a set outcome changed
+//! (`{related: {via: input.<field>, field: …}}`), or of the row a reference of that row names
+//! (`{related: {via: [input.<field>, <field>], field: …}}`), and what a set outcome changed
 //! (`{count: changed}`, `{changed: …}`), a value an expression computes (`{expr: …}`, outside
 //! an error), a field of the response the run answers (`{response: …}`, in an event payload),
 //! the first element of a list of references that names no row (`{missing: input.<list>}`),
@@ -18,9 +19,9 @@ use std::collections::BTreeMap;
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::{
-    EntityHandle, EventHandle, ResolvedCommand, ResolvedCondition, ResolvedFallback,
-    ResolvedOutcome, ResolvedPayloadField, ResolvedPayloadValue, ResolvedRelatedVia,
-    ResolvedRowSelection, ResolvedTypeRef,
+    EntityHandle, EventHandle, ResolvedCommand, ResolvedCondition, ResolvedEntity,
+    ResolvedFallback, ResolvedOutcome, ResolvedPayloadField, ResolvedPayloadValue,
+    ResolvedRelatedHop, ResolvedRelatedVia, ResolvedRowSelection, ResolvedTypeRef,
 };
 use ess_domain::QualifiedName;
 use ess_domain::types::Primitive;
@@ -39,10 +40,12 @@ use crate::store::{Row, Store};
 pub(crate) type Related = BTreeMap<(String, String), Option<Row>>;
 
 /// Reads, before anything is selected or written, every row a `{related: {via: input.<field>,
-/// …}}` value of `command` names, in any outcome, struct members included: what those values read
-/// is the store as it was before the outcome (ESS `interpret::execute::determined::Reads`, whose
-/// read authority is the original store). An input that names no row, being absent or `null`,
-/// reads nothing.
+/// …}}` value of `command` names, in any outcome, struct members included, and through a chain
+/// (`via: [input.<field>, <field>]`, ess/22) every row the reference a row read holds names in
+/// turn: what those values read is the store as it was before the outcome (ESS
+/// `interpret::execute::determined::Reads`, whose read authority is the original store). An input
+/// that names no row, being absent or `null`, reads nothing, and so does a row that is not held or
+/// a reference a row holds none in.
 ///
 /// # Errors
 /// [`ExecuteError::Store`] where the store does not read.
@@ -52,9 +55,10 @@ pub(crate) fn related(
     input: &Map<String, Value>,
     store: &mut dyn Store,
 ) -> Result<Related, ExecuteError> {
+    type Read<'f> = (&'f str, &'f [ResolvedRelatedHop], &'f EntityHandle);
     fn reads<'f>(
         fields: impl IntoIterator<Item = &'f ResolvedPayloadField>,
-        found: &mut Vec<(&'f str, &'f EntityHandle)>,
+        found: &mut Vec<Read<'f>>,
     ) {
         for field in fields {
             match &field.value {
@@ -69,11 +73,27 @@ pub(crate) fn related(
                     through,
                     entity,
                     ..
-                } if through.is_empty() => found.push((field, entity)),
+                } => found.push((field, through, entity)),
                 ResolvedPayloadValue::Struct { fields } => reads(fields, found),
                 _ => {}
             }
         }
+    }
+    /// The row of `entity` `identity` names, from `related` where it is read already, else from
+    /// the store, kept in `related`.
+    fn load(
+        related: &mut Related,
+        store: &mut dyn Store,
+        entity: &str,
+        identity: &Value,
+    ) -> Result<Option<Row>, ExecuteError> {
+        let key = (entity.to_owned(), identity.to_string());
+        if let Some(row) = related.get(&key) {
+            return Ok(row.clone());
+        }
+        let row = store.load(entity, identity)?.map(|stored| stored.row);
+        related.insert(key, row.clone());
+        Ok(row)
     }
     let mut found = Vec::new();
     for outcome in &command.outcomes {
@@ -87,17 +107,24 @@ pub(crate) fn related(
         );
     }
     let mut related = Related::new();
-    for (field, entity) in found {
-        let Some(identity) = read_input(input, field) else {
+    for (field, through, last) in found {
+        let Some(mut address) = read_input(input, field) else {
             continue;
         };
-        let entity = ir.entity(entity).name.to_string();
-        let key = (entity, identity.to_string());
-        if related.contains_key(&key) {
-            continue;
+        let (first, named) = chain(through, last);
+        let mut entity = ir.entity(first);
+        let mut row = load(&mut related, store, &entity.name.to_string(), &address)?;
+        for (hop, next) in through.iter().zip(named) {
+            let Some(held) = row
+                .as_ref()
+                .and_then(|row| reference(entity, hop, &address, row))
+            else {
+                break;
+            };
+            entity = ir.entity(next);
+            address = held;
+            row = load(&mut related, store, &entity.name.to_string(), &address)?;
         }
-        let row = store.load(&key.0, &identity)?.map(|stored| stored.row);
-        related.insert(key, row);
     }
     for (field, entity) in missing_reads(command) {
         let Some(Value::Array(elements)) = read_input(input, field) else {
@@ -114,6 +141,41 @@ pub(crate) fn related(
         }
     }
     Ok(related)
+}
+
+/// The entities a related read through `through` names, ending at `last`: the one the first
+/// reference names, and the ones the references that follow name in turn. Each hop's entity is the
+/// one whose row holds its field (ESS `ResolvedRelatedHop::entity`), the one the reference before
+/// it names.
+fn chain<'f>(
+    through: &'f [ResolvedRelatedHop],
+    last: &'f EntityHandle,
+) -> (&'f EntityHandle, impl Iterator<Item = &'f EntityHandle>) {
+    let first = through.first().map_or(last, |hop| &hop.entity);
+    let named = through
+        .iter()
+        .skip(1)
+        .map(|hop| &hop.entity)
+        .chain(std::iter::once(last));
+    (first, named)
+}
+
+/// The identity the reference `hop` holds in `row`, the row of `entity` at `address`: the address
+/// itself where `hop` is the identity field, as ESS reads it (`determined::Reads::related`), else
+/// the field's value; `None` where the row holds none, or `null`.
+fn reference(
+    entity: &ResolvedEntity,
+    hop: &ResolvedRelatedHop,
+    address: &Value,
+    row: &Row,
+) -> Option<Value> {
+    if hop.field == entity.identity.name {
+        return Some(address.clone());
+    }
+    row.fields
+        .get(&hop.field)
+        .filter(|value| !value.is_null())
+        .cloned()
 }
 
 /// What one `{related: {entity, where, field}}` selector (ess/22) selects among the rows the store
@@ -385,8 +447,8 @@ impl<'a> Sources<'a, '_> {
                 entity,
                 field: read,
                 type_ref,
-            } if through.is_empty() => {
-                let value = self.related(field, via, entity, Some(read))?;
+            } => {
+                let value = self.related(field, via, through, entity, Some(read))?;
                 self.checked(field, type_ref, value)
             }
             ResolvedPayloadValue::RelatedState {
@@ -394,8 +456,8 @@ impl<'a> Sources<'a, '_> {
                 through,
                 entity,
                 type_ref,
-            } if through.is_empty() => {
-                let value = self.related(field, via, entity, None)?;
+            } => {
+                let value = self.related(field, via, through, entity, None)?;
                 self.checked(field, type_ref, value)
             }
             ResolvedPayloadValue::RelatedSelection {
@@ -539,35 +601,81 @@ impl<'a> Sources<'a, '_> {
 
     /// `{related: {via: input.<via>, field: <read>}}` (ess/16), or the held state where `read` is
     /// `None` (ess/28), as ESS reads it (`interpret::execute::determined::Reads::related`): the
-    /// field of the `entity` row the input names, as the store held it before the command ran.
-    /// An `Optional` input left absent names no row and the value is absent; an identity no row
-    /// carries determines nothing. The identity field reads the identity itself.
+    /// field of the `entity` row the input names, as the store held it before the command ran;
+    /// through a chain (`via: [input.<via>, <hop>]`, ess/22), the field of the row the reference
+    /// `hop` of that row names, each row as the store held it then ([`related`]).
+    /// An `Optional` input or reference left absent names no row and the value is absent; a
+    /// required reference a row holds no value in, and an identity no row carries, determine
+    /// nothing; a held reference that is not a value of its type is refused as the request's, as
+    /// ESS refuses it (`Undetermined::Request`). A field that is the row's identity reads the
+    /// identity itself.
     fn related(
         &self,
         field: &ResolvedPayloadField,
         via: &str,
+        through: &[ResolvedRelatedHop],
         entity: &EntityHandle,
         read: Option<&str>,
     ) -> Result<Option<Value>, ExecuteError> {
-        let Some(identity) = read_input(self.input, via) else {
+        let Some(mut address) = read_input(self.input, via) else {
             return Ok(None);
         };
-        let entity = self.ir.entity(entity);
-        let row = self
-            .related
-            .get(&(entity.name.to_string(), identity.to_string()))
+        let (first, named) = chain(through, entity);
+        let mut entity = self.ir.entity(first);
+        let mut row = self.row(field, entity, &address, &format!("input.{via}"))?;
+        for (hop, next) in through.iter().zip(named) {
+            let Some(held) = reference(entity, hop, &address, row) else {
+                if hop.type_ref.is_optional() {
+                    return Ok(None);
+                }
+                return Err(ExecuteError::NoValue {
+                    what: format!(
+                        "`{}`, which reads the row `{hop}` names, and the `{}` row {address} \
+                         holds none",
+                        field.target, entity.name
+                    ),
+                });
+            };
+            crate::typed::validate(self.ir, &hop.type_ref, &held).map_err(|error| {
+                ExecuteError::InvalidInput(format!(
+                    "`{}`, which reads the row `{hop}` names: {error}",
+                    field.target
+                ))
+            })?;
+            entity = self.ir.entity(next);
+            row = self.row(
+                field,
+                entity,
+                &held,
+                &format!("input.{via} through `{hop}`"),
+            )?;
+            address = held;
+        }
+        Ok(match read {
+            None => Some(Value::String(row.state.clone())),
+            Some(read) if read == entity.identity.name => Some(address),
+            Some(read) => row.fields.get(read).cloned(),
+        })
+    }
+
+    /// The row of `entity` that `address` names, read before the command ran ([`related`]), for
+    /// the value of `field`; `named_by` says what named it. None carrying it determines nothing.
+    fn row(
+        &self,
+        field: &ResolvedPayloadField,
+        entity: &ResolvedEntity,
+        address: &Value,
+        named_by: &str,
+    ) -> Result<&'a Row, ExecuteError> {
+        self.related
+            .get(&(entity.name.to_string(), address.to_string()))
             .and_then(Option::as_ref)
             .ok_or_else(|| ExecuteError::NoValue {
                 what: format!(
-                    "`{}`, which reads the `{}` row input.{via} names, and none carries {identity}",
+                    "`{}`, which reads the `{}` row {named_by} names, and none carries {address}",
                     field.target, entity.name
                 ),
-            })?;
-        Ok(match read {
-            None => Some(Value::String(row.state.clone())),
-            Some(read) if read == entity.identity.name => Some(identity),
-            Some(read) => row.fields.get(read).cloned(),
-        })
+            })
     }
 
     /// `{related: {entity, where, field: <read>}}` (ess/22), as ESS reads it

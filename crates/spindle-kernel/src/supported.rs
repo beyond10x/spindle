@@ -287,8 +287,9 @@ fn foreign_write(
 }
 
 /// The value, named, that reads a row of an entity a component running `command` does not own:
-/// `{related: {entity, where, field}}` (ess/22) or `{related: {via, field}}` (ess/16, ess/28), in
-/// `outcome`'s `sets:`, `affects:`, payloads or error, struct members included. The kernel reads
+/// `{related: {entity, where, field}}` (ess/22) or `{related: {via, field}}` (ess/16, ess/28), any
+/// row of a chain among them (`via: [input.<field>, <field>]`, ess/22), in `outcome`'s `sets:`,
+/// `affects:`, payloads or error, struct members included. The kernel reads
 /// only the store it runs on ([`crate::values`]); where that store does not reach the owner's
 /// (`reached`, [`foreign`]), no row of such an entity is kept there, so the read would find none
 /// and answer `no_value` for every request. ESS's interpreter holds every entity in one store and
@@ -309,8 +310,17 @@ fn foreign_read(
                 ResolvedPayloadValue::RelatedSelection { selection, .. } => {
                     found.push((field, &selection.entity));
                 }
-                ResolvedPayloadValue::RelatedField { entity, .. }
-                | ResolvedPayloadValue::RelatedState { entity, .. } => found.push((field, entity)),
+                // Every row a chain reads: the one the first reference names, each one a further
+                // reference names, and the last.
+                ResolvedPayloadValue::RelatedField {
+                    entity, through, ..
+                }
+                | ResolvedPayloadValue::RelatedState {
+                    entity, through, ..
+                } => {
+                    found.extend(through.iter().map(|hop| (field, &hop.entity)));
+                    found.push((field, entity));
+                }
                 ResolvedPayloadValue::Struct { fields } => reads(fields, found),
                 _ => {}
             }
@@ -903,24 +913,18 @@ fn value(ir: &EssIr, field: &ResolvedPayloadField, reading: Reading) -> Option<S
         ResolvedPayloadValue::Struct { fields } => {
             fields.iter().find_map(|member| value(ir, member, reading))
         }
-        // The field or the held state of the row an input field names (ess/16, ess/28), read as
-        // the store held it before the outcome ([`crate::values::related`]). A reference stored on
-        // the subject, a chain through a further reference, and a list of references stay
-        // refused.
+        // The field or the held state of the row an input field names (ess/16, ess/28), or of the
+        // row a reference that row holds names (a chain, ess/22), each row read as the store held
+        // it before the outcome ([`crate::values::related`]). A reference stored on the subject and
+        // a list of references stay refused.
         ResolvedPayloadValue::RelatedField {
             via: via @ ResolvedRelatedVia::Input { .. },
-            through,
             ..
         }
         | ResolvedPayloadValue::RelatedState {
             via: via @ ResolvedRelatedVia::Input { .. },
-            through,
             ..
-        } if through.is_empty()
-            && !matches!(via.type_ref().required(), ResolvedTypeRef::List { .. }) =>
-        {
-            None
-        }
+        } if !matches!(via.type_ref().required(), ResolvedTypeRef::List { .. }) => None,
         // A field of the one row a selector selects (ess/22), read from the store as it was
         // before the outcome ([`crate::values::Selections`]). A selector that reads what its own
         // outcome publishes (`payload.<Event>.<field>`, ess/27) or walks the rows of an entity

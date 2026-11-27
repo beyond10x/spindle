@@ -1,0 +1,279 @@
+domain: forge.plant
+summary: A workload names the formation it runs on; an instance is created with the slots and the state of that formation, and a badge with the tag its code converts to.
+types:
+  - name: forge.plant.FormationId
+    kind: newtype
+    of: String
+  - name: forge.plant.WorkloadId
+    kind: newtype
+    of: String
+  - name: forge.plant.Code
+    kind: newtype
+    of: String
+  - name: forge.plant.Tag
+    kind: newtype
+    of: String
+    invariants:
+      - 'value.count >= 4'
+entities:
+  - name: forge.plant.Formation
+    identity:
+      name: formation_id
+      type: forge.plant.FormationId
+    fields:
+      - name: code
+        type: forge.plant.Code
+      - name: slots
+        type: List<String>
+    lifecycle:
+      initial: Draft
+      states: [Draft, Ready]
+      terminal: [Ready]
+      transitions:
+        - {name: ready, from: [Draft], to: Ready}
+  - name: forge.plant.Workload
+    identity:
+      name: workload_id
+      type: forge.plant.WorkloadId
+    fields:
+      - name: home_id
+        type: forge.plant.FormationId
+      - name: formation_id
+        type: Optional<forge.plant.FormationId>
+    relations:
+      - {name: home, kind: references, target: forge.plant.Formation, cardinality: one, via: home_id}
+      - {name: formation, kind: references, target: forge.plant.Formation, cardinality: one, via: formation_id}
+    lifecycle:
+      initial: Active
+      states: [Active]
+      terminal: [Active]
+  - name: forge.plant.Instance
+    identity:
+      name: instance_id
+      type: String
+    fields:
+      - name: slots
+        type: Optional<List<String>>
+        presence: null_when_absent
+      - name: formation_state
+        type: Optional<forge.plant.Formation.State>
+        presence: null_when_absent
+      - name: formation_id
+        type: Optional<forge.plant.FormationId>
+        presence: null_when_absent
+    relations:
+      - {name: formation, kind: references, target: forge.plant.Formation, cardinality: one, via: formation_id}
+    lifecycle:
+      initial: Running
+      states: [Running]
+      terminal: [Running]
+  - name: forge.plant.Badge
+    identity:
+      name: badge_id
+      type: String
+    fields:
+      - name: tag
+        type: forge.plant.Tag
+    lifecycle:
+      initial: Issued
+      states: [Issued]
+      terminal: [Issued]
+errors:
+  - name: forge.plant.NoSuchFormation
+    summary: No formation carries the id.
+    fields: []
+commands:
+  - name: forge.plant.RegisterFormation
+    input:
+      - name: formation_id
+        type: forge.plant.FormationId
+      - name: code
+        type: forge.plant.Code
+      - name: slots
+        type: List<String>
+    outcomes:
+      - name: registered
+        creates: forge.plant.Formation
+        instance: formation_id
+        sets:
+          code: input.code
+          slots: input.slots
+        emits: [forge.plant.FormationRegistered]
+        payload:
+          forge.plant.FormationRegistered: {formation_id: input.formation_id}
+        summary: The formation is registered as a draft.
+  - name: forge.plant.ReadyFormation
+    input:
+      - name: formation_id
+        type: forge.plant.FormationId
+    outcomes:
+      - name: no-such-formation
+        unknown_instance: true
+        error: forge.plant.NoSuchFormation
+        summary: No formation carries the id.
+      - name: readied
+        moves: forge.plant.Formation.ready
+        instance: formation_id
+        emits: [forge.plant.FormationReadied]
+        payload:
+          forge.plant.FormationReadied: {formation_id: input.formation_id}
+        summary: The formation is ready.
+  - name: forge.plant.RegisterWorkload
+    input:
+      - name: workload_id
+        type: forge.plant.WorkloadId
+      - name: home_id
+        type: forge.plant.FormationId
+      - name: formation_id
+        type: Optional<forge.plant.FormationId>
+    outcomes:
+      - name: registered
+        creates: forge.plant.Workload
+        instance: workload_id
+        sets:
+          home_id: input.home_id
+          formation_id: input.formation_id
+        emits: [forge.plant.WorkloadRegistered]
+        payload:
+          forge.plant.WorkloadRegistered: {workload_id: input.workload_id}
+        summary: The workload is registered, on the formation it names if it names one.
+  - name: forge.plant.CreateInstance
+    input:
+      - name: instance_id
+        type: String
+      - name: workload_id
+        type: forge.plant.WorkloadId
+    outcomes:
+      - name: created
+        creates: forge.plant.Instance
+        instance: instance_id
+        sets:
+          slots: {related: {via: [input.workload_id, formation_id], field: slots}}
+          formation_state: {related: {via: [input.workload_id, formation_id], field: state}}
+        emits: [forge.plant.InstanceCreated]
+        payload:
+          forge.plant.InstanceCreated:
+            instance_id: input.instance_id
+            slots: {related: {via: [input.workload_id, formation_id], field: slots}}
+            formation_state: {related: {via: [input.workload_id, formation_id], field: state}}
+        summary: The instance is created with the slots and the state of its workload's formation.
+  - name: forge.plant.BadgeWorkload
+    input:
+      - name: badge_id
+        type: String
+      - name: workload_id
+        type: forge.plant.WorkloadId
+    outcomes:
+      - name: issued
+        creates: forge.plant.Badge
+        instance: badge_id
+        sets:
+          tag: {related: {via: [input.workload_id, home_id], field: code}}
+        emits: [forge.plant.BadgeIssued]
+        payload:
+          forge.plant.BadgeIssued:
+            badge_id: input.badge_id
+            tag: {related: {via: [input.workload_id, home_id], field: code}}
+        summary: The badge is issued with the tag the code of its workload's home formation converts to.
+  - name: forge.plant.BadgeFormation
+    input:
+      - name: badge_id
+        type: String
+      - name: formation_id
+        type: forge.plant.FormationId
+    outcomes:
+      - name: issued
+        creates: forge.plant.Badge
+        instance: badge_id
+        sets:
+          tag: {related: {via: input.formation_id, field: code}}
+        emits: [forge.plant.BadgeIssued]
+        payload:
+          forge.plant.BadgeIssued:
+            badge_id: input.badge_id
+            tag: {related: {via: input.formation_id, field: code}}
+        summary: The badge is issued with the tag the formation's code converts to.
+  - name: forge.plant.LeaseInstance
+    input:
+      - name: instance_id
+        type: String
+      - name: lease_id
+        type: forge.yard.LeaseId
+    outcomes:
+      - name: leased
+        creates: forge.plant.Instance
+        instance: instance_id
+        sets:
+          slots: {related: {via: [input.lease_id, formation_id], field: slots}}
+        emits: [forge.plant.InstanceLeased]
+        payload:
+          forge.plant.InstanceLeased: {instance_id: input.instance_id}
+        summary: The instance is created with the slots of the formation its lease names.
+  - name: forge.plant.NoteLease
+    input:
+      - name: instance_id
+        type: String
+      - name: lease_id
+        type: forge.yard.LeaseId
+    outcomes:
+      - name: noted
+        creates: forge.plant.Instance
+        instance: instance_id
+        sets:
+          formation_id: {related: {via: input.lease_id, field: formation_id}}
+        emits: [forge.plant.InstanceLeased]
+        payload:
+          forge.plant.InstanceLeased: {instance_id: input.instance_id}
+        summary: The instance is created naming the formation its lease names.
+events:
+  - name: forge.plant.FormationRegistered
+    fields:
+      - name: formation_id
+        type: forge.plant.FormationId
+  - name: forge.plant.FormationReadied
+    fields:
+      - name: formation_id
+        type: forge.plant.FormationId
+  - name: forge.plant.WorkloadRegistered
+    fields:
+      - name: workload_id
+        type: forge.plant.WorkloadId
+  - name: forge.plant.InstanceCreated
+    fields:
+      - name: instance_id
+        type: String
+      - name: slots
+        type: Optional<List<String>>
+      - name: formation_state
+        type: Optional<forge.plant.Formation.State>
+  - name: forge.plant.BadgeIssued
+    fields:
+      - name: badge_id
+        type: String
+      - name: tag
+        type: forge.plant.Tag
+  - name: forge.plant.InstanceLeased
+    fields:
+      - name: instance_id
+        type: String
+views:
+  - name: forge.plant.Instances
+    source: forge.plant.Instance
+    consistency: read_your_writes
+    fields:
+      - name: instance_id
+        type: String
+      - name: slots
+        type: Optional<List<String>>
+      - name: formation_state
+        type: Optional<forge.plant.Formation.State>
+      - name: formation_id
+        type: Optional<forge.plant.FormationId>
+  - name: forge.plant.Badges
+    source: forge.plant.Badge
+    consistency: read_your_writes
+    fields:
+      - name: badge_id
+        type: String
+      - name: tag
+        type: forge.plant.Tag
