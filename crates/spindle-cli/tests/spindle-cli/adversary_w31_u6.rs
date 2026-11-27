@@ -2062,6 +2062,199 @@ mod postgres {
         );
     }
 
+    /// Round 7, the live holder against a foreign lock on the lease row. A session outside
+    /// spindle (an operator's, say; no idle timeout of the store applies to it) holds board's
+    /// lease row `FOR UPDATE` and keeps it. The leader's renewals now only wait out that lock, so
+    /// it counts as live and never gives up; its writes wait for the same row. Within the
+    /// store's 10 s deadline and two leases (14 s) the store has a writer again: the standby
+    /// took over (ending that session as it ends a write held past the lease), or that session
+    /// was ended, or the leader gave up, as it did before the live-holder rule.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_foreign_lock_on_the_lease_row_stops_writes_no_longer_than_the_store_deadline() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let mut leader = Replica::start(lean(&environment, &schema, LEASE));
+        leader.ready_by(Instant::now() + ANSWER);
+        let standby = Replica::start(lean(&environment, &schema, LEASE));
+        assert_eq!(standby.ready().0, 503);
+        let (status, answer) = leader.open("t1");
+        assert_eq!(status, 201, "{answer}");
+        let holder = Holder::start(format!(
+            "SELECT body FROM {schema}.spindle_board_p_lease FOR UPDATE"
+        ));
+        let held = Instant::now();
+        let command = late_command(leader.address, "t2");
+        let deadline = held + Duration::from_secs(14);
+        let mut recovered = None;
+        while Instant::now() < deadline {
+            if !holder.alive() {
+                recovered = Some("the foreign session was ended");
+                break;
+            }
+            if standby.has_line(TOOK) {
+                recovered = Some("the standby took over");
+                break;
+            }
+            if !leader.running() {
+                recovered = Some("the leader gave up");
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let answered = command.join().expect("the command was sent");
+        let printed = format!(
+            "after {:?}: {recovered:?}; t2 answered {:?}\nstandby:\n{}\nleader:\n{}",
+            held.elapsed(),
+            status_and_body(&answered),
+            standby.printed(),
+            leader.printed()
+        );
+        eprintln!("{printed}");
+        let _ = holder.end();
+        assert!(
+            recovered.is_some(),
+            "a foreign session holding the lease row stopped every write for 14 s, the leader \
+             live and leading, the standby standing by: {printed}"
+        );
+    }
+
+    /// Round 7, a hung leader cannot keep its lease through the live-holder rule. As above a
+    /// foreign session holds board's lease row, and the leader is then paused: its lease
+    /// connection's last statement (a renewal waiting out the lock) ends within a third of the
+    /// lease, so half a lease later it is no longer live. The standby takes over within the
+    /// lease, half a lease and three polls of the pause (5 s), ending the foreign session.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_paused_leader_behind_a_foreign_row_lock_loses_its_lease() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let mut leader = Replica::start(lean(&environment, &schema, LEASE));
+        leader.ready_by(Instant::now() + ANSWER);
+        let standby = Replica::start(lean(&environment, &schema, LEASE));
+        assert_eq!(standby.ready().0, 503);
+        let holder = Holder::start(format!(
+            "SELECT body FROM {schema}.spindle_board_p_lease FOR UPDATE"
+        ));
+        std::thread::sleep(Duration::from_millis(500));
+        leader.signal(rustix::process::Signal::STOP);
+        let paused = Instant::now();
+        let took = standby.line_by(TOOK, paused + Duration::from_secs(5));
+        let alive = holder.alive();
+        leader.signal(rustix::process::Signal::CONT);
+        let printed = format!(
+            "took {took} after {:?}; foreign session alive {alive}\nstandby:\n{}",
+            paused.elapsed(),
+            standby.printed()
+        );
+        eprintln!("{printed}");
+        let _ = holder.end();
+        assert!(took, "{printed}");
+        assert!(!alive, "{printed}");
+        let code = leader.exit_within(ANSWER);
+        assert_eq!(code, Some(1), "{}", leader.printed());
+    }
+
+    /// Round 7, a leader blocked behind a foreign table lock, and the 503 mapping. A session
+    /// outside spindle holds board's event table `ACCESS EXCLUSIVE` for 12 s, past the store's
+    /// 10 s deadline. The command sent meanwhile is answered within 11 s, not `201` and not
+    /// `503`: the write committed nothing, and the lease was never lost, so it is the store's
+    /// failure, not a lost lease. The standby takes nothing, and once the lock ends the leader
+    /// writes again (`201`); the failed command is not held.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_write_behind_a_foreign_table_lock_fails_in_time_without_losing_the_lease() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let mut leader = Replica::start(lean(&environment, &schema, LEASE));
+        leader.ready_by(Instant::now() + ANSWER);
+        let standby = Replica::start(lean(&environment, &schema, LEASE));
+        assert_eq!(standby.ready().0, 503);
+        let (status, answer) = leader.open("t1");
+        assert_eq!(status, 201, "{answer}");
+        let lock = locked(
+            format!("{schema}.spindle_board_events"),
+            "ACCESS EXCLUSIVE",
+            12.0,
+        );
+        let sent = Instant::now();
+        let (status, body) = leader.open("t2");
+        let took = sent.elapsed();
+        lock.join().expect("the lock ends");
+        let printed = format!(
+            "t2 answered {status} after {took:?}: {body}\nstandby:\n{}\nleader:\n{}",
+            standby.printed(),
+            leader.printed()
+        );
+        eprintln!("{printed}");
+        assert!(took < Duration::from_secs(11), "{printed}");
+        assert!(status != 201 && status != 503 && status != 0, "{printed}");
+        assert!(!standby.has_line(TOOK), "{printed}");
+        assert!(leader.running(), "{printed}");
+        leader.ready_by(Instant::now() + ANSWER);
+        let (status, answer) = leader.open("t3");
+        assert_eq!(status, 201, "{answer}\n{printed}");
+        let held = task_ids(leader.address);
+        assert!(!held.contains(&"t2".to_owned()), "{held:?}");
+    }
+
+    /// The lines of the server's current log file that contain `text`, read as the owner (a
+    /// superuser on the lane's server); `None` where the server keeps no log file of its own.
+    fn server_log_lines(text: &str) -> Option<usize> {
+        sql_value("SELECT pg_current_logfile() IS NOT NULL")
+            .filter(|kept| kept == "t")
+            .and_then(|_| {
+                sql_value(&format!(
+                    "SELECT count(*) FROM regexp_split_to_table(pg_read_file(pg_current_logfile()), \
+                     E'\\n') AS line WHERE line LIKE '%{text}%'"
+                ))
+            })
+            .and_then(|count| count.parse().ok())
+    }
+
+    /// Round 7, the member lookup on a plain `xmax`. Board's lease is taken by the test for 2 s
+    /// and its row held `FOR UPDATE` by one session, so its `xmax` is a plain transaction id.
+    /// The standby ends that session; looking the id up as a multixact first makes the server log
+    /// `ERROR: MultiXactId … has not been created yet -- apparent wraparound`, which reads to an
+    /// operator as a wraparound of the database. The ending adds no such line to the server's log.
+    /// Where the server keeps no log file (`pg_current_logfile()` is null), the log is not read and
+    /// the case says so.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn ending_a_plain_holder_logs_no_wraparound_error() {
+        const WRAPAROUND: &str = "apparent wraparound";
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = environment(directory.path());
+        let schema = schema();
+        let taken = Instant::now();
+        let _lease = held_by_the_test(&schema, &["board", "ledger"], Duration::from_secs(2));
+        let holder = Holder::start(format!(
+            "SELECT body FROM {schema}.spindle_board_p_lease FOR UPDATE"
+        ));
+        let before = server_log_lines(WRAPAROUND);
+        let standby = Replica::start(lean(&environment, &schema, LEASE));
+        assert_eq!(standby.ready().0, 503);
+        assert!(
+            standby.line_by(RAN_OUT, taken + Duration::from_secs(6)),
+            "{}",
+            standby.printed()
+        );
+        assert!(holder.end().is_err(), "{}", standby.printed());
+        let after = server_log_lines(WRAPAROUND);
+        match (before, after) {
+            (Some(before), Some(after)) => assert!(
+                after <= before,
+                "the server logged {} line(s) of '{WRAPAROUND}' while the standby ended one \
+                 session holding a plain transaction's row lock",
+                after.saturating_sub(before)
+            ),
+            _ => eprintln!("the server keeps no log file of its own: its log was not read"),
+        }
+    }
+
     /// Waits until `webhook` accepted `count` bodies, at most 30 s.
     fn accepted(webhook: &Webhook, count: usize) {
         let deadline = Instant::now() + Duration::from_secs(30);
