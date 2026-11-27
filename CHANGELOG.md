@@ -6,8 +6,6 @@ are Spindle's releases.
 
 ## [Unreleased]
 
-## [0.23.0] - 2026-11-27
-
 ### Added
 
 - An event binding whose `on_failure` escalates runs, where `run` exited 1 before listening or
@@ -28,6 +26,11 @@ are Spindle's releases.
   event binding invoked: every attempt, a refused or failed one included, with the input the
   binding sent, so a scenario's invocation checks execute where they were unsupported
   (`story:binding-failure-escalates`).
+
+## [0.23.0] - 2026-11-27
+
+### Added
+
 - `run --log-format json` writes every line a served run prints on stderr as one JSON object:
   `time` (RFC 3339 in UTC), `level` (`info`, `warn`, `error`), `message` (the text line's words)
   and, where the line names them, `component`, `command`, `binding`, `attempts`, `error` and
