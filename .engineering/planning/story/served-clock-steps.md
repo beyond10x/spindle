@@ -21,6 +21,10 @@ scope:
   path: crates/spindle-cli/tests/spindle-cli/clock_and_mint.rs
 - confidence: inferred
   path: crates/spindle-docs/src/status.rs
+- confidence: inferred
+  path: crates/spindle-embed/src/lib.rs
+- confidence: inferred
+  path: crates/spindle-embed/tests
 - confidence: cited
   path: crates/spindle-host/src/host.rs
 - confidence: cited
@@ -55,7 +59,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: cited
   path: website/docs/status.md
-revision: 11
+revision: 14
 ---
 # A served run steps its clock
 
@@ -65,7 +69,9 @@ A `run` serving HTTP with `--clock` answers `POST /api/clock` `{"at": "<RFC 3339
 manual clock forward to that instant between commands and answering `{"at"}`, guarded by the proxy
 secret as every `/api/*` route. An instant before the clock's current one is refused `409` and
 leaves the clock where it stood; without `--clock` both methods of the route answer `409`, and so
-does a reset whose world carries `clock`, which then empties nothing. `GET /api/clock` answers
+does a reset whose world carries `clock`, which then empties nothing; the same holds on every host
+without a stepping clock, an embedded host and a Node instance included, since each reads a world
+through `spindle_host::read_world`. `GET /api/clock` answers
 the current instant. A reset world may carry `"clock": "<RFC 3339>"` to move the clock forward
 there; an earlier instant refuses the reset `400` before anything is emptied, because the host's
 command sequence, on which event times and both cursors rest, never goes back. Every record of
@@ -100,6 +106,8 @@ published format that this story does not make (decision D4 A).
   shadowed.
 - `a_published_event_carries_its_command_time` (`spindle-host` `console.rs`): one command on a host
   opened on `ManualClock::at(T)` publishes events whose `at` is `T` to the millisecond.
+- `an_embedded_host_refuses_a_reset_world_carrying_clock` (`spindle-embed` tests): a reset whose
+  world carries `clock` on an embedded host answers `409` and empties nothing.
 
 ## Not covered
 
