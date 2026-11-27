@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:ess-pin-0-99-2
 kind: story
-status: draft
+status: active
 title: The ESS pin moves to the release a consumer's specification requires
 relations:
 - serves: vision:spindle
@@ -56,7 +56,10 @@ scope:
   path: ui/src/api/generated/types-report.json
 - confidence: cited
   path: ui/src/api/generated/types.ts
-revision: 30
+revision: 32
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T08:24:14Z", actor: "human:operator", revision: 31, decided_on: {"recorded":{"review_outcome":5}}}
+- {from: "proposed", to: "active", at: "2026-11-27T08:24:14Z", actor: "human:operator", revision: 32, decided_on: {"recorded":{"review_outcome":5}}}
 ---
 ## Outcome
 

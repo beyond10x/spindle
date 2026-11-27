@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:binding-failure-escalates
 kind: story
-status: draft
+status: active
 title: A binding whose on_failure policy escalates runs
 relations:
 - serves: vision:spindle
@@ -48,7 +48,10 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: cited
   path: website/docs/status.md
-revision: 30
+revision: 32
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T08:24:13Z", actor: "human:operator", revision: 31, decided_on: {"recorded":{"review_outcome":5}}}
+- {from: "proposed", to: "active", at: "2026-11-27T08:24:13Z", actor: "human:operator", revision: 32, decided_on: {"recorded":{"review_outcome":5}}}
 ---
 ## Outcome
 
