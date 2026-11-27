@@ -48,8 +48,10 @@ Each story's `## Scope` holds its surface. Shared between units, each on separat
 by the coordinator at merge:
 
 - `crates/spindle-cli/src/cli.rs` (`run` flags) with the generated `website/docs/reference/cli.md`:
-  U1 `--console`, U2 `--log-format`, U3 `--observe-series`, U4 `--drain`, U6 the `--decisions`
-  help, U7 the `--scenario` conflicts (`:392`).
+  U1 `--console`, U2 `--log-format`, U3 `--observe-series`, U4 `--drain`, U6 and U7 both the
+  `--decisions` help (`:259-265`: U6 names the environment's `[decisions]` file and which wins, U7
+  says it applies to `--scenario` too), U7 the `--scenario` conflicts (`:392`) and help
+  (`:119-134`). U7 merges before U6, and U6 rewrites the `--decisions` help over U7's text.
 - `crates/spindle-cli/src/main.rs`: `Command::Run` and `Execute` gain a field each from U1, U2, U3
   and U4; U4 `signals`; U6 the environment read before `decisions::load` (`:533-590`); U7 the
   `scenario` arm (`:190-197`); U2 the exit error in `main` (`:67`).
@@ -72,9 +74,14 @@ by the coordinator at merge:
 - `website/docs/concepts/environment-and-admission.md`: U4 edits § A seed submitted at start
   (`:153-240`); U6 the `external.*` row (`:71`) and a new section placed after § A seed submitted at
   start ends, not inside it. U6 merges before U4.
-- `crates/spindle-kernel`, `crates/spindle-host/src/host.rs`, `crates/spindle-store-browser`,
-  `crates/spindle-ingress/src/answer.rs` (the request id minted per HTTP request): U5 only. `crates/spindle-capability`: U6 only. `crates/spindle-cli/src/replay.rs` and
+- `crates/spindle-kernel/src`, `crates/spindle-host/src/host.rs`, `crates/spindle-store-browser`,
+  `crates/spindle-ingress/src/answer.rs` (the request id minted per HTTP request): U5 only.
+  `crates/spindle-capability` and `crates/spindle-kernel/tests/spindle-kernel/adversary_environment.rs`
+  (the `Environment` literal): U6 only. `crates/spindle-cli/src/replay.rs` and
   `crates/spindle-conformance/src/target.rs`: U7 only.
+- `crates/spindle-cli/tests/spindle-cli/seed.rs`: U4 the `mod` list at the end of the file
+  (`:1225-1230`); U5 adds `a_seed_event_records_the_seed` in a new module file
+  `tests/spindle-cli/seed/caller.rs`, so its only edit there is one `mod` line. U5 merges before U4.
 - `ess/domains/observe.yaml`, `Taskfile.yml` and their generated outputs: U4 only (`SeedState`, the
   health answers). `ess/fixtures/observe/metrics/families.json`: U3 only.
 - `crates/spindle-docs/src/status.rs` with `website/docs/status.md` and `website/data/status.json`

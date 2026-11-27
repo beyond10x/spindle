@@ -14,6 +14,8 @@ scope:
   path: crates/spindle-cli/src/seed.rs
 - confidence: inferred
   path: crates/spindle-cli/tests/spindle-cli/seed.rs
+- confidence: inferred
+  path: crates/spindle-cli/tests/spindle-cli/seed/caller.rs
 - confidence: cited
   path: crates/spindle-host/src/host.rs
 - confidence: inferred
@@ -36,7 +38,7 @@ scope:
   path: crates/spindle-store-browser/src/indexeddb.rs
 - confidence: inferred
   path: docs/design/spindle.md
-revision: 7
+revision: 9
 ---
 # Every committed event records the caller that caused it
 
@@ -103,7 +105,7 @@ Derived 2026-11-27 by `story-scoper`. Every line is **cited** (read from the sto
 - **Also likely:** new host API carrying the provenance (for example `Host::submit_from`), a new kernel type on `Origin` (name open) — inferred
 - **Tests:** `crates/spindle-kernel/src/contract.rs` new case `an_attributed_caller_reads_back` (memory, SQLite, IndexedDB; PostgreSQL via `tests/spindle-kernel/postgres.rs`, ignored without `SPINDLE_TEST_DATABASE_URL`) — inferred
 - **Tests:** `crates/spindle-host/tests/spindle-host/` new module with `an_event_records_the_caller_of_its_request`, `an_event_a_binding_caused_records_its_cause` (a fixture with one event binding, existing or new under `tests/fixtures/`) — inferred
-- **Tests:** `crates/spindle-cli/tests/spindle-cli/seed.rs` `a_seed_event_records_the_seed` — inferred
+- **Tests:** `crates/spindle-cli/tests/spindle-cli/seed/caller.rs` (new module; one `mod` line at the end of `tests/spindle-cli/seed.rs`) `a_seed_event_records_the_seed` — inferred
 - **Tests:** unit test in `crates/spindle-kernel/src/sqlite.rs` `a_store_written_before_reads_back_no_caller` (an `origin` with only `command`, `sequence`) — inferred
 - **Documents:** `crates/spindle-kernel/src/sqlite.rs:23-27` module doc (the `"origin"` shape); `docs/design/spindle.md` if the stored attribution is named there — inferred
 - **Confidence:** medium. The store and host sites are cited. Where the request id lives and how a binding's cause is carried depend on D1 and D2.

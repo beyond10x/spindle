@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-27T07:23:55Z",
+  "actor": "human:operator",
+  "artifact": "story:replay-with-decisions",
+  "kind": "story",
+  "revision": 10,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "review-result:wave28-sco-r2",
+    "review": "review-result:wave28-sco-r2",
+    "outcome": "fixed"
+  }
+}
