@@ -1,0 +1,21 @@
+format: ess/34
+system: ledger
+version: v1
+summary: Shelves and the books kept on them, each book with notes it may or may not carry.
+domains:
+  - ledger.books
+components:
+  - component: library
+    summary: Adds shelves and books.
+    owns:
+      domains:
+        - ledger.books
+    accepts:
+      commands:
+        - ledger.books.AddShelf
+        - ledger.books.AddBook
+    publishes:
+      events:
+        - ledger.books.ShelfAdded
+        - ledger.books.BookAdded
+    reached_by: in_process

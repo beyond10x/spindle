@@ -1232,7 +1232,9 @@ pub(crate) fn references<'v>(
 /// name. Where the row, or the referenced row, holds nothing for it, or the reference names no
 /// row, the field follows the presence the compiler carried onto it from its source field: `null`
 /// under `null_when_absent`, left out otherwise. A field read through a reference carries none, so
-/// it is left out, which ESS reads as the `null` its interpreter answers.
+/// it is left out, which ESS reads as the `null` its interpreter answers. This is ESS's published
+/// contract, which declares such a field optional and not nullable; `spindle-conformance`'s
+/// target, not this projection, answers it `null` where ESS's interpreter does.
 ///
 /// A computed field (`expr:`) answers what ESS's evaluator computes over the source row, as
 /// ESS's interpreter computes it (`ess-conformance` `src/interpret/views.rs:436-447` at ESS

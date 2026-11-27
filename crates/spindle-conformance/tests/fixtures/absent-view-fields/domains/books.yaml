@@ -1,0 +1,111 @@
+domain: ledger.books
+summary: A shelf may carry a label; a book may carry a note, a remark, an aside and the shelf it is on, each written only where its command was given one.
+types:
+  - name: ledger.books.ShelfId
+    kind: newtype
+    of: String
+entities:
+  - name: ledger.books.Shelf
+    identity:
+      name: shelf_id
+      type: ledger.books.ShelfId
+    fields:
+      - name: label
+        type: Optional<String>
+    lifecycle:
+      initial: Standing
+      states: [Standing]
+      terminal: [Standing]
+  - name: ledger.books.Book
+    identity:
+      name: book_id
+      type: String
+    fields:
+      - name: note
+        type: Optional<String>
+      - name: remark
+        type: Optional<String>
+        presence: null_when_absent
+      - name: aside
+        type: Optional<String>
+        presence: omitted_when_absent
+      - name: shelf_id
+        type: Optional<ledger.books.ShelfId>
+    relations:
+      - {name: shelf, kind: references, target: ledger.books.Shelf, cardinality: one, via: shelf_id}
+    lifecycle:
+      initial: Kept
+      states: [Kept]
+      terminal: [Kept]
+commands:
+  - name: ledger.books.AddShelf
+    input:
+      - name: shelf_id
+        type: ledger.books.ShelfId
+      - name: label
+        type: Optional<String>
+    outcomes:
+      - name: added
+        creates: ledger.books.Shelf
+        instance: shelf_id
+        sets:
+          label: input.label
+        emits: [ledger.books.ShelfAdded]
+        payload:
+          ledger.books.ShelfAdded: {shelf_id: input.shelf_id}
+        summary: The shelf stands, labelled if a label is given.
+  - name: ledger.books.AddBook
+    input:
+      - name: book_id
+        type: String
+      - name: note
+        type: Optional<String>
+      - name: remark
+        type: Optional<String>
+      - name: aside
+        type: Optional<String>
+      - name: shelf_id
+        type: Optional<ledger.books.ShelfId>
+    outcomes:
+      - name: added
+        creates: ledger.books.Book
+        instance: book_id
+        sets:
+          note: input.note
+          remark: input.remark
+          aside: input.aside
+          shelf_id: input.shelf_id
+        emits: [ledger.books.BookAdded]
+        payload:
+          ledger.books.BookAdded: {book_id: input.book_id}
+        summary: The book is kept with what it was given.
+events:
+  - name: ledger.books.ShelfAdded
+    fields:
+      - name: shelf_id
+        type: ledger.books.ShelfId
+  - name: ledger.books.BookAdded
+    fields:
+      - name: book_id
+        type: String
+views:
+  - name: ledger.books.Books
+    source: ledger.books.Book
+    consistency: read_your_writes
+    fields:
+      - name: book_id
+        type: String
+      - name: note
+        type: Optional<String>
+      - name: remark
+        type: Optional<String>
+      - name: aside
+        type: Optional<String>
+      - name: shelf_id
+        type: Optional<ledger.books.ShelfId>
+      - name: shelf_label
+        type: Optional<String>
+        field: {related: {via: shelf_id, field: label}}
+      - name: shelf_state
+        type: Optional<ledger.books.Shelf.State>
+        field: {related: {via: shelf_id, field: state}}
