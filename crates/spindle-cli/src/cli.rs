@@ -18,6 +18,16 @@ pub struct Cli {
     pub command: Command,
 }
 
+/// How `run --log-format` writes each line on stderr.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum LogFormat {
+    /// Prose, `b10x-spindle: <message>`.
+    #[default]
+    Text,
+    /// One JSON object per line.
+    Json,
+}
+
 /// One `b10x-spindle` command.
 #[derive(Debug, Subcommand)]
 pub enum Command {
@@ -388,6 +398,22 @@ pub enum Command {
         /// replay's host mints from it.
         #[arg(long, value_name = "N")]
         mint_seed: Option<u64>,
+        /// How a run serving HTTP writes each line on stderr: `text`, the default, as prose, or
+        /// `json`, each line one JSON object `{"time", "level", "message"}`: `time` the instant
+        /// it was written, RFC 3339 in UTC; `level` `info`, `warn` or `error`; `message` the text
+        /// line's words; and, where the line names them, the fields `component`, `command`,
+        /// `binding` (a dropped bound command's binding), `attempts`, `error` and `request_id` (a
+        /// seed entry's) at the top level. The error a run exits 1 with, and a panic, are a line
+        /// too. No line is written per answered request. `json` on a run that does not serve
+        /// HTTP exits 1 before reading stdin.
+        #[arg(
+            long,
+            value_name = "FORMAT",
+            value_enum,
+            default_value_t = LogFormat::Text,
+            conflicts_with = "scenario"
+        )]
+        log_format: LogFormat,
         /// The `ess-scenario` document to replay.
         #[arg(long, conflicts_with_all = ["state", "decisions", "answer_default"])]
         scenario: Option<PathBuf>,

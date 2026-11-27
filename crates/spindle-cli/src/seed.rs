@@ -50,6 +50,8 @@ use spindle_host::{Host, HostError, Report};
 use spindle_ingress::{Recorder, SeedCounts};
 use spindle_spec::EssIr;
 
+use crate::log;
+
 /// One entry of a seed file.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -207,11 +209,13 @@ pub(crate) fn forget(state: &Path) {
     match std::fs::remove_file(&marker) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => eprintln!(
-            "b10x-spindle: the seed marker {} could not be removed after the reset, so a start \
-             with that seed may skip the entries it records done: {error}",
+        Err(error) => log::warn(format!(
+            "the seed marker {} could not be removed after the reset, so a start with that seed \
+             may skip the entries it records done: {error}",
             marker.display()
-        ),
+        ))
+        .field("error", error.to_string())
+        .write(),
     }
 }
 
@@ -231,11 +235,12 @@ pub(crate) fn begin(
     recorder: Option<Recorder>,
 ) -> Result<Seeding> {
     let Some(state) = state else {
-        eprintln!(
-            "b10x-spindle: seed {}: {} entries, submitted one at a time once listening",
+        log::info(format!(
+            "seed {}: {} entries, submitted one at a time once listening",
             seed.path.display(),
             seed.len()
-        );
+        ))
+        .write();
         return Ok(Seeding::new(
             seed,
             recorder,
@@ -248,14 +253,15 @@ pub(crate) fn begin(
     let marker = state.join(MARKER);
     let (from, rejected, ran) = match recorded(&marker)? {
         None => {
-            eprintln!(
-                "b10x-spindle: seed {} ({}): {} entries, submitted one at a time once listening; \
-                 {} records each entry done",
+            log::info(format!(
+                "seed {} ({}): {} entries, submitted one at a time once listening; {} records \
+                 each entry done",
                 seed.path.display(),
                 seed.digest,
                 seed.len(),
                 marker.display()
-            );
+            ))
+            .write();
             (0, BTreeSet::new(), false)
         }
         Some(recorded) if recorded.digest == seed.digest => {
@@ -268,14 +274,14 @@ pub(crate) fn begin(
                 .map(|place| place - 1)
                 .collect();
             if done == seed.len() && rejected.is_empty() {
-                eprintln!(
-                    "b10x-spindle: seed {} ({}) already ran on the state {}, as {} records: no \
-                     entry is sent",
+                log::info(format!(
+                    "seed {} ({}) already ran on the state {}, as {} records: no entry is sent",
                     seed.path.display(),
                     seed.digest,
                     state.display(),
                     marker.display()
-                );
+                ))
+                .write();
             } else {
                 let places: Vec<String> = rejected
                     .iter()
@@ -289,17 +295,17 @@ pub(crate) fn begin(
                         places.join(", ")
                     )
                 };
-                eprintln!(
-                    "b10x-spindle: seed {} ({}): {} entries, the first {done} sent on the state \
-                     {}, as {} records{again}; the {} after them are submitted one at a time once \
-                     listening",
+                log::info(format!(
+                    "seed {} ({}): {} entries, the first {done} sent on the state {}, as {} \
+                     records{again}; the {} after them are submitted one at a time once listening",
                     seed.path.display(),
                     seed.digest,
                     seed.len(),
                     state.display(),
                     marker.display(),
                     seed.len() - done
-                );
+                ))
+                .write();
             }
             let ran = done == seed.len() && rejected.is_empty();
             (done, rejected, ran)
@@ -322,16 +328,16 @@ pub(crate) fn begin(
                     marker.display()
                 );
             }
-            eprintln!(
-                "b10x-spindle: seed {} ({}): {} entries, submitted one at a time once listening; \
-                 the state {} was seeded from {} and holds no row, so this seed runs from its \
-                 first entry",
+            log::info(format!(
+                "seed {} ({}): {} entries, submitted one at a time once listening; the state {} \
+                 was seeded from {} and holds no row, so this seed runs from its first entry",
                 seed.path.display(),
                 seed.digest,
                 seed.len(),
                 state.display(),
                 recorded.digest
-            );
+            ))
+            .write();
             (0, BTreeSet::new(), false)
         }
     };
@@ -506,12 +512,14 @@ impl Seeding {
     /// entry again.
     fn marked(&self) {
         if let Err(error) = self.mark() {
-            eprintln!(
-                "b10x-spindle: seed {}: the marker {} could not be written, so a restart may send \
-                 the entries done since the last one written again: {error}",
+            log::warn(format!(
+                "seed {}: the marker {} could not be written, so a restart may send the entries \
+                 done since the last one written again: {error}",
                 self.seed.path.display(),
                 self.marker.as_deref().unwrap_or(Path::new("")).display()
-            );
+            ))
+            .field("error", error.to_string())
+            .write();
         }
     }
 
@@ -536,10 +544,11 @@ impl Seeding {
     pub(crate) fn cut(&mut self) {
         let left = self.retry.len() + self.seed.entries.len().saturating_sub(self.next);
         if left > 0 {
-            eprintln!(
-                "b10x-spindle: seed {}: a reset dropped the {left} entries not yet sent",
+            log::info(format!(
+                "seed {}: a reset dropped the {left} entries not yet sent",
                 self.seed.path.display()
-            );
+            ))
+            .write();
             self.retry.clear();
             self.next = self.seed.entries.len();
         }
@@ -553,11 +562,12 @@ impl Seeding {
     /// marker reads 0 entries done before the first is sent, so a run stopped before that entry is
     /// done starts the seed from its first entry again.
     pub(crate) fn restart(&mut self) {
-        eprintln!(
-            "b10x-spindle: seed {}: {} entries, submitted again after a reset, before it answers",
+        log::info(format!(
+            "seed {}: {} entries, submitted again after a reset, before it answers",
             self.seed.path.display(),
             self.seed.len()
-        );
+        ))
+        .write();
         self.earlier = summed(self.earlier, self.noted());
         self.counts = SeedCounts::default();
         self.rejected = 0;
@@ -595,11 +605,20 @@ impl Seeding {
             refused,
         } = self.counts;
         let rejected = self.rejected;
-        eprintln!(
-            "b10x-spindle: seed {} ended: {sent} sent, {applied} applied, \
-             {already_there} already there, {refused} refused, {rejected} rejected",
-            self.seed.path.display()
-        );
+        let level = if rejected > 0 {
+            log::Level::Warn
+        } else {
+            log::Level::Info
+        };
+        log::line(
+            level,
+            format!(
+                "seed {} ended: {sent} sent, {applied} applied, {already_there} already there, \
+                 {refused} refused, {rejected} rejected",
+                self.seed.path.display()
+            ),
+        )
+        .write();
         if rejected > 0 {
             self.failed = true;
         }
@@ -659,21 +678,29 @@ impl Seeding {
             Became::AlreadyThere => self.counts.already_there += 1,
             Became::Refused(error) => {
                 self.counts.refused += 1;
-                eprintln!(
-                    "b10x-spindle: seed {} entry {place}: {} (request id {}) refused: {error}",
+                log::warn(format!(
+                    "seed {} entry {place}: {} (request id {}) refused: {error}",
                     self.seed.path.display(),
                     entry.command,
                     entry.request_id
-                );
+                ))
+                .field("command", entry.command.as_str())
+                .field("request_id", entry.request_id.as_str())
+                .field("error", error)
+                .write();
             }
             Became::Rejected(error) => {
                 self.rejected += 1;
-                eprintln!(
-                    "b10x-spindle: seed {} entry {place}: {} (request id {}) rejected: {error}",
+                log::error(format!(
+                    "seed {} entry {place}: {} (request id {}) rejected: {error}",
                     self.seed.path.display(),
                     entry.command,
                     entry.request_id
-                );
+                ))
+                .field("command", entry.command.as_str())
+                .field("request_id", entry.request_id.as_str())
+                .field("error", error)
+                .write();
             }
         }
         self.marked();
@@ -748,15 +775,29 @@ fn submitted(host: &mut Host, entry: &Entry) -> Became {
 /// Prints each command an entry's events led to that did not run, or that the model refused.
 fn downstream(report: &Report) {
     for failed in &report.failed {
-        eprintln!(
-            "b10x-spindle: {} did not run {}, which a seed entry led to: {}",
+        let mut line = log::warn(format!(
+            "{} did not run {}, which a seed entry led to: {}",
             failed.component, failed.command, failed.error
-        );
+        ))
+        .field("component", failed.component.as_str())
+        .field("command", failed.command.as_str());
+        if let spindle_host::Cause::Delivered { binding } | spindle_host::Cause::Tick { binding } =
+            &failed.cause
+        {
+            line = line.field("binding", binding.as_str());
+        }
+        line.field("attempts", failed.attempts)
+            .field("error", failed.error.as_str())
+            .write();
     }
     for refused in &report.refused {
-        eprintln!(
-            "b10x-spindle: {} refused {} ({}), which a seed entry led to, with {}",
+        log::warn(format!(
+            "{} refused {} ({}), which a seed entry led to, with {}",
             refused.component, refused.command, refused.outcome, refused.error.name
-        );
+        ))
+        .field("component", refused.component.to_string())
+        .field("command", refused.command.to_string())
+        .field("error", refused.error.name.clone())
+        .write();
     }
 }

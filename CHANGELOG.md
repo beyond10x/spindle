@@ -6,6 +6,16 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `run --log-format json` writes every line a served run prints on stderr as one JSON object:
+  `time` (RFC 3339 in UTC), `level` (`info`, `warn`, `error`), `message` (the text line's words)
+  and, where the line names them, `component`, `command`, `binding`, `attempts`, `error` and
+  `request_id` at the top level, so a log collector reads a dropped bound command or a refused
+  seed entry without matching its wording. The error a run exits with and a panic are a line too.
+  `text`, the default, writes each line as before. `json` on a run that reads stdin exits 1 before
+  reading a line (`story:structured-json-logs`).
+
 ## [0.22.0] - 2026-11-27
 
 ### Added
