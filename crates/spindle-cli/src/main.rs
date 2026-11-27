@@ -214,6 +214,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             http,
             port,
             address,
+            console,
             drop_retries,
             fixed_actor,
             fixed_caller,
@@ -235,6 +236,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             http: http.as_deref(),
             port,
             address,
+            console,
             drop_retries,
             callers: serve::callers(fixed_actor, fixed_caller)?,
             observe: observe.then_some(usize::from(observe_requests)),
@@ -573,6 +575,9 @@ struct Execute<'a> {
     port: Option<u16>,
     /// `--address`: the IP address to serve on, 127.0.0.1 without it.
     address: Option<std::net::IpAddr>,
+    /// `--console` (`SPINDLE_SETTING_CONSOLE`): whether the console routes are served, decided
+    /// with the address where not given ([`spindle_cli::cli::console_served`]).
+    console: Option<spindle_cli::cli::Switch>,
     drop_retries: bool,
     callers: Vec<spindle_ingress::Caller>,
     /// With `--observe`, how many request records to keep.
@@ -601,6 +606,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         http,
         port,
         address,
+        console,
         drop_retries,
         ref callers,
         observe,
@@ -719,6 +725,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         let seed = seed_path
             .map(|path| seed::load(&path, &loaded.ir))
             .transpose()?;
+        let address = address.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
         return serve::serve(
             loaded.ir,
             serve::Serving {
@@ -728,8 +735,9 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 components,
                 binding,
                 port: port.unwrap_or(0),
-                address: address.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+                address,
                 ingress: ingress.implementation.as_str(),
+                console: spindle_cli::cli::console_served(console, address),
                 drop_retries,
                 decides,
                 answers: answers.calling(calls),

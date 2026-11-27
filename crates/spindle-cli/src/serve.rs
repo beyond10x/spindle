@@ -86,8 +86,14 @@ pub(crate) struct Serving<'a> {
     /// with `caller_header`, every request without the proxy's secret refused before it is read
     /// ([`Listener::bind_reading_on`]).
     pub address: std::net::IpAddr,
-    /// What `ingress.network` is bound to; `http-loopback` adds the console routes.
+    /// What `ingress.network` is bound to; `http-loopback` adds the console routes where
+    /// `console` holds.
     pub ingress: &'a str,
+    /// `--console` (`SPINDLE_SETTING_CONSOLE`), decided with `address` where not given
+    /// ([`spindle_cli::cli::console_served`]): without it no console route exists, and each
+    /// answers `404` as an unrouted path does; a route at a console path is refused at start
+    /// ([`Surface::with_console`]) either way.
+    pub console: bool,
     /// `--drop-retries`: run each `on_failure: retry` binding as a `drop` binding.
     pub drop_retries: bool,
     /// With `--decisions` or `--answer-default`, or where every external cause is bound to an
@@ -222,7 +228,8 @@ fn carried(caller: &Caller) -> String {
 /// through the host's reader ([`spindle_ingress::Listener::bind_reading`]): a view,
 /// `GET /api/model`, `GET /api/events` and every `GET /__spindle/` route, so none waits for a
 /// command, a slow external call included. Beside the routes ESS publishes it serves the console
-/// routes ([`spindle_ingress::Console`]) where `ingress.network` is bound to `http-loopback`. State
+/// routes ([`spindle_ingress::Console`]) where `ingress.network` is bound to `http-loopback` and
+/// [`Serving::console`] holds. State
 /// bound to `sqlite` is kept in the directory `state`, one file per component, or without one in
 /// a temporary directory, printed on stderr and removed when the run ends; state bound to
 /// `memory` takes none, and state bound to `postgres` is kept in the database the `database_*`
@@ -354,8 +361,12 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             serving.binding.as_ref(),
             &serving.callers,
         )?,
-    }
-    .with_console(serving.ingress)?;
+    };
+    // The shadow check runs with the console on or off: a route at a console path exits 1
+    // before listening either way, so turning the console on later never changes which route a
+    // path reaches.
+    let consoled = surface.clone().with_console(serving.ingress)?;
+    let surface = if serving.console { consoled } else { surface };
     if let (Some(header), Some((path, _))) = (serving.caller_header, &serving.proxy_secret) {
         eprintln!(
             "b10x-spindle: each request's caller is read from its {header} header \

@@ -258,10 +258,22 @@ pub enum Command {
         /// before listening; `--fixed-actor` is not enough, since it proves nobody. There every
         /// request without the proxy's secret is refused `403` `{"refused": "not granted",
         /// "actor": null}` before anything of it is read, on every route, the console routes and
-        /// `/__spindle/` included. On loopback `run` serves as without `--address`. Only where
-        /// `run` serves HTTP.
+        /// `/__spindle/` included. Off loopback the console routes are off unless `--console on`
+        /// is given. On loopback `run` serves as without `--address`. Only where `run` serves
+        /// HTTP.
         #[arg(long, value_name = "IP", conflicts_with = "scenario")]
         address: Option<std::net::IpAddr>,
+        /// `on` or `off`: serve the console routes (`POST /api/reset`, `GET /api/events`,
+        /// `GET /api/model`, `GET /api/served` and every other route under `/api/` the console
+        /// answers) or not. Off, each answers `404` as an unrouted path does, whatever secret the
+        /// request carries, and the routes the specification publishes and `/__spindle/` are
+        /// served as before. A route the binding or ESS publishes at a console path exits 1
+        /// before listening either way. Read from the setting `SPINDLE_SETTING_CONSOLE` where the
+        /// flag is not given. Without either the console is on where `run` listens on loopback
+        /// and off where `--address` is off loopback. Only where `run` serves HTTP; ignored
+        /// otherwise, `--scenario` included.
+        #[arg(long, value_name = "SWITCH", env = "SPINDLE_SETTING_CONSOLE")]
+        console: Option<Switch>,
         /// A TOML file of answers, `<outcome> = true | false`, at the top level for every command
         /// or under a `["<command>"]` table for one, and `[[rules]]` (`command`, `outcome`,
         /// `answer`, `when = { "input.<field>" = <value> }`) for the requests whose input holds
@@ -668,6 +680,24 @@ pub enum StoreCommand {
         #[arg(long)]
         environment: PathBuf,
     },
+}
+
+/// `run --console`: whether the console routes are served.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum Switch {
+    /// Serve them.
+    On,
+    /// Answer each `404`, as an unrouted path.
+    Off,
+}
+
+/// Whether a run listening on `address` serves the console routes: as `switch` says where it is
+/// given, otherwise on unless `address` is off loopback ([`spindle_ingress::exposed`]).
+pub fn console_served(switch: Option<Switch>, address: std::net::IpAddr) -> bool {
+    match switch {
+        Some(switch) => switch == Switch::On,
+        None => !spindle_ingress::exposed(address),
+    }
 }
 
 /// The instant an RFC 3339 `date-time` names (`2026-02-01T00:00:00Z`, `2026-02-01T01:00:00+01:00`,

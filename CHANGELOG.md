@@ -34,6 +34,18 @@ are Spindle's releases.
   `ess/fixtures/observe/metrics/families.json`. The request log and the topology keep every label.
   `--observe-series` without `--observe` exits 2 (`story:metrics-series-bounded`).
 
+### Changed
+
+- `run --console <on|off>` (or the setting `SPINDLE_SETTING_CONSOLE`) turns the console routes
+  (`POST /api/reset`, `GET /api/events`, `GET /api/model`, `GET /api/served`) on or off on every
+  listener. Off, each answers `404` as an unrouted path does, whatever secret the request carries,
+  and the routes the specification publishes and `/__spindle/` are served as before; a route
+  they publish at a console path still exits 1 before listening, the console on or off. The
+  setting is ignored where `run` serves no HTTP, `--scenario` included. Without either, a run
+  listening on loopback serves the console as before, and a run whose `--address` is off
+  loopback no longer serves it, where it answered every request carrying the proxy's secret
+  (`story:console-routes-off`).
+
 ### Fixed
 
 - `run --scenario` names the divergent step of a scenario whose command returns a one-time
