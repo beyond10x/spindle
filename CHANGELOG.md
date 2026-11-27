@@ -170,8 +170,11 @@ are Spindle's releases.
   its own transaction, so a leader paused past its lease lands nothing once it resumes, answers
   the requests it took `503`, and exits 1 naming the lease; so does a leader whose write the
   check refused, or whose lease session ended, as a renewal lands only on the session that took
-  the lease. A leader whose lease is not known still held posts no event. A `database_lease` that
-  is not a whole number from 1 to 86400 exits 1 before connecting, and with it tables a release
+  the lease. A leader whose lease is not known still held posts no event; the process that takes
+  over posts from the last position the old leader saved, so a failover may post an event again,
+  with the same `component`, `log` and `position`, for a consumer to de-duplicate on. A standby
+  whose lease connection is closed or refused stands by on and connects again. A
+  `database_lease` that is not a whole number from 1 to 86400 exits 1 before connecting, and with it tables a release
   before leases migrated are refused until `store migrate` runs again
   (`story:several-writers-one-postgres`).
 

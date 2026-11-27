@@ -261,7 +261,8 @@ fn lease_term() -> Result<Option<Duration>> {
     }
 }
 
-/// How soon a renewal that did not land is tried again, where it failed without waiting.
+/// How soon a renewal that did not land is first tried again; each further try waits twice as
+/// long, at most [`Leases::renewal`], so a database that refuses at once is not asked in a loop.
 const RETRY: Duration = Duration::from_millis(50);
 
 /// The leases of every component of a served run bound to `postgres`, taken in name order through
@@ -382,9 +383,11 @@ impl Leases {
             shared.lock().unwrap_or_else(PoisonError::into_inner).lost = Some(why);
         };
         // Renewals start every fifth of the lease from the start of the last that landed; one that
-        // did not land, as one that waited out a lock on the row, is tried again [`RETRY`] later,
-        // so a renewal queued behind a write holding the row lands as the write ends.
+        // did not land, as one that waited out a lock on the row, is tried again after a pause
+        // from [`RETRY`] doubling up to a fifth of the lease, so a renewal queued behind a write
+        // holding the row lands as the write ends.
         let mut next = Instant::now() + self.renewal();
+        let mut retry = RETRY;
         // A message or a dropped sender stops the renewals.
         while let Err(mpsc::RecvTimeoutError::Timeout) =
             stopped.recv_timeout(next.saturating_duration_since(Instant::now()))
@@ -408,6 +411,7 @@ impl Leases {
                 None => {
                     renewed = began;
                     next = began + self.renewal();
+                    retry = RETRY;
                     shared
                         .lock()
                         .unwrap_or_else(PoisonError::into_inner)
@@ -421,7 +425,10 @@ impl Leases {
                     ));
                     return;
                 }
-                Some(_) => next = Instant::now() + RETRY,
+                Some(_) => {
+                    next = Instant::now() + retry;
+                    retry = retry.saturating_mul(2).min(self.renewal());
+                }
             }
         }
         for (component, &token) in &self.held {

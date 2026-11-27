@@ -185,6 +185,7 @@ the store's SQLite file again starts a new log, whose positions start over, so `
 | a failure | a timeout, a failure or a status other than `2xx` is sent again after a pause that doubles up to 5 s, without end; the component's later events to that call wait for it. A `2xx` is decided on its status: its body is not read |
 | a restart | the position up to which the call answered `2xx` is kept in the component's store, and `run` on the same state posts the events after it |
 | at least once | an event answered just before the process is killed may be posted again |
+| a failover | with `database_lease`, a process that takes over the leases ([several processes on one store](#several-processes-on-one-store)) posts from the last position the old leader saved, so it may post again the events the old leader posted after its last save, up to its last unsaved page; the old leader's saves are refused once its lease is taken. A repeat carries the same `component`, `log` and `position`, so a consumer de-duplicates on those three |
 | a reset | `POST /api/reset` stops the posting while it empties the stores; the events after it are posted, from a SQLite store under a new `log` |
 
 The events are posted beside the thread that runs commands, so a slow webhook holds no request
@@ -575,7 +576,8 @@ answers `GET /__spindle/live` `200`, `GET /__spindle/ready` `503` with `standby:
 other request `503`. It opens no store, writes nothing, posts no event to a webhook and keeps no
 dead letter. Every third of `database_lease` it asks for the leases again; an ask that waits out
 its third of the lease, as behind a leader's write that holds the lease row for longer, reads the
-lease as held, and the process stands by on. A lease is free once its end has passed, or once the
+lease as held, and the process stands by on. So does an ask whose connection was closed or
+refused: the process connects again for its next ask. A lease is free once its end has passed, or once the
 database session that holds it has ended, as a killed process's does. On taking them all the
 process opens the stores, builds its host and serves; it skips the seed, which runs only under
 the leases' first token. Its stderr shows the takeover:
@@ -596,7 +598,9 @@ found taken, as when the session holding the lease ended and another process too
 leader's next renewal. A leader that finds its lease taken answers the request it took and those
 already queued `503`, prints a line naming the lease on stderr, as below, and exits 1, for its
 supervisor to start it again as a standby. While its lease is not known still held, its egress
-posts nothing. The line it prints:
+posts nothing. The process that takes over posts from the last position the old leader saved, so
+an event may be posted twice across a failover, each time with the same `component`, `log` and
+`position` ([posted to a webhook](#published-events-posted-to-a-webhook)). The line it prints:
 
 ```text
 b10x-spindle: the lease of board was taken by another process, or its session ended, so this one writes nothing more and exits

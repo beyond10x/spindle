@@ -528,7 +528,14 @@ impl Lease {
             (_, Some(token)) => vec![&tenant, &LEASE_ROW, token],
             (_, None) => vec![&tenant, &LEASE_ROW],
         };
-        self.connected()?;
+        // A take on a connection that cannot be made again, as one the server refuses for now,
+        // reads the lease as held: a standby stands by and connects again for its next ask.
+        if let Err(error) = self.connected() {
+            return match step {
+                Step::Take => Ok(None),
+                _ => Err(error),
+            };
+        }
         let client = self
             .client
             .as_ref()
@@ -545,12 +552,17 @@ impl Lease {
             Err(error) if matches!(step, Step::Take) && busy(&error) => Ok(None),
             Err(error) => {
                 let failed = self.failed(&error, component);
-                if self
+                let closed = self
                     .client
                     .as_ref()
-                    .is_some_and(tokio_postgres::Client::is_closed)
-                {
+                    .is_some_and(tokio_postgres::Client::is_closed);
+                if closed || dropped(&error) {
                     self.client = None;
+                    // A take whose connection was closed, as by the server, reads the lease as
+                    // held; the next ask connects again.
+                    if matches!(step, Step::Take) {
+                        return Ok(None);
+                    }
                 }
                 Err(failed)
             }
@@ -558,7 +570,8 @@ impl Lease {
     }
 
     /// Takes the lease of `component`'s tables where it is free: answers its new token, or
-    /// `None` while another process holds it.
+    /// `None` while another process holds it, and also where the take waited out its timeout or
+    /// its connection was closed or refused, which the next take makes again.
     ///
     /// # Errors
     /// [`StoreError::Backend`] where the lease cannot be read or written.
@@ -618,6 +631,16 @@ fn busy(error: &tokio_postgres::Error) -> bool {
     error.as_db_error().is_some_and(|refused| {
         refused.code() == &tokio_postgres::error::SqlState::LOCK_NOT_AVAILABLE
             || refused.code() == &tokio_postgres::error::SqlState::QUERY_CANCELED
+    })
+}
+
+/// Whether `error` ended the statement's connection rather than the statement: no answer from
+/// the server, a connection failure (SQLSTATE class 08) or the server ending the session (57P,
+/// as `pg_terminate_backend` does).
+fn dropped(error: &tokio_postgres::Error) -> bool {
+    error.as_db_error().is_none_or(|refused| {
+        let code = refused.code().code();
+        code.starts_with("08") || code.starts_with("57P")
     })
 }
 
