@@ -12,6 +12,7 @@ relations:
 - decomposes: epic:production-service
 - informed_by: architecture-decision-record:http-caller-proof
 - informed_by: story:http-caller-proves-actor
+- depends_on: story:listener-tls
 scope:
 - confidence: inferred
   path: CHANGELOG.md
@@ -57,7 +58,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 9
+revision: 13
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
 ---
@@ -68,6 +69,8 @@ transitions:
 A served `run` verifies a signed token on each request (OIDC/JWT, signature checked against the
 issuer's JWKS, issuer, audience and expiry checked) and maps its claims to the actor and the
 caller attributes of the model, so no request proves a caller by a header any proxy could copy.
+Off loopback a token run is served only over the listener's TLS (`story:listener-tls`); without
+`--tls-cert` and `--tls-key` it exits 2 (D3 B).
 
 ## Why
 
@@ -90,14 +93,20 @@ as any actor. `architecture-decision-record:http-caller-proof` chose the proxy h
   undeclared actor or leave out a required attribute answers `403` "not granted".
 - `keys_rotate_without_a_restart`: a key added to the JWKS after start verifies a token after the
   next refresh; a removed key no longer does.
-- `a_token_run_refuses_the_trusted_caller_header_beside_it`: the token flag given with
-  `--trusted-caller-header` exits 1 before the listening line (D2 A).
-- `a_token_run_off_loopback_exits_2`: a token run whose `--address` is off loopback exits 2 before
-  the listening line (D3 A).
+- `a_token_run_refuses_the_trusted_caller_header_beside_it`: `--caller-token <FILE>` given with
+  `--trusted-caller-header` exits 1 before the listening line, with an error line naming
+  `--caller-token` and `--trusted-caller-header` as one caller source too many (D2 A).
+- `a_token_run_off_loopback_exits_2`: `--caller-token <FILE>` with an `--address` off loopback and
+  no `--tls-cert` exits 2 before the listening line, with an error line naming `--caller-token`,
+  `--tls-cert` and `--tls-key`; the same run given `--tls-cert` and `--tls-key` starts and answers
+  a request with a valid token over TLS (D3 B).
 - `a_jwks_unreachable_at_start_exits_1`: a JWKS that cannot be fetched at start exits 1 before the
-  listening line (D5 A).
-- `the_console_routes_are_off_on_a_token_run`: on a token run `--console on` exits 2, and under
+  listening line, with an error line naming the JWKS URL of the mapping file (D5 A).
+- `the_console_routes_are_off_on_a_token_run`: `--caller-token <FILE>` with `--console on` exits 2
+  with an error line naming `--console on` and `--caller-token`, and on a token run under
   `/__spindle/` only `live`, `ready` and `seed` answer without a token (D4 B).
+
+No exit-2 line above passes on clap's own exit 2 for an unknown flag: each reads its error line.
 - `a_mapping_naming_a_symmetric_algorithm_is_refused`,
   `a_jwks_url_neither_https_nor_loopback_http_is_refused` and
   `a_jwk_of_another_family_than_the_token_alg_does_not_verify`: unit tests in `token.rs`.
@@ -116,15 +125,20 @@ Taken 2026-11-27 on the scoper's recommended option, each reversible.
   written in Spindle.
 - D2 A: one caller source per run: the token flag given with `--trusted-caller-header` exits 1; the
   header flag keeps working on its own.
-- D3 A: a token run off loopback exits 2, as a run without the proxy flags does today; no
-  `depends_on story:listener-tls`, whose TLS a later story may let lift this.
+- D3 B: taken on the coordinator's default of 2026-11-27, reversible, after the plan critics found
+  that A left the off-loopback case to a story nobody owned. A token run off loopback is served
+  only over the listener's TLS (`--tls-cert <FILE>` with `--tls-key <FILE>`,
+  `story:listener-tls`, now a `depends_on`); there the token takes the place of
+  `--trusted-caller-header` and `--trusted-caller-secret` in the off-loopback rule
+  (`main.rs:647-657`), and every request without a valid token answers `401` before anything else
+  is read. Without TLS off loopback it exits 2 with a refusal naming both flags.
 - D4 B: the scoper's recommended option here is B: the console is off and `--console on` exits 2;
   under `/__spindle/*`, `live`, `ready` and `seed` answer without a token and every other path needs
   a verified token.
 - D5 A: `refresh_seconds` in the mapping file, 300 by default, 1 to 86400; a failed first fetch
   exits 1 before listening; a later failed refresh keeps the last good key set and writes one
   warning line.
-- D6 A: a TOML mapping file with `issuer`, `audience`, `jwks` (https, or http to loopback only, as
+- D6 A: the flag `--caller-token <FILE>` names a TOML mapping file with `issuer`, `audience`, `jwks` (https, or http to loopback only, as
   `calls.rs` allows), optional `ca_file`, `algorithms` (asymmetric only), `leeway_seconds`,
   `refresh_seconds`; `[actor] claim` with `[actor.values]` mapping a claim value to a qualified
   actor; `[attributes."<actor>"]` mapping each attribute to a top-level claim.
@@ -166,4 +180,5 @@ Derived 2026-11-27 by `story-scoper` on `plan/wave-31` at 8eaea47a. Every line i
 - **Documents:** `website/docs/reference/cli.md` (generated from clap by `crates/spindle-docs/src/cli.rs`), `crates/spindle-docs/src/status.rs:450-456` with the generated `website/data/status.json` and `website/docs/status.md`, `website/docs/concepts/capabilities.md:115-125`, `ess/components.yaml:37-43` (comment), `CHANGELOG.md` — inferred
 - **Confidence:** medium — the proof site, the flag site and the 403 path are read from the tree; the split between ingress and cli (verifier trait in ingress, `jsonwebtoken` in cli) and D1–D7 are open
 - **Would collide with:** units touching `spindle-ingress` `listener.rs` request handling or `surface.rs` constructors and fields; `spindle-cli` `run` flags (`cli.rs`, `main.rs` `execute`), `serve.rs` surface construction and startup lines; `calls.rs` TLS helpers; design § 11; the generated CLI and status pages
+- **depends_on:** `story:listener-tls`, added 2026-11-27 with D3 B: the off-loopback rule in `main.rs:647-657` reads its `--tls-cert` and `--tls-key` — cited (the decision)
 - **Safety fact:** the browser and wasm builds stay unaffected, because `spindle-ingress` is built without the `listener` feature there (`crates/spindle-wasm/Cargo.toml:22`, `crates/spindle-embed/Cargo.toml:18`, `crates/spindle-node/Cargo.toml:22`) and `jsonwebtoken` lives only in `spindle-cli`; the field holding the verifier on `Surface` must be a dependency-free trait object behind a wrapper with hand-written `Debug`/`PartialEq`/`Eq`, as `Surface` derives them (`surface.rs:1126`) — 2, unproven

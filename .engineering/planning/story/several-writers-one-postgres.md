@@ -12,6 +12,9 @@ relations:
 - informed_by: story:kernel-row-set-commit-conflict
 - informed_by: story:request-id-idempotency
 - depends_on: story:spec-change-over-stored-rows
+- depends_on: story:event-egress-webhook
+- depends_on: story:dead-letters-kept-and-replayed
+- depends_on: story:postgres-lane-kills-slow-tests
 scope:
 - confidence: inferred
   path: CHANGELOG.md
@@ -25,6 +28,8 @@ scope:
   path: crates/spindle-cli/tests/spindle-cli/postgres.rs
 - confidence: inferred
   path: crates/spindle-cli/tests/spindle-cli/postgres/replicas.rs
+- confidence: cited
+  path: crates/spindle-docs/src/status.rs
 - confidence: cited
   path: crates/spindle-host/src/host.rs
 - confidence: cited
@@ -58,12 +63,16 @@ scope:
 - confidence: inferred
   path: ui/src/api/generated/types.ts
 - confidence: cited
+  path: website/data/status.json
+- confidence: cited
   path: website/docs/concepts/environment-and-admission.md
 - confidence: inferred
   path: website/docs/concepts/observe.md
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 10
+- confidence: cited
+  path: website/docs/status.md
+revision: 14
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
 ---
@@ -75,7 +84,7 @@ Two or more `run` processes of one specification start on one PostgreSQL store a
 them leads: it holds a lease with a fencing token and is the store's one writer. The others stand
 by: each answers `/__spindle/live` `200`, `/__spindle/ready` `503` with `standby: true` and every
 other request `503`, and writes nothing. When the leader is killed, a standby takes the lease
-within the lease time and answers every later request; a leader paused past its lease lands no
+within the lease time plus one renew interval and answers every later request; a leader paused past its lease lands no
 write once it resumes, and exits. No write is lost or applied twice across a failover.
 
 ## Why
@@ -96,7 +105,8 @@ write once it resumes, and exits. No write is lost or applied twice across a fai
 - `a_second_process_stands_by` (`spindle-cli` `postgres/replicas.rs`, PostgreSQL lane): a second
   `run` reads ready `503` with `standby: true`, answers a command `503` and writes nothing.
 - `a_killed_leader_leaves_the_standby_serving` (same): after SIGKILL of the leader, the standby
-  reads ready `200` within the lease plus a bound and answers every later request.
+  reads ready `200` within the lease plus one renew interval of the kill (with the test's 2 s
+  lease, renewed at a third of it, D7 A: within 2.67 s) and answers every later request.
 - `no_write_is_lost_across_a_failover` (same): half of a set of commands go to the leader, the
   leader is killed, the other half go to the new leader; the rows equal those one process leaves
   after the whole set.
@@ -105,7 +115,7 @@ write once it resumes, and exits. No write is lost or applied twice across a fai
   the rows are as the new leader left them.
 - `a_standby_posts_no_webhook_and_keeps_no_dead_letter` (same): with an egress binding, a standby
   posts nothing and keeps no dead letter until it leads (`story:event-egress-webhook`,
-  `story:dead-letters-kept-and-replayed`; this unit merges after both).
+  `story:dead-letters-kept-and-replayed`, both `depends_on` of this story).
 - `a_standby_reads_not_ready` (`spindle-ingress` `health.rs`, default step).
 - `a_malformed_lease_setting_is_refused_before_connecting` (`spindle-cli` `postgres.rs`, default
   step; that file's refusals run with no database).
@@ -174,6 +184,15 @@ Derived 2026-11-27 by `story-scoper`, for option A of `## Architecture decision`
   `Listener::stopping` — cited
 - **Also likely:** `crates/spindle-ingress/src/listener.rs` (a standby flag beside `stopping`
   `:154`, `:174`, `:494`; a listener bound before the host's `Reader`) — inferred
+- **Also likely (D3 A), added 2026-11-27 on the plan critics' finding:**
+  `crates/spindle-ingress/src/listener.rs` `answer`: the standby's `503` for every other request
+  beside the `stopping` check (`:609`), next to `story:verified-caller-token`'s hunk (`:597-606`);
+  and `bind_reading_on` with `serve` (`:366-400`), which take a `Reader` today and must bind before
+  the host exists, where `story:listener-tls` adds its constructor — inferred
+- **Documents:** `crates/spindle-docs/src/status.rs:533-538`, the `planned` row "Cells, ownership
+  and snapshots" ("ownership leases with fencing ... no story yet"), which this story makes stale,
+  with the generated `website/data/status.json` and `website/docs/status.md` — cited (added
+  2026-11-27 on the plan critics' finding)
 - **Also likely:** `crates/spindle-cli/src/cli.rs` (the `run` doc `:155-170` on readiness) and the
   generated `website/docs/reference/cli.md` — inferred
 - **Also likely:** `ess/domains/observe.yaml` (`spindle.observe.Readiness` `:926` gains
@@ -195,6 +214,10 @@ Derived 2026-11-27 by `story-scoper`, for option A of `## Architecture decision`
   (`postgres.rs`, `database.rs`), the `LogStore` commit path in `sqlite.rs`, the start of
   `serve.rs`, the ingress listener's readiness and stopping state, and the observe model's
   `Readiness`
+- **depends_on:** `story:spec-change-over-stored-rows`, `story:event-egress-webhook`,
+  `story:dead-letters-kept-and-replayed` (read by `a_standby_posts_no_webhook_and_keeps_no_dead_letter`)
+  and `story:postgres-lane-kills-slow-tests` (the 60 s kill in the lane its tests run in) — cited
+  (the plan, 2026-11-27)
 - **Safety fact:** a stale leader's write cannot land because the lease token is checked inside
   the same PostgreSQL transaction as the append (`append_group_guarded`, eventlog-core 0.10.0
   `atomic_group.rs:183`, its guard reading through `ProjectionStore::get_for_update`), while

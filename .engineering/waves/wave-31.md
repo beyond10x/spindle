@@ -19,7 +19,7 @@ where the scoper found the draft stale or a decision changed them.
 
 - `story:event-egress-and-dead-letters` is split (its D1 A) into `story:event-egress-webhook` and
   `story:dead-letters-kept-and-replayed`, two units with no `depends_on` between them. The original
-  stays `proposed`: the store refuses `proposed -> archived`.
+  is `rejected`; its two parts carry the work.
 - `story:several-writers-one-postgres` no longer waits for the draft
   `story:request-id-idempotency`: its acceptance line `a_retried_request_lands_once` moved there,
   and the edge became `informed_by` (its D8 A). It now `depends_on
@@ -28,10 +28,16 @@ where the scoper found the draft stale or a decision changed them.
   there is killed at 60 s, and four units of this wave add PostgreSQL tests to it. Found by the
   scoper of `story:several-writers-one-postgres`.
 
-Taken on default and put to the operator, each changed by the coordinator if the operator answers
-otherwise: `story:verified-caller-token` D1 A (`jsonwebtoken` 9.3.1), the split of
-`story:event-egress-and-dead-letters` (D1 A), `story:several-writers-one-postgres` D8 A,
-`story:spec-change-over-stored-rows` D1 A, `story:spindle-image-published` D1 A.
+The host operator answered A on 2026-11-27 to the five decisions put to the operator:
+`story:verified-caller-token` D1 (`jsonwebtoken` 9.3.1), the split of
+`story:event-egress-and-dead-letters` (D1), `story:several-writers-one-postgres` D8,
+`story:spec-change-over-stored-rows` D1, `story:spindle-image-published` D1.
+
+Revision round 1 of the plan critics (2026-11-27): `story:verified-caller-token` takes D3 B on the
+coordinator's default, reversible: a token run off loopback is served only over the listener's TLS,
+so it `depends_on story:listener-tls`. The acceptance lines that read another unit's work became
+`depends_on` edges (below), each story that ships a capability lists the generated status page,
+and the exit-2 and exit-3 lines name the refusal they read.
 
 ## Units
 
@@ -46,7 +52,10 @@ otherwise: `story:verified-caller-token` D1 A (`jsonwebtoken` 9.3.1), the split 
 | U7 | `story:event-egress-webhook` | `unit/w31-egress` | `spindle-w31-egress` |
 | U8 | `story:dead-letters-kept-and-replayed` | `unit/w31-dead-letters` | `spindle-w31-dead-letters` |
 
-U6 `depends_on` U5. Each unit is built by one `aep:implementor` and gets one `aep:adversary` pass
+`depends_on` edges inside the wave: U4 on U3 (D3 B reads `--tls-cert` and `--tls-key`); U5, U7
+and U8 on U1 (their `postgres::` acceptance lines rely on the lane's 60 s kill); U6 on U1, U5, U7
+and U8 (its lane, the rolling-deploy check, and `a_standby_posts_no_webhook_and_keeps_no_dead_letter`,
+which reads the egress binding and the dead letters). No cycle. Each unit is built by one `aep:implementor` and gets one `aep:adversary` pass
 when green. Every brief names the 60 s bound per test, the 120 s step budget and the 10-minute
 pool limit; the PostgreSQL tests run in the `task check:postgres` lane.
 
@@ -77,7 +86,16 @@ and resolved by the coordinator at merge:
   (`:139`), a `database_lease` setting (`:38`) and the connection budget (`:103-130`). One function.
 - `crates/spindle-ingress/src/listener.rs`: U3 `Listener::serve` (`:380-460`), `connection`
   (`:530-550`), a constructor beside `bind_reading_on` (`:366-378`); U4 `answer` (`:581-705`) and
-  `proven` (`:749-767`); U6 a standby flag beside `stopping` (`:154`, `:174`, `:494`).
+  `proven` (`:749-767`), with its unrecorded `401` beside the secret refusal (`:597-606`); U6 a
+  standby flag beside `stopping` (`:154`, `:174`, `:494`), the standby's `503` in `answer` beside
+  the `stopping` check (`:609`, next to U4's hunk), and `bind_reading_on` with `serve`
+  (`:366-400`), which take a `Reader` today and must bind before the host exists, where U3 adds its
+  constructor.
+- `crates/spindle-docs/src/status.rs` with the generated `website/data/status.json` and
+  `website/docs/status.md`: U3, U4, U5, U7 and U8 each a row for their capability; U6 the
+  `planned` row "Cells, ownership and snapshots" (`:533-538`). The generated pages also carry the
+  "N shipped, M planned" count, so every merge conflicts there: the coordinator merges `status.rs`
+  by hand and regenerates both pages (`task docs-generate`) after each of these merges.
 - `crates/spindle-ingress/src/lib.rs`: U3 the `listener` re-export (`:93`) and the module doc
   (`:31-41`); U4 a re-export (`:94-96`). `Cargo.lock`: U3 `spindle-ingress`'s dependency list, U4
   `jsonwebtoken`. `website/docs/concepts/capabilities.md` `:115-125`: U3 and U4, one paragraph.
@@ -108,15 +126,20 @@ and resolved by the coordinator at merge:
 Wave 30's U9 and U12 change `crates/spindle-cli/src/cli.rs`, `main.rs` and `serve.rs` (U12 also
 `spindle-host` `host.rs`, `spindle-ingress` `surface.rs`, `console.rs`, `router.rs` and `lib.rs`,
 `capabilities.md` and `README.md`) before wave 31 forks, so the line numbers above, taken on
-`plan/wave-31` before wave 30 merged, move.
+`plan/wave-31` before wave 30 merged, move. Wave 30's other overlaps move lines only, as wave 31
+forks after they merge: `spindle-host` `host.rs` (wave 30 U1, U6, U7; wave 31 U5, U6, U8),
+`spindle-kernel` `lib.rs` (wave 30 U5, U6; wave 31 U5, U7, U8), the test `main.rs` lists of
+`spindle-kernel` (wave 30 U3, U6, U11; wave 31 U5, U7, U8), `spindle-ingress` (wave 30 U3; wave 31
+U3) and `spindle-host` (wave 30 U1, U8; wave 31 U8), `README.md` (wave 30 U3; wave 31 U2, U7, U8),
+and `console.rs` and `router.rs` (wave 30 U12's `Console` and `answer`; wave 31 U8's two routes).
 
 Merge order: U1, U2, U3, U5, U7, U4, U8, U6.
 
-- U1 first: the PostgreSQL lane kills a test at 60 s before U5, U6, U7 and U8 add tests to it. Its
-  `Taskfile.yml` hunks are apart from U2's and U8's.
+- U1 first: the PostgreSQL lane kills a test at 60 s before U5, U6, U7 and U8 add tests to it
+  (each `depends_on` U1). Its `Taskfile.yml` hunks are apart from U2's and U8's.
 - U2 next: no crate change; it shares only `Taskfile.yml`, `README.md` § Releases and
   `CHANGELOG.md`.
-- U3 before U4: the same `listener.rs`, the same `run` flags in `cli.rs`, `Execute` and its early
+- U3 before U4: U4 `depends_on` U3 (D3 B); the same `listener.rs`, the same `run` flags in `cli.rs`, `Execute` and its early
   refusals in `main.rs`, `Serving` in `serve.rs`, `spindle-ingress` `lib.rs`, `capabilities.md` and
   `Cargo.lock`.
 - U5 before U7 and U8: it adds the first new reserved stream and its skip in `groups_after`
@@ -126,7 +149,7 @@ Merge order: U1, U2, U3, U5, U7, U4, U8, U6.
   on `wave/31`.
 - U8 after U7: the same reserved streams, `store.rs`, `contract.rs`, the kernel's `lib.rs`,
   `log_streams.rs`, `serve.rs`, `README.md` and design § 11.
-- U6 last: after U5 (`depends_on`); its fence in the `sqlite.rs` commit path and its lease at the
+- U6 last: after U1, U5, U7 and U8 (`depends_on` each); its fence in the `sqlite.rs` commit path and its lease at the
   start of `serve` land after every other change to those files; its `Readiness.standby`
   regenerates the observe types after U8's `DeadLetter`; and its acceptance line
   `a_standby_posts_no_webhook_and_keeps_no_dead_letter` needs U7 and U8. The coordinator merges
@@ -136,6 +159,8 @@ Merge order: U1, U2, U3, U5, U7, U4, U8, U6.
 
 Each story moves `active -> implemented` on a `test_result` (the PR's CI run, the `PostgreSQL` job
 included for U1, U5, U6, U7 and U8) and, where the adversary found something, a `review_outcome`.
+U2 closes on the stub cases of that run; its `IMAGES` asset and manifest list are verified in the
+0.26.0 release run as a step of `AGENTS.md` § Cutting a release, not as part of this exit.
 
 ## Commits
 

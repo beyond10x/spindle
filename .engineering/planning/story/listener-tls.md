@@ -26,6 +26,8 @@ scope:
   path: crates/spindle-cli/tests/spindle-cli/listener_tls.rs
 - confidence: inferred
   path: crates/spindle-cli/tests/spindle-cli/main.rs
+- confidence: inferred
+  path: crates/spindle-docs/src/status.rs
 - confidence: cited
   path: crates/spindle-ingress/Cargo.toml
 - confidence: cited
@@ -37,10 +39,14 @@ scope:
 - confidence: inferred
   path: crates/spindle-ingress/tests/spindle-ingress/tls.rs
 - confidence: inferred
+  path: website/data/status.json
+- confidence: inferred
   path: website/docs/concepts/capabilities.md
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 8
+- confidence: inferred
+  path: website/docs/status.md
+revision: 11
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
 ---
@@ -65,7 +71,10 @@ already use rustls on `ring` (`story:decision-calls-tls`); the listener does not
 - `a_client_certificate_is_required_when_a_ca_is_given`: with a client CA, a client without a
   certificate, or with one another CA signed, fails the handshake; one the CA signed is answered.
 - `a_bad_certificate_file_exits_before_listening`: an unreadable or mismatched certificate and key
-  exit 2 (`USAGE`, D3 A) before the listening line.
+  exit 2 (`USAGE`, D3 A) before the listening line. An unreadable file writes an error line
+  `--tls-cert <path>: ...` (or `--tls-key <path>`, `--tls-client-ca <path>`) naming the flag and
+  the file; a mismatched pair writes one naming both files and saying the key does not match the
+  certificate. The test reads that line, so clap's own exit 2 for an unknown flag does not pass it.
 - `a_served_run_given_a_certificate_answers_https`: `run` given `--tls-cert` and `--tls-key`
   answers HTTPS end to end (D6 A).
 
@@ -116,6 +125,7 @@ Derived 2026-11-27 by `story-scoper`. Every line is **cited** (read from the sto
 - **Tests:** `crates/spindle-cli/tests/spindle-cli/listener_tls.rs` (new) with `a_bad_certificate_file_exits_before_listening` (an unreadable file and a mismatched certificate and key, each exiting before the listening line) and `a_served_run_given_a_certificate_answers_https` (the flags wired end to end): process tests like `tls_cause.rs`, loopback only, default test step, each expected well under 60 s — inferred
 - **Tests:** one `mod` line each in `crates/spindle-ingress/tests/spindle-ingress/main.rs` and `crates/spindle-cli/tests/spindle-cli/main.rs` — inferred
 - **Documents:** `website/docs/concepts/capabilities.md` `:115-125` (the `--address` and proxy paragraph), `website/docs/reference/cli.md` (generated from `cli.rs`), `CHANGELOG.md` `[Unreleased]` — inferred
+- **Documents:** `crates/spindle-docs/src/status.rs` (a row for the new capability; `AGENTS.md:149` asks a capability change to change the site) with the generated `website/data/status.json` and `website/docs/status.md` — inferred (added 2026-11-27 on the plan critics' finding)
 - **Confidence:** high for the listener and the `run` flag path (the story names the listener, and `serve.rs:498` is the only call site `run` uses); medium for the new files' names and the split between `spindle-cli` and `spindle-ingress`
 - **Would collide with:** `crates/spindle-cli/src/main.rs` around `execute`'s ingress branch (wave 30 U9 `:724-842` contains the `Serving` literal `:759-781`); `crates/spindle-cli/src/cli.rs` `Command::Run` flags and the generated `website/docs/reference/cli.md` (wave 30 U9, U12); `crates/spindle-cli/src/serve.rs` `Serving` (wave 30 U12 `:139-141`, `:457-465`); `website/docs/concepts/capabilities.md` `:115-125` (wave 30 U12 `:123`); `crates/spindle-ingress/src/lib.rs` module doc (wave 30 U12 `:43-50`); the test `main.rs` lists of `spindle-ingress` (U3) and `spindle-cli` (U9); `CHANGELOG.md`. Among wave-31 candidates: `story:verified-caller-token` (the same flags, `Execute`, `Serving`, likely `listener.rs` and `spindle-ingress/Cargo.toml` plus `Cargo.lock` for `jsonwebtoken`, `capabilities.md`); `story:event-egress-and-dead-letters` and `story:several-writers-one-postgres` (`serve.rs`, `cli.rs`, `main.rs`; the latter maybe the listener's readiness)
 - **Safety fact:** a listener given no TLS config serves exactly as today, because the TLS path is a separate arm of `Listener::serve` (`listener.rs:380`) reached only from a new constructor; and the TLS crates are optional under `listener` (`spindle-ingress/Cargo.toml:11-13`), so the wasm builds that take `spindle-ingress` with `default-features = false` (`spindle-wasm/Cargo.toml:22`, `spindle-node/Cargo.toml:22`, `spindle-embed/Cargo.toml:18`) do not pull in `ring` — step 2, unproven

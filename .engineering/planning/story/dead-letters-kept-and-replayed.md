@@ -2,13 +2,14 @@
 format: aep.planning-md/3
 id: story:dead-letters-kept-and-replayed
 kind: story
-status: draft
+status: proposed
 title: A bound command that exhausts its attempts is kept as a dead letter and can be replayed
 summary: A bound or periodic command whose last attempt failed or was refused, not escalated, is kept with its input, survives a restart, is listed and can be replayed once.
 relations:
 - serves: vision:spindle
 - decomposes: epic:production-service
 - informed_by: story:event-egress-and-dead-letters
+- depends_on: story:postgres-lane-kills-slow-tests
 scope:
 - confidence: inferred
   path: CHANGELOG.md
@@ -22,6 +23,8 @@ scope:
   path: crates/spindle-cli/tests/spindle-cli/dead_letters.rs
 - confidence: inferred
   path: crates/spindle-cli/tests/spindle-cli/main.rs
+- confidence: inferred
+  path: crates/spindle-docs/src/status.rs
 - confidence: cited
   path: crates/spindle-host/src/host.rs
 - confidence: inferred
@@ -67,8 +70,14 @@ scope:
 - confidence: inferred
   path: ui/src/api/generated
 - confidence: inferred
+  path: website/data/status.json
+- confidence: inferred
   path: website/docs/concepts/components-and-bindings.md
-revision: 5
+- confidence: inferred
+  path: website/docs/status.md
+revision: 9
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-27T11:41:53Z", actor: "human:operator", revision: 9}
 ---
 # A bound command that exhausts its attempts is kept as a dead letter and can be replayed
 
@@ -139,6 +148,8 @@ Derived 2026-11-27 by `story-scoper` against `plan/wave-31` (8eaea47a), as this 
 - **Also likely (generated, model first):** `ess/domains/console.yaml`, `Taskfile.yml` (`OBSERVE_ROOTS`, fixture check), `ess/generated/jsonschema`, `crates/spindle-observe-api`, `ui/src/api/generated`, `ess/fixtures/observe` — inferred
 - **Tests:** `crates/spindle-cli/tests/spindle-cli/{main,dead_letters}.rs`, `crates/spindle-host/tests/spindle-host/{main,dead_letters}.rs`, `crates/spindle-kernel/tests/spindle-kernel/{main,log_streams,postgres}.rs`, `crates/spindle-ingress/tests/spindle-ingress/router.rs` — inferred
 - **Documents:** `docs/design/spindle.md` § 11, `README.md` (the console route list), `CHANGELOG.md`, `website/docs/concepts/components-and-bindings.md` — inferred
+- **Documents:** `crates/spindle-docs/src/status.rs` (a row for the new capability; `AGENTS.md:149` asks a capability change to change the site) with the generated `website/data/status.json` and `website/docs/status.md` — inferred (added 2026-11-27 on the plan critics' finding)
+- **depends_on:** `story:postgres-lane-kills-slow-tests`, added 2026-11-27 on the plan critics' finding: the `postgres::` acceptance line relies on that lane's 60 s kill — cited (the plan)
 - **Confidence:** medium. The defect site is read from the tree; where dead letters persist and the replay surface rest on D3 A and D5 A
 - **Would collide with:** any unit changing `Host::attempt` or `Failed` in `spindle-host`; the reserved-stream handling and `groups_after` in `spindle-kernel/src/sqlite.rs`; the console routes of `spindle-ingress` and the serve loop of `spindle-cli`
 - **Shares with `story:event-egress-webhook`:** `sqlite.rs` (the reserved streams and the skip at `:1351`, one hunk), `store.rs`, `contract.rs`, the kernel's `lib.rs`, `serve.rs`, design § 11, `README.md`, `CHANGELOG.md`, the `main.rs` module lists of the `spindle-cli` and `spindle-kernel` tests, `log_streams.rs`; no `depends_on`
@@ -149,8 +160,8 @@ Derived 2026-11-27 by `story-scoper` against `plan/wave-31` (8eaea47a), as this 
 Taken 2026-11-27 on the scoper's recommended option, each reversible. Numbered as in the scope of
 `story:event-egress-and-dead-letters`.
 
-- D1 A: this story is one of the two that split replaces; put to the operator, and this default
-  stands until answered.
+- D1 A: this story is one of the two that split replaces; answered A by the host operator on
+  2026-11-27.
 - D3 A: dead letters are a reserved `spindle:log` stream in each component's log, one code path
   for SQLite and PostgreSQL, no change to `migrate`, written only on the host's thread.
 - D5 A: console routes `GET /api/dead-letters` and `POST /api/dead-letters/replay`, answered on

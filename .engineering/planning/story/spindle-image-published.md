@@ -28,7 +28,7 @@ scope:
   path: scripts/release-linux-binary.sh
 - confidence: cited
   path: website/docs/getting-started.md
-revision: 14
+revision: 16
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:56:33Z", actor: "human:operator", revision: 6}
 ---
@@ -63,6 +63,11 @@ The named cases are POSIX sh cases on stub tools in
 `scripts/release-linux-binary.adversary-test.sh`, run by
 `check:the_release_binary_checks_refuse_what_they_must`; the real checks run in the `Release`
 workflow's image jobs.
+
+The story closes on the stub cases: it moves `active -> implemented` on a `test_result` of the
+pull request's CI run, where those cases pass and the image jobs build and check the image on both
+architectures without pushing (D3 A). The `IMAGES` asset and its manifest list are verified in the
+0.26.0 release run, as a step of `AGENTS.md` § Cutting a release, not as part of the wave's exit.
 
 ## Scope
 
@@ -116,8 +121,9 @@ are not.
 
 Recorded 2026-11-24. A downstream consumer running a specification on 0.19.1 in a container has
 no published image: every user writes a Dockerfile that downloads the release archive and checks
-it against `SHA256SUMS`. This story is that gap; its acceptance already asks for a versioned image
-with its digest in the release notes.
+it against `SHA256SUMS`. This story is that gap; its acceptance asks for a versioned image with its
+digest in the release's `IMAGES` asset (D1 A; corrected 2026-11-27: the text said the release
+notes).
 
 The image's base must run the binary the release builds. Since 0.22.0
 (`story:release-linux-glibc-floor-and-musl`) the Linux binaries need glibc 2.17, so a Debian
