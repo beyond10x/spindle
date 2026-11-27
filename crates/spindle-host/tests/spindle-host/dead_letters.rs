@@ -7,13 +7,14 @@
 //! `cancelled`, escalates `no-address` and `oversize` and retries `busy`; which outcome `Ship`
 //! takes is the decider's, set per test.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use serde_json::{Map, Value, json};
 use spindle_capability::Environment;
-use spindle_host::{Host, ManualClock, RETRY_ATTEMPTS, Undelivered};
-use spindle_kernel::External;
+use spindle_host::{Attempted, Host, ManualClock, RETRY_ATTEMPTS, Stores, Undelivered};
+use spindle_kernel::{Change, External, MemoryStore, Removal, Scan, Store, StoreError, Stored};
 
 const PLACE: &str = "depot.orders.PlaceOrder";
 const SHIP: &str = "depot.shipping.Ship";
@@ -282,4 +283,180 @@ fn a_reset_forgets_the_dead_letters() {
     assert_eq!(letters(&mut host).len(), 1);
     host.reset().expect("the reset empties every store");
     assert!(letters(&mut host).is_empty());
+}
+
+/// An environment whose only store is `elsewhere`, which this host has none of its own for: each
+/// component keeps its state in the store the test gives it.
+fn elsewhere() -> Environment {
+    Environment::parse(concat!(
+        "format = \"spindle-environment/1\"\n",
+        "name = \"elsewhere\"\n",
+        "os = \"linux\"\n",
+        "arch = \"x86_64\"\n",
+        "\n",
+        "[provides]\n",
+        "\"store.durable\" = [\"elsewhere\"]\n",
+        "\"store.ephemeral\" = [\"elsewhere\"]\n",
+        "\"identity.mint\" = [\"uuid-v4\"]\n",
+        "clock = [\"system\"]\n",
+        "channel = [\"in-process\"]\n",
+        "projection = [\"in-process\"]\n",
+        "\"external.*\" = [\"operator-prompt\"]\n",
+    ))
+    .expect("the environment parses")
+}
+
+/// An environment that keeps every store in memory.
+fn memory() -> Environment {
+    let text = std::fs::read_to_string(root().join("examples/environments/laptop.toml"))
+        .expect("laptop.toml reads")
+        .replace("[\"sqlite\", \"memory\"]", "[\"memory\"]");
+    Environment::parse(&text).expect("an environment")
+}
+
+/// A decider that refuses every `Ship` as `busy`.
+fn busy(question: &External<'_>) -> Result<bool, String> {
+    Ok(question.command == SHIP && question.outcome == "busy")
+}
+
+/// A store in memory that keeps no dead letters: it leaves [`Store::keep_dead_letter`] to its
+/// default, which refuses.
+struct Forgetful(MemoryStore);
+
+impl Store for Forgetful {
+    fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        self.0.load(entity, identity)
+    }
+
+    fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
+        self.0.commit(change)
+    }
+
+    fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
+        self.0.remove(removal)
+    }
+
+    fn scan(&mut self, entity: &str) -> Result<Scan, StoreError> {
+        self.0.scan(entity)
+    }
+}
+
+/// A dead letter its store could not keep is reported with the store's reason, and with no id.
+#[test]
+fn a_dead_letter_its_store_cannot_keep_names_why() {
+    let loaded = spindle_spec::load(&root().join("crates/spindle-host/tests/fixtures/escalation"))
+        .expect("the fixture compiles");
+    let stores: Stores = BTreeMap::from([
+        (
+            "orders".to_owned(),
+            Box::new(MemoryStore::default()) as Box<dyn Store>,
+        ),
+        (
+            "shipping".to_owned(),
+            Box::new(Forgetful(MemoryStore::default())) as Box<dyn Store>,
+        ),
+    ]);
+    let mut host = Host::supplied(
+        loaded.ir,
+        &elsewhere(),
+        Arc::new(ManualClock::new()),
+        Some(Box::new(busy)),
+        stores,
+    )
+    .expect("the host starts");
+    let report = place(&mut host, "o-1");
+    assert_eq!(report.refused.len(), 1, "{report:?}");
+    assert_eq!(report.refused[0].dead_letter, None, "{report:?}");
+    assert_eq!(
+        report.refused[0].not_kept.as_deref(),
+        Some("store: this store keeps no dead letters"),
+        "{report:?}"
+    );
+    assert!(letters(&mut host).is_empty());
+}
+
+/// A dead letter its store kept names no reason it was not kept.
+#[test]
+fn a_kept_dead_letter_names_no_reason() {
+    let directory = state();
+    let carrier = Carrier::new("busy");
+    let mut host = host(&carrier, directory.path());
+    let report = place(&mut host, "o-1");
+    assert!(report.refused[0].dead_letter.is_some(), "{report:?}");
+    assert_eq!(report.refused[0].not_kept, None, "{report:?}");
+}
+
+/// A reset of stores in memory replaces each with an empty one, which continues the ids: the next
+/// dead letter's id is past the forgotten one's, and a replay naming that one runs nothing.
+#[test]
+fn a_reset_in_memory_continues_the_ids() {
+    let loaded = spindle_spec::load(&root().join("crates/spindle-host/tests/fixtures/escalation"))
+        .expect("the fixture compiles");
+    let directory = state();
+    let mut host = Host::deciding(
+        loaded.ir,
+        &memory(),
+        Arc::new(ManualClock::new()),
+        directory.path(),
+        Box::new(busy),
+    )
+    .expect("the host starts");
+    place(&mut host, "o-forgotten");
+    let forgotten = letters(&mut host)[0].id;
+    host.reset().expect("the reset empties every store");
+    assert!(
+        directory
+            .path()
+            .read_dir()
+            .expect("the state reads")
+            .next()
+            .is_none(),
+        "the stores are in memory"
+    );
+    place(&mut host, "o-later");
+    let later = letters(&mut host);
+    assert_eq!(later.len(), 1, "{later:?}");
+    assert!(later[0].id > forgotten, "{later:?} after {forgotten}");
+    assert!(
+        host.replay("shipping", forgotten)
+            .expect("the replay is answered")
+            .is_none()
+    );
+}
+
+/// A replay answers its own run apart from what settled after it ([`Host::replayed`]): a
+/// refused replay is answered refused, a replay that ran is answered ran.
+#[test]
+fn a_replay_answers_its_own_run() {
+    let directory = state();
+    let carrier = Carrier::new("busy");
+    let mut host = host(&carrier, directory.path());
+    place(&mut host, "o-1");
+    place(&mut host, "o-2");
+    let kept = letters(&mut host);
+    assert_eq!(kept.len(), 2, "{kept:?}");
+    let refused = host
+        .replayed("shipping", kept[0].id)
+        .expect("the replay runs")
+        .expect("the dead letter waits for its replay");
+    match &refused.own {
+        Attempted::Refused(own) => {
+            assert_eq!(own.command, SHIP);
+            assert_eq!(own.outcome, "busy");
+            assert_eq!(Some(own), refused.report.refused.first(), "{refused:?}");
+        }
+        other => panic!("the replay was refused: {other:?}"),
+    }
+    carrier.answers("shipped");
+    let ran = host
+        .replayed("shipping", kept[1].id)
+        .expect("the replay runs")
+        .expect("the dead letter waits for its replay");
+    match &ran.own {
+        Attempted::Ran(own) => {
+            assert_eq!(own.command, SHIP);
+            assert_eq!(own.executed.outcome, "shipped");
+        }
+        other => panic!("the replay ran: {other:?}"),
+    }
 }

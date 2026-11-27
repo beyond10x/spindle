@@ -6,8 +6,8 @@ use ess_compiler::EssIr;
 use ess_http::{Method, Operation};
 use serde_json::{Value, json};
 use spindle_host::{
-    Cursor, Failed, History, HistoryCursor, Host, HostError, Page, Published, Reader, Revision,
-    Undelivered, World,
+    Attempted, Cursor, Failed, History, HistoryCursor, Host, HostError, Page, Published, Reader,
+    Replayed, Revision, Undelivered, World,
 };
 
 use crate::answer::Answer;
@@ -599,11 +599,12 @@ fn letter(kept: &Undelivered) -> Value {
 
 /// What `POST /api/dead-letters/replay` answers on the host's thread, its body
 /// `{"component", "id"}` (`spindle.console.Replay`): the dead letter run once more
-/// ([`Host::replay`]), and `200` with `{"component", "id", "command", "result", "outcome",
-/// "dead_letter"}` (`spindle.console.ReplayAnswer`): `result` `ran`, `refused` or `failed`,
-/// `outcome` the outcome it took where it took one, and `dead_letter` the id a refused or failed
-/// replay is kept as again. `400` for a body that names no component and id; `404` where no dead
-/// letter with that id waits in that component; `500` where a store cannot be read or written.
+/// ([`Host::replayed`]), and `200` with `{"component", "id", "command", "result", "outcome",
+/// "dead_letter"}` (`spindle.console.ReplayAnswer`) of the replay's own run: `result` `ran`,
+/// `refused` or `failed`, `outcome` the outcome it took where it took one, and `dead_letter` the
+/// id a refused or failed replay is kept as again. `400` for a body that names no component and
+/// id; `404` where no dead letter with that id waits in that component; `500` where a store
+/// cannot be read or written.
 /// With the answer, every command a binding invoked on the way that did not execute.
 pub fn replay(host: &mut Host, body: &[u8]) -> (Answer, Vec<Failed>) {
     let asked = serde_json::from_slice::<Value>(body)
@@ -623,8 +624,8 @@ pub fn replay(host: &mut Host, body: &[u8]) -> (Answer, Vec<Failed>) {
         Ok(asked) => asked,
         Err(why) => return (Answer::refusal(400, why), Vec::new()),
     };
-    let report = match host.replay(&component, id) {
-        Ok(Some(report)) => report,
+    let Replayed { own, report } = match host.replayed(&component, id) {
+        Ok(Some(replayed)) => replayed,
         Ok(None) => {
             return (
                 Answer::refusal(
@@ -636,24 +637,17 @@ pub fn replay(host: &mut Host, body: &[u8]) -> (Answer, Vec<Failed>) {
         }
         Err(error) => return (Answer::refusal(500, error.to_string()), Vec::new()),
     };
-    // The replay's own run is the first entry the report lists: what it led to runs after it,
-    // and a replay that did not take effect led to nothing.
-    let (command, result, outcome, dead_letter) = if let Some(ran) = report.ran.first() {
-        (&ran.command, "ran", Some(&ran.executed.outcome), None)
-    } else if let Some(refused) = report.refused.first() {
-        (
+    // The replay's own run, as the host took it before anything else settled: an envelope a peer
+    // process sent meanwhile may run in the same call, and is not this answer's.
+    let (command, result, outcome, dead_letter) = match &own {
+        Attempted::Ran(ran) => (&ran.command, "ran", Some(&ran.executed.outcome), None),
+        Attempted::Refused(refused) => (
             &refused.command,
             "refused",
             Some(&refused.outcome),
             refused.dead_letter,
-        )
-    } else if let Some(failed) = report.failed.first() {
-        (&failed.command, "failed", None, failed.dead_letter)
-    } else {
-        return (
-            Answer::refusal(500, "the replay reported no run of its command"),
-            Vec::new(),
-        );
+        ),
+        Attempted::Failed(failed) => (&failed.command, "failed", None, failed.dead_letter),
     };
     let mut answer = serde_json::Map::new();
     answer.insert("component".to_owned(), json!(component));

@@ -173,6 +173,14 @@ impl<S: Store> Store for CountingStore<S> {
     ) -> Result<Option<spindle_kernel::DeadLetter>, StoreError> {
         self.inner.take_dead_letter(id)
     }
+
+    fn last_dead_letter_id(&mut self) -> Result<u64, StoreError> {
+        self.inner.last_dead_letter_id()
+    }
+
+    fn continue_dead_letter_ids(&mut self, after: u64) -> Result<(), StoreError> {
+        self.inner.continue_dead_letter_ids(after)
+    }
 }
 
 impl<S: Store> CountingStore<S> {

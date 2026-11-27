@@ -159,6 +159,14 @@ pub const DEAD_LETTER_CASES: &[Case] = &[
         name: "forgotten_events_forget_the_dead_letters",
         run: forgotten_events_forget_the_dead_letters,
     },
+    Case {
+        name: "an_empty_store_continues_the_ids_it_is_given",
+        run: an_empty_store_continues_the_ids_it_is_given,
+    },
+    Case {
+        name: "continued_ids_keep_the_ids_already_answered",
+        run: continued_ids_keep_the_ids_already_answered,
+    },
 ];
 
 /// A dead letter of the command `command`, its input naming `order`.
@@ -283,6 +291,85 @@ fn forgotten_events_forget_the_dead_letters(store: &mut dyn Store) {
     let id = keep(case, store, &later);
     assert!(id > forgotten, "{case}: {id} after {forgotten}");
     assert_eq!(letters(case, store), [(id, later)], "{case}");
+    assert!(
+        last_id(case, store) >= id,
+        "{case}: the last id answered covers {id}"
+    );
+}
+
+fn last_id(case: &str, store: &mut dyn Store) -> u64 {
+    store
+        .last_dead_letter_id()
+        .unwrap_or_else(|error| panic!("{case}: the last id reads: {error}"))
+}
+
+fn continued(case: &str, store: &mut dyn Store, after: u64) {
+    store
+        .continue_dead_letter_ids(after)
+        .unwrap_or_else(|error| panic!("{case}: the ids continue after {after}: {error}"));
+}
+
+/// An empty store told to continue the ids of the store it replaces answers ids past them: the
+/// first dead letter it keeps has an id greater than the last one the replaced store answered,
+/// so a replay naming a forgotten id finds nothing.
+fn an_empty_store_continues_the_ids_it_is_given(store: &mut dyn Store) {
+    let case = "an_empty_store_continues_the_ids_it_is_given";
+    assert_eq!(
+        last_id(case, store),
+        0,
+        "{case}: an empty store answered none"
+    );
+    continued(case, store, 41);
+    assert!(last_id(case, store) >= 41, "{case}: the last id covers 41");
+    assert_eq!(
+        store
+            .take_dead_letter(41)
+            .unwrap_or_else(|error| panic!("{case}: the take is answered: {error}")),
+        None,
+        "{case}: no dead letter 41 waits here"
+    );
+    let kept = letter("contract.tasks.Do", "a");
+    let id = keep(case, store, &kept);
+    assert!(id > 41, "{case}: {id} after 41");
+    assert_eq!(letters(case, store), [(id, kept.clone())], "{case}");
+    assert_eq!(
+        store
+            .take_dead_letter(id)
+            .unwrap_or_else(|error| panic!("{case}: the take is answered: {error}")),
+        Some(kept),
+        "{case}: taken by its id"
+    );
+}
+
+/// Continuing the ids changes no id a dead letter already has, and never lowers the next one.
+fn continued_ids_keep_the_ids_already_answered(store: &mut dyn Store) {
+    let case = "continued_ids_keep_the_ids_already_answered";
+    let first = letter("contract.tasks.Do", "a");
+    let one = keep(case, store, &first);
+    assert!(
+        last_id(case, store) >= one,
+        "{case}: the last id covers {one}"
+    );
+    continued(case, store, one + 40);
+    let second = letter("contract.tasks.Do", "b");
+    let two = keep(case, store, &second);
+    assert!(two > one + 40, "{case}: {two} after {}", one + 40);
+    continued(case, store, 1);
+    let third = letter("contract.tasks.Do", "c");
+    let three = keep(case, store, &third);
+    assert!(three > two, "{case}: {three} after {two}");
+    assert_eq!(
+        letters(case, store),
+        [(one, first.clone()), (two, second), (three, third)],
+        "{case}"
+    );
+    assert_eq!(
+        store
+            .take_dead_letter(one)
+            .unwrap_or_else(|error| panic!("{case}: the take is answered: {error}")),
+        Some(first),
+        "{case}: the first is taken by the id it was kept with"
+    );
 }
 
 fn row(state: &str, title: &str) -> Row {

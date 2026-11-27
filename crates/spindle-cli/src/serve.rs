@@ -13,7 +13,7 @@ use anyhow::{Context, Result, bail};
 use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{
-    Cause, Clock, Escalated, Escalation, Host, HostError, ManualClock, Retries, SystemClock,
+    Cause, Clock, Escalated, Escalation, Failed, Host, HostError, ManualClock, Retries, SystemClock,
 };
 use spindle_ingress::console::{self, Worlds};
 use spindle_ingress::{
@@ -617,11 +617,6 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
                 Cause::Submitted => None,
             };
             let binding = bound.unwrap_or("the request");
-            let attempts = if failed.attempts > 1 {
-                format!(" after {} attempts", failed.attempts)
-            } else {
-                String::new()
-            };
             // The escalation of this attempt, where its binding escalated it rather than drop it.
             let escalated = escalations
                 .iter()
@@ -632,24 +627,17 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
                         && escalated.command == failed.command
                 })
                 .map(|at| escalations.remove(at));
-            // Kept as a dead letter where its binding did not escalate it and its store keeps one
-            // (story:dead-letters-kept-and-replayed); dropped otherwise.
-            let fate = match (&escalated, failed.dead_letter) {
-                (Some(escalated), _) => escalation(escalated),
-                (None, Some(id)) => format!("kept as dead letter {id}"),
-                (None, None) => "dropped".to_owned(),
-            };
-            let mut line = log::warn(format!(
-                "{} did not run {} ({binding}), {fate}{attempts}: {}",
-                failed.component, failed.command, failed.error
-            ))
-            .field("component", failed.component.as_str())
-            .field("command", failed.command.as_str());
+            let mut line = log::warn(did_not_run(&failed, binding, escalated.as_ref()))
+                .field("component", failed.component.as_str())
+                .field("command", failed.command.as_str());
             if let Some(binding) = bound {
                 line = line.field("binding", binding);
             }
             if let Some(id) = failed.dead_letter {
                 line = line.field("dead_letter", id);
+            }
+            if let Some(why) = &failed.not_kept {
+                line = line.field("not_kept", why.as_str());
             }
             line.field("attempts", failed.attempts)
                 .field("error", failed.error.as_str())
@@ -708,6 +696,31 @@ fn reported(surface: &Surface) -> Vec<(String, Option<&ess_http::Operation>)> {
 
 /// What a served run says an escalation did: published its event, or, unmet, published nothing,
 /// naming the binding, the event and what the command's input lacks.
+/// The line a served run prints for `failed`, a command `binding` invoked that did not execute:
+/// its escalation where its binding escalated it (`escalated`), else the dead letter its store
+/// kept it as (story:dead-letters-kept-and-replayed), else dropped, naming why its store did not
+/// keep it where it is one the store could not keep.
+fn did_not_run(failed: &Failed, binding: &str, escalated: Option<&Escalated>) -> String {
+    let attempts = if failed.attempts > 1 {
+        format!(" after {} attempts", failed.attempts)
+    } else {
+        String::new()
+    };
+    let fate = match (escalated, failed.dead_letter) {
+        (Some(escalated), _) => escalation(escalated),
+        (None, Some(id)) => format!("kept as dead letter {id}"),
+        (None, None) => "dropped".to_owned(),
+    };
+    let unkept = match (escalated, &failed.not_kept) {
+        (None, Some(why)) => format!(", not kept as a dead letter: {why}"),
+        _ => String::new(),
+    };
+    format!(
+        "{} did not run {} ({binding}), {fate}{attempts}{unkept}: {}",
+        failed.component, failed.command, failed.error
+    )
+}
+
 fn escalation(escalated: &Escalated) -> String {
     match &escalated.escalation {
         Escalation::Published(_) => format!("escalated into {}", escalated.event),
@@ -765,4 +778,52 @@ fn reset_seeded(
         }
     }
     exchange.respond(answer);
+}
+
+#[cfg(test)]
+mod tests {
+    use spindle_host::{Cause, Failed};
+
+    use super::did_not_run;
+
+    fn failed(dead_letter: Option<u64>, not_kept: Option<&str>) -> Failed {
+        Failed {
+            component: "shipping".to_owned(),
+            command: "depot.shipping.Ship".to_owned(),
+            cause: Cause::Delivered {
+                binding: "ship-on-order".to_owned(),
+            },
+            caused_by: Some("depot.orders.PlaceOrder".to_owned()),
+            error: "the cause is undecided".to_owned(),
+            kind: Some("undecided"),
+            attempts: 5,
+            dead_letter,
+            not_kept: not_kept.map(str::to_owned),
+        }
+    }
+
+    /// A dead letter its store could not keep is printed dropped, with the store's reason
+    /// (story:dead-letters-kept-and-replayed).
+    #[test]
+    fn a_dead_letter_its_store_could_not_keep_is_printed_dropped_with_why() {
+        assert_eq!(
+            did_not_run(
+                &failed(None, Some("store: the disk is full")),
+                "ship-on-order",
+                None
+            ),
+            "shipping did not run depot.shipping.Ship (ship-on-order), dropped after 5 attempts, \
+             not kept as a dead letter: store: the disk is full: the cause is undecided"
+        );
+        assert_eq!(
+            did_not_run(&failed(Some(3), None), "ship-on-order", None),
+            "shipping did not run depot.shipping.Ship (ship-on-order), kept as dead letter 3 \
+             after 5 attempts: the cause is undecided"
+        );
+        assert_eq!(
+            did_not_run(&failed(None, None), "ship-on-order", None),
+            "shipping did not run depot.shipping.Ship (ship-on-order), dropped after 5 attempts: \
+             the cause is undecided"
+        );
+    }
 }

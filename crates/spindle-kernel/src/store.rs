@@ -558,6 +558,31 @@ pub trait Store {
         let _ = id;
         Ok(None)
     }
+
+    /// An id no smaller than any this store answered for a dead letter
+    /// ([`Store::keep_dead_letter`]), forgotten ones included; `0` where it answered none. What a
+    /// reset that replaces the store with an empty one hands that one
+    /// ([`Store::continue_dead_letter_ids`]). This default, for a store that keeps no dead
+    /// letters, answers `0`.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read.
+    fn last_dead_letter_id(&mut self) -> Result<u64, StoreError> {
+        Ok(0)
+    }
+
+    /// Makes every id this store answers for a dead letter from now on greater than `after`, an
+    /// id the store it replaces answered ([`Store::last_dead_letter_id`]), so a replay naming a
+    /// dead letter the replaced store kept finds none here. The ids already answered stay; an
+    /// `after` below them changes nothing. This default, for a store that keeps no dead letters,
+    /// does nothing.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be written.
+    fn continue_dead_letter_ids(&mut self, after: u64) -> Result<(), StoreError> {
+        let _ = after;
+        Ok(())
+    }
 }
 
 /// A read-only handle on what a store committed, read from any thread beside the store's one
@@ -1333,6 +1358,20 @@ impl Store for MemoryStore {
     fn take_dead_letter(&mut self, id: u64) -> Result<Option<DeadLetter>, StoreError> {
         let mut held = self.held.write().unwrap_or_else(PoisonError::into_inner);
         Ok(held.letters.remove(&id))
+    }
+
+    fn last_dead_letter_id(&mut self) -> Result<u64, StoreError> {
+        Ok(self
+            .held
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .lettered)
+    }
+
+    fn continue_dead_letter_ids(&mut self, after: u64) -> Result<(), StoreError> {
+        let mut held = self.held.write().unwrap_or_else(PoisonError::into_inner);
+        held.lettered = held.lettered.max(after);
+        Ok(())
     }
 
     fn events_after(&mut self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {

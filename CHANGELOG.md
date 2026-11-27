@@ -17,10 +17,12 @@ are Spindle's releases.
   binding's retries, a refused or failed replay kept as a new dead letter
   (`spindle.console.ReplayAnswer`); both are console routes, off with `--console off`. A dead
   letter survives a restart on SQLite and PostgreSQL, is no event of `GET /api/events`, is
-  replayed at most once, and is forgotten by a reset. stderr says `kept as dead letter <id>` where
-  it said `dropped`. `spindle_kernel::Store` gains `keep_dead_letter`, `dead_letters` and
-  `take_dead_letter`; `spindle_host::Failed` and `RefusedCommand` gain `dead_letter`, and
-  `Host::dead_letters` and `Host::replay` list and replay them
+  replayed at most once, and is forgotten by a reset, whose empty stores never give its id
+  again. stderr says `kept as dead letter <id>` where it said `dropped`, and `dropped` with the
+  store's reason where the store could not keep it. `spindle_kernel::Store` gains
+  `keep_dead_letter`, `dead_letters`, `take_dead_letter`, `last_dead_letter_id` and
+  `continue_dead_letter_ids`; `spindle_host::Failed` and `RefusedCommand` gain `dead_letter` and
+  `not_kept`, and `Host::dead_letters`, `Host::replay` and `Host::replayed` list and replay them
   (`story:dead-letters-kept-and-replayed`).
 - `run --stdin` reads JSON lines on stdin where a component is `reached_by: network`, instead of
   serving HTTP: every component runs in the one process on one store and the event bindings fire
