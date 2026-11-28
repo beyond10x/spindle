@@ -22,6 +22,7 @@ mod adversary_w31_u8;
 mod adversary_w32_u3;
 mod adversary_w33_u1;
 mod adversary_w33_u2;
+mod adversary_w34_u3;
 mod always_and_key_routes;
 mod binding_shapes;
 mod busy_store;
