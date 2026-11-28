@@ -65,16 +65,18 @@ impl Reader {
     /// (`story:leader-exits-promptly-on-sigterm`): [`Reader::published`],
     /// [`Reader::published_after`], [`Reader::published_head`] and [`Reader::history`] then stop
     /// waiting for a store's feed, which PostgreSQL's withholds a write from while an older
-    /// transaction is open anywhere on the server, and each read under way when it is set, or
-    /// asked after, answers [`HostError::ReadStopped`]. A listener stops its reader with the flag
-    /// a signal sets, so a read under way does not hold the run's exit.
+    /// transaction is open anywhere on the server, or for their turn. A read cut off while it
+    /// waits answers [`HostError::ReadStopped`]; a read that completes answers as it would
+    /// without the flag, set by then or not. A listener stops its reader with the flag a signal
+    /// sets, so a read under way does not hold the run's exit.
     #[must_use]
     pub fn stopped_by(mut self, stop: Arc<AtomicBool>) -> Self {
         self.stop = Some(stop);
         self
     }
 
-    /// The events of `reading` after `position`, at most `wanted`, given up on the stop flag.
+    /// The events of `reading` after `position`, at most `wanted`; [`HostError::ReadStopped`]
+    /// where the stop flag cut the read off while it waited.
     fn events_after(
         &self,
         reading: &dyn Reading,
@@ -83,32 +85,20 @@ impl Reader {
     ) -> Result<Vec<Committed>, HostError> {
         match &self.stop {
             None => Ok(reading.events_after(position, wanted)?),
-            Some(stop) => {
-                let read = reading.events_after_unless_stopped(position, wanted, stop);
-                self.unstopped()?;
-                Ok(read?)
-            }
+            Some(stop) => reading
+                .events_after_unless_stopped(position, wanted, stop)?
+                .ok_or(HostError::ReadStopped),
         }
     }
 
-    /// The head of `reading`'s feed, given up on the stop flag.
+    /// The head of `reading`'s feed; [`HostError::ReadStopped`] where the stop flag cut the read
+    /// off while it waited.
     fn events_head(&self, reading: &dyn Reading) -> Result<u64, HostError> {
         match &self.stop {
             None => Ok(reading.events_head()?),
-            Some(stop) => {
-                let read = reading.events_head_unless_stopped(stop);
-                self.unstopped()?;
-                Ok(read?)
-            }
-        }
-    }
-
-    /// [`HostError::ReadStopped`] once the stop flag is set: a read answered after it may have
-    /// been given up, so none is answered.
-    fn unstopped(&self) -> Result<(), HostError> {
-        match &self.stop {
-            Some(stop) if stop.load(Ordering::SeqCst) => Err(HostError::ReadStopped),
-            _ => Ok(()),
+            Some(stop) => reading
+                .events_head_unless_stopped(stop)?
+                .ok_or(HostError::ReadStopped),
         }
     }
 

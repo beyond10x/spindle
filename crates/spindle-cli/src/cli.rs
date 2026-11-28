@@ -159,7 +159,9 @@ pub enum Command {
     /// or SIGTERM (exit 130 or 143), or until a seed that rejected an entry ends (exit 1,
     /// `--seed`). On the signal `GET /__spindle/ready` answers `503` and every request that
     /// arrives is answered `503` at once; the request under way finishes, and those already
-    /// waiting are answered in arrival order for up to `--drain` seconds. Then, as when the seed
+    /// waiting are answered in arrival order for up to `--drain` seconds. A read of the events or
+    /// a history beside it that completes is answered normally; one still waiting for the store,
+    /// for its feed or its turn, is cut off and answered `503`. Then, as when the seed
     /// stops it, it takes no further request, writes every answer it has given, answers each
     /// request still waiting `503`, and exits. It exits within `--drain` (counted only while
     /// requests are waiting), plus the longest `timeout_ms` of a call `[egress]` posts to (a post

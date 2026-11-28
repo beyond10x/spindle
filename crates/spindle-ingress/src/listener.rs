@@ -541,8 +541,9 @@ impl Listener {
         let (sender, exchanges) = mpsc::channel();
         let (shutdown, mut stopped) = oneshot::channel::<Stop>();
         let health = Arc::new(Health::new());
-        // Its reads of the events are given up once the run stops taking work, so a read waiting
-        // for a store's feed does not hold the listener's close (`story:leader-exits-promptly-on-sigterm`).
+        // Its reads of the events are cut off where they wait once the run stops taking work, so a
+        // read waiting for a store's feed does not hold the listener's close
+        // (`story:leader-exits-promptly-on-sigterm`).
         let reader = Arc::new(
             reader
                 .map(|reader| OnceLock::from(reader.stopped_by(Arc::clone(&health.stopping))))
@@ -634,8 +635,9 @@ impl Listener {
     /// is set, `GET /__spindle/ready` answers `503`, and every request that arrives from then on is
     /// answered `503` at once, but those under `/__spindle/`; each request already handed over
     /// still arrives on [`Listener::next`]. A read of the events or of a history under way beside
-    /// the caller's thread when it is set is given up and answered `503` too
-    /// ([`Reader::stopped_by`]), so no read waiting for a store's feed holds [`Listener::close`].
+    /// the caller's thread when it is set is cut off and answered `503` where it waits for the
+    /// store, for its feed or its turn ([`Reader::stopped_by`]), so no such wait holds
+    /// [`Listener::close`]; a read that completes is answered normally.
     /// It is set by whoever holds it, such as a signal handler, without the caller's thread
     /// (`signal_hook::flag::register`).
     pub fn stopping(&self) -> Arc<AtomicBool> {

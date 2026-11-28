@@ -882,7 +882,7 @@ impl<L: Log> Store for LogStore<L> {
     }
 
     fn events_head(&mut self) -> Result<u64, StoreError> {
-        self.feed_end(None)
+        self.feed_end()
     }
 
     fn events_id(&mut self) -> Result<u64, StoreError> {
@@ -1027,7 +1027,8 @@ impl<L: Log> LogStore<L> {
 
     /// The greatest `after` of the [`CONTINUED`] events of the stream [`DEAD_LETTERS`] before
     /// `version`, `0` for none: what the id of the dead letter at `version` adds to it. Reads on
-    /// from where the last call stopped, so keeping one dead letter after another does not read
+    /// from where the last call         loop {
+    // The feed answers a prefixped, so keeping one dead letter after another does not read
     /// the stream again from its start.
     fn offset_before(&mut self, version: u64) -> Result<u64, StoreError> {
         let stream = self.dead_letter_stream()?;
@@ -1194,9 +1195,10 @@ impl<L: Log> LogStore<L> {
     /// a committed event ([`Log::WITHHOLDS`]: PostgreSQL's, while any transaction older than the
     /// append is open anywhere on the server, and every event after one it withholds) is asked,
     /// one event at a time, until it answers the last such append or [`PUBLISH_WAIT`] passed.
-    /// Where `stop` is given it is looked at before each ask, and once it is set the wait is given
-    /// up: `false`, where the feed answering the appends is `true`. A reader stopped at exit so
-    /// leaves within one pause between two asks, at most 100 ms, and one ask
+    /// Where `stop` is given it is looked at after each ask the feed did not answer, and once it is
+    /// set the wait is given up: `false`, where the feed answering the appends is `true`; a read
+    /// that does not wait is never given up. A reader stopped at exit so leaves within one pause
+    /// between two asks, at most 100 ms, and one ask
     /// (`story:leader-exits-promptly-on-sigterm`).
     ///
     /// # Errors
@@ -1213,9 +1215,6 @@ impl<L: Log> LogStore<L> {
         let started = std::time::Instant::now();
         let mut pause = std::time::Duration::from_millis(5);
         loop {
-            if stop.is_some_and(|stop| stop.load(Ordering::SeqCst)) {
-                return Ok(false);
-            }
             // The feed answers a prefix of the committed events, so it answers the one at
             // `committed` where it answers any at or past it.
             let page = self
@@ -1232,6 +1231,10 @@ impl<L: Log> LogStore<L> {
                      transaction older than its write has ended, and one is still open on the \
                      server (pg_stat_activity names it)"
                 )));
+            }
+            // Only a read that has to wait is given up: one the feed answers is answered.
+            if stop.is_some_and(|stop| stop.load(Ordering::SeqCst)) {
+                return Ok(false);
             }
             std::thread::sleep(pause);
             pause = (pause * 2).min(std::time::Duration::from_millis(100));
@@ -1284,7 +1287,11 @@ impl<L: Log> SharedReading<L> {
         let Some(_turn) = self.turns.take_unless(stop)? else {
             return Ok(Vec::new());
         };
-        let placed = self.store.placed_after(position, limit, stop)?;
+        // A read given up answers no event: the egress lane that asked leaves.
+        let placed = self
+            .store
+            .placed_after(position, limit, stop)?
+            .unwrap_or_default();
         self.store.current()?;
         Ok(placed)
     }
@@ -1336,38 +1343,37 @@ impl<L: Log> Reading for SharedReading<L> {
         self.placed_unless(position, limit, Some(stop))
     }
 
-    /// [`SharedReading::events_after`], whose wait for its turn and for the feed looks at `stop`,
-    /// and answers no event once it is set.
+    /// [`SharedReading::events_after`], whose wait for its turn and for the feed looks at `stop`:
+    /// `None` where it was given up while it waited, its events where it did not wait or the wait
+    /// ended first.
     fn events_after_unless_stopped(
         &self,
         position: u64,
         limit: usize,
         stop: &AtomicBool,
-    ) -> Result<Vec<Committed>, StoreError> {
+    ) -> Result<Option<Vec<Committed>>, StoreError> {
         let Some(_turn) = self.turns.take_unless(Some(stop))? else {
-            return Ok(Vec::new());
+            return Ok(None);
         };
         Ok(self
             .store
             .placed_after(position, limit, Some(stop))?
-            .into_iter()
-            .map(|(_, committed)| committed)
-            .collect())
+            .map(|placed| placed.into_iter().map(|(_, committed)| committed).collect()))
     }
 
     /// Reads the feed through the store's own pool on a turn, as a scan does.
     fn events_head(&self) -> Result<u64, StoreError> {
         let _turn = self.turns.take()?;
-        self.store.feed_end(None)
+        self.store.feed_end()
     }
 
-    /// [`SharedReading::events_head`], whose wait for its turn and for the feed looks at `stop`,
-    /// and is refused once it is set.
-    fn events_head_unless_stopped(&self, stop: &AtomicBool) -> Result<u64, StoreError> {
+    /// [`SharedReading::events_head`], whose wait for its turn and for the feed looks at `stop`:
+    /// `None` where it was given up while it waited.
+    fn events_head_unless_stopped(&self, stop: &AtomicBool) -> Result<Option<u64>, StoreError> {
         let Some(_turn) = self.turns.take_unless(Some(stop))? else {
-            return Err(crate::store::given_up());
+            return Ok(None);
         };
-        self.store.feed_end(Some(stop))
+        self.store.feed_end_unless(stop)
     }
 
     fn events_id(&self) -> Result<u64, StoreError> {
@@ -1436,7 +1442,8 @@ impl Turns {
     }
 
     /// [`Turns::take`], looking at `stop`, where given, at least every [`STOP_LOOK`] while it
-    /// waits: `None` once it is set, the read leaving the line.
+    /// waits: `None` once it is set, the read leaving the line. A turn free at once is taken, the
+    /// flag set or not: only a read that waits is given up.
     ///
     /// # Errors
     /// [`StoreError::Backend`] where the read waited `wait` for its turn.
@@ -1446,9 +1453,6 @@ impl Turns {
     ) -> Result<Option<Turn<'_>>, StoreError> {
         let stopped = || stop.is_some_and(|stop| stop.load(Ordering::SeqCst));
         let mut state = self.lock();
-        if stopped() {
-            return Ok(None);
-        }
         if state.line.is_empty() && state.running < self.cap {
             state.running += 1;
             return Ok(Some(Turn(self)));
@@ -1620,24 +1624,47 @@ impl<L: Log> LogStore<L> {
     /// forgets every event it read: the feed is then read again from the last mark.
     fn committed_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         Ok(self
-            .placed_after(position, limit, None)?
+            .placed(position, limit)?
             .into_iter()
             .map(|(_, committed)| committed)
             .collect())
     }
 
     /// [`LogStore::committed_after`], each event with its own feed position
-    /// ([`Reading::events_placed_after`]); no event where `stop` is given and is set while the
-    /// read waits for the feed to answer the store's own writes ([`LogStore::published`]).
+    /// ([`Reading::events_placed_after`]).
+    fn placed(&self, position: u64, limit: usize) -> Result<Vec<(u64, Committed)>, StoreError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        self.published(None)?;
+        self.placed_read(position, limit)
+    }
+
+    /// [`LogStore::placed`], `None` where `stop` is given and is set while the read waits for the
+    /// feed to answer the store's own writes ([`LogStore::published`]): the read was given up. A
+    /// read that does not wait answers its events, the flag set or not.
+    #[cfg(feature = "postgres")]
     fn placed_after(
         &self,
         position: u64,
         limit: usize,
         stop: Option<&AtomicBool>,
-    ) -> Result<Vec<(u64, Committed)>, StoreError> {
-        if limit == 0 || !self.published(stop)? {
-            return Ok(Vec::new());
+    ) -> Result<Option<Vec<(u64, Committed)>>, StoreError> {
+        if limit == 0 {
+            return Ok(Some(Vec::new()));
         }
+        if !self.published(stop)? {
+            return Ok(None);
+        }
+        self.placed_read(position, limit).map(Some)
+    }
+
+    /// The events [`LogStore::placed`] answers, read from the feed as it stands.
+    fn placed_read(
+        &self,
+        position: u64,
+        limit: usize,
+    ) -> Result<Vec<(u64, Committed)>, StoreError> {
         let reset = StreamId::new(self.tenant.clone(), RESET.0, RESET.1).map_err(backend)?;
         let mut from = position;
         let groups = loop {
@@ -1700,12 +1727,25 @@ impl<L: Log> LogStore<L> {
     /// ([`Store::events_head`]): found by reading one feed event at a time past positions that
     /// double, then halve, so about twice the binary logarithm of the feed's length of them,
     /// none of them answered; once the feed answers every write this store committed
-    /// ([`LogStore::published`]). Where `stop` is given and is set while the read waits for the
-    /// feed, the read is given up and refused ([`crate::store::given_up`]).
-    fn feed_end(&self, stop: Option<&AtomicBool>) -> Result<u64, StoreError> {
-        if !self.published(stop)? {
-            return Err(crate::store::given_up());
+    /// ([`LogStore::published`]).
+    fn feed_end(&self) -> Result<u64, StoreError> {
+        self.published(None)?;
+        self.feed_last()
+    }
+
+    /// [`LogStore::feed_end`], `None` where `stop` is set while the read waits for the feed to
+    /// answer the store's own writes: the read was given up. A read that does not wait answers the
+    /// head, the flag set or not.
+    #[cfg(feature = "postgres")]
+    fn feed_end_unless(&self, stop: &AtomicBool) -> Result<Option<u64>, StoreError> {
+        if !self.published(Some(stop))? {
+            return Ok(None);
         }
+        self.feed_last().map(Some)
+    }
+
+    /// The feed position of the last event of the feed as it stands ([`LogStore::feed_end`]).
+    fn feed_last(&self) -> Result<u64, StoreError> {
         let next = |after: u64| -> Result<Option<u64>, StoreError> {
             let page = self
                 .call(self.log.read_feed(&self.tenant, after, 1))
@@ -2722,11 +2762,11 @@ impl Reading for SqliteReading {
         position: u64,
         limit: usize,
     ) -> Result<Vec<(u64, Committed)>, StoreError> {
-        self.with(|connection| connection.placed_after(position, limit, None))
+        self.with(|connection| connection.placed(position, limit))
     }
 
     fn events_head(&self) -> Result<u64, StoreError> {
-        self.with(|connection| connection.feed_end(None))
+        self.with(|connection| connection.feed_end())
     }
 
     fn events_id(&self) -> Result<u64, StoreError> {

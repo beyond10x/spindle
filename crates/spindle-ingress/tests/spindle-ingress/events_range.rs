@@ -488,36 +488,3 @@ fn the_request_log_records_a_console_requests_query() {
     assert!(kept.starts_with("limit=1&…=…&"), "{kept}");
     assert!(kept.ends_with('…'), "the cut is marked: {kept}");
 }
-
-/// `story:leader-exits-promptly-on-sigterm`: a reader stopped by its flag
-/// ([`spindle_host::Reader::stopped_by`]), as a listener's is by the flag a signal sets, answers
-/// every read of the events and of a history `503` once the flag is set, as every request that
-/// arrives once the run is stopping is answered, and reads as before while it is down.
-#[test]
-fn a_reader_stopped_by_its_flag_answers_the_events_and_history_reads_503() {
-    let host = scripted();
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let reader = host.reader().stopped_by(Arc::clone(&stop));
-    let queries = ["", "limit=1", "after=head"];
-    let history = "entity=tasks.board.Task&identity=t1";
-    for query in queries {
-        let answer = console::events_read_queried(&reader, query);
-        assert_eq!(answer.status, 200, "{query:?} reads while the flag is down");
-    }
-    assert_eq!(console::history_read_queried(&reader, history).status, 200);
-
-    stop.store(true, std::sync::atomic::Ordering::SeqCst);
-    for query in queries {
-        let answer = console::events_read_queried(&reader, query);
-        assert_eq!(
-            (answer.status, answer.body),
-            (503, Some(json!({"refused": "the run is stopping"}))),
-            "{query:?} is given up once the flag is set"
-        );
-    }
-    let answer = console::history_read_queried(&reader, history);
-    assert_eq!(
-        (answer.status, answer.body),
-        (503, Some(json!({"refused": "the run is stopping"})))
-    );
-}

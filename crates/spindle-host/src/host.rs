@@ -461,8 +461,8 @@ pub enum HostError {
     #[error("stopped while waiting for peers")]
     Stopped,
     /// A read of the events through a [`Reader`] stopped by its flag ([`Reader::stopped_by`]) was
-    /// under way when the flag was set, and was given up or answered after it: nothing it read is
-    /// answered (`story:leader-exits-promptly-on-sigterm`).
+    /// waiting, for a store's feed or for its turn, when the flag was set, and was given up: it
+    /// read nothing to answer (`story:leader-exits-promptly-on-sigterm`).
     #[error("the read was given up: the run is stopping")]
     ReadStopped,
 }

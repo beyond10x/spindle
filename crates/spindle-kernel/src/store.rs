@@ -615,12 +615,6 @@ fn no_cursor() -> StoreError {
     )
 }
 
-/// What a read given up on its stop flag answers where it has no empty answer
-/// ([`Reading::events_head_unless_stopped`]).
-pub(crate) fn given_up() -> StoreError {
-    StoreError::Backend("the read was given up: its reader is stopping".to_owned())
-}
-
 /// A read-only handle on what a store committed, read from any thread beside the store's one
 /// writer ([`Store::reading`]).
 ///
@@ -701,10 +695,11 @@ pub trait Reading: Send + Sync {
         self.events_placed_after(position, limit)
     }
 
-    /// [`Reading::events_after`], given up once `stop` is set, as
-    /// [`Reading::events_placed_after_unless_stopped`] is: no event once it is set. This default
-    /// answers no event where `stop` is set before the read, and reads as
-    /// [`Reading::events_after`] otherwise.
+    /// [`Reading::events_after`], whose waits, for its turn or for the feed to answer the store's
+    /// own writes, look at `stop` and are given up once it is set: `None` for a read given up,
+    /// which read nothing to answer; its events, `Some`, for a read that did not wait or whose
+    /// wait ended first, the flag set by then or not (`story:leader-exits-promptly-on-sigterm`).
+    /// This default, for a store whose reads do not wait, always reads.
     ///
     /// # Errors
     /// As [`Reading::events_after`].
@@ -713,11 +708,9 @@ pub trait Reading: Send + Sync {
         position: u64,
         limit: usize,
         stop: &AtomicBool,
-    ) -> Result<Vec<Committed>, StoreError> {
-        if stop.load(Ordering::SeqCst) {
-            return Ok(Vec::new());
-        }
-        self.events_after(position, limit)
+    ) -> Result<Option<Vec<Committed>>, StoreError> {
+        let _ = stop;
+        self.events_after(position, limit).map(Some)
     }
 
     /// A position at or past every write that committed an event so far, as
@@ -730,18 +723,15 @@ pub trait Reading: Send + Sync {
         Err(no_events())
     }
 
-    /// [`Reading::events_head`], given up once `stop` is set, as
-    /// [`Reading::events_placed_after_unless_stopped`] is. This default refuses where `stop` is
-    /// set before the read, and reads as [`Reading::events_head`] otherwise.
+    /// [`Reading::events_head`], given up as [`Reading::events_after_unless_stopped`] is: `None`
+    /// for a read given up while it waited, the head for one that did not wait or whose wait
+    /// ended first. This default, for a store whose reads do not wait, always reads.
     ///
     /// # Errors
-    /// As [`Reading::events_head`], and [`StoreError::Backend`] naming the stop where the read
-    /// was given up: a head it did not read is no head.
-    fn events_head_unless_stopped(&self, stop: &AtomicBool) -> Result<u64, StoreError> {
-        if stop.load(Ordering::SeqCst) {
-            return Err(given_up());
-        }
-        self.events_head()
+    /// As [`Reading::events_head`].
+    fn events_head_unless_stopped(&self, stop: &AtomicBool) -> Result<Option<u64>, StoreError> {
+        let _ = stop;
+        self.events_head().map(Some)
     }
 
     /// The id of the log of events the store keeps, as [`Store::events_id`] answers it; `0`

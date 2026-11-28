@@ -152,13 +152,13 @@ impl Reading for Gated {
         position: u64,
         limit: usize,
         stop: &AtomicBool,
-    ) -> Result<Vec<Committed>, StoreError> {
+    ) -> Result<Option<Vec<Committed>>, StoreError> {
         let _passed = self.gate.enter();
         self.reading
             .events_after_unless_stopped(position, limit, stop)
     }
 
-    fn events_head_unless_stopped(&self, stop: &AtomicBool) -> Result<u64, StoreError> {
+    fn events_head_unless_stopped(&self, stop: &AtomicBool) -> Result<Option<u64>, StoreError> {
         let _passed = self.gate.enter();
         self.reading.events_head_unless_stopped(stop)
     }

@@ -132,8 +132,9 @@ pub fn events(host: &mut Host) -> Answer {
 }
 
 /// What `GET /api/events` answers, read beside the host's thread through its `reader`, as
-/// [`events`] answers it ([`Reader::published`]); `503` where a reader stopped by its flag
-/// ([`Reader::stopped_by`]) gave the read up, as a listener's does once the run is stopping.
+/// [`events`] answers it ([`Reader::published`]). A reader stopped by its flag
+/// ([`Reader::stopped_by`]), as a listener's is once the run is stopping, answers `503` for a
+/// read it cut off while that read waited for the store; a read that completes answers normally.
 pub fn events_read(reader: &Reader) -> Answer {
     answered(reader.published())
 }
@@ -184,8 +185,8 @@ pub fn events_queried(host: &mut Host, query: &str) -> Answer {
 }
 
 /// What `GET /api/events?<query>` answers, read beside the host's thread through its `reader`,
-/// as [`events_queried`] answers it ([`Reader::published_after`]); `503` where the reader gave the
-/// read up, as [`events_read`] says.
+/// as [`events_queried`] answers it ([`Reader::published_after`]); `503` for a read the reader
+/// cut off while it waited, as [`events_read`] says.
 pub fn events_read_queried(reader: &Reader, query: &str) -> Answer {
     match ranged(query) {
         Ok(None) => events_read(reader),
@@ -299,8 +300,8 @@ pub fn history_queried(host: &mut Host, query: &str) -> Answer {
 }
 
 /// What `GET /api/history?<query>` answers, read beside the host's thread through its `reader`,
-/// as [`history_queried`] answers it ([`Reader::history`]); `503` where the reader gave the read
-/// up, as [`events_read`] says.
+/// as [`history_queried`] answers it ([`Reader::history`]); `503` for a read the reader cut off
+/// while it waited, as [`events_read`] says.
 pub fn history_read_queried(reader: &Reader, query: &str) -> Answer {
     match history_asked(reader.ir(), query) {
         Ok(asked) => {
@@ -405,15 +406,15 @@ fn limited(raw: &str) -> Result<usize, String> {
     }
 }
 
-/// `200` with `{"events": [...], "next": <cursor>}` for `history`; `400` for an entity the model
-/// does not declare, `500` naming why a store could not be read.
-/// What a read of the events or a history answers where its reader gave it up because the run
-/// stops taking work ([`HostError::ReadStopped`]): `503`, as every request that arrives once the
-/// run is stopping is answered (`story:leader-exits-promptly-on-sigterm`).
+/// What a read of the events or a history answers where its reader cut it off while it waited,
+/// because the run stops taking work ([`HostError::ReadStopped`]): `503`, as every request that
+/// arrives once the run is stopping is answered (`story:leader-exits-promptly-on-sigterm`).
 fn stopping() -> Answer {
     Answer::refusal(503, "the run is stopping")
 }
 
+/// `200` with `{"events": [...], "next": <cursor>}` for `history`; `400` for an entity the model
+/// does not declare, `500` naming why a store could not be read.
 fn historied(history: Result<History, HostError>) -> Answer {
     match history {
         Ok(history) => Answer {
