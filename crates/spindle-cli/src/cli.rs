@@ -303,9 +303,11 @@ pub enum Command {
     /// field removed or retyped while rows hold it, a non-optional field added that rows lack, a
     /// state removed while rows rest in it, an entity removed while it holds rows, and, one line
     /// each, an invariant the specification declares on an entity that stored rows break (a row
-    /// the invariant leaves unknown fits). A store with
-    /// rows and no record, as an earlier release wrote it, records the specification unchecked and
-    /// logs one line saying so.
+    /// the invariant leaves unknown fits). Each name, state and statement on such a line is printed
+    /// escaped, so a line stays one line: a backslash as `\\`, a line feed and a carriage return as
+    /// `\n` and `\r`, any other control character and U+2028 and U+2029 as `\u{..}`, a tab as it
+    /// is. A store with rows and no record, as an earlier release wrote it, records the
+    /// specification unchecked and logs one line saying so.
     Run {
         /// The specification directory.
         spec: PathBuf,

@@ -698,7 +698,10 @@ holds no row. A store with the same digest starts without a check.
 
 Where a row does not fit, `run` exits 3 before listening, or before reading a stdin line, and
 prints on stdout the store and each entity and field (or state, or invariant) that does not fit,
-with how many rows hold it, or break it: one line per broken invariant. Nothing is written, so
+with how many rows hold it, or break it: one line per broken invariant. Each name, state and
+statement on these lines is printed escaped, so a line stays one line and two texts never print
+alike: a backslash as `\\`, a line feed and a carriage return as `\n` and `\r`, any other control
+character and U+2028 and U+2029 as `\u{..}`, a tab as it is. Nothing is written, so
 the rows and the record stay as they were, and every store of the run is checked before any
 records. No migration is offered: serve the earlier specification, or move the rows by hand.
 

@@ -346,7 +346,8 @@ pub enum Misfit {
     Invariant {
         /// The entity.
         entity: String,
-        /// The invariant's statement, as its author wrote it.
+        /// The invariant's statement, as its author wrote it; [`Misfit`]'s `Display` prints it
+        /// escaped, as every text a misfit names ([`OneLine`]).
         invariant: String,
         /// How many rows break it.
         rows: usize,

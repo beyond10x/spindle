@@ -34,7 +34,10 @@ are Spindle's releases.
   stored row under each invariant the new specification declares on the row's entity, as a row at
   rest is judged, and exits 3 before listening or reading stdin, printing one line per broken
   invariant with the entity, the statement and how many stored rows break it
-  (`spindle_kernel::Misfit::Invariant`); a row the invariant leaves unknown fits. Before, only
+  (`spindle_kernel::Misfit::Invariant`); a row the invariant leaves unknown fits. Every misfit
+  line, of any kind, prints each name, state and statement escaped so that it stays one line: a
+  backslash as `\\`, a line feed and a carriage return as `\n` and `\r`, any other control
+  character and U+2028 and U+2029 as `\u{..}`, a tab as it is. Before, only
   the rows' fields and states were compared, so a run started over rows its specification does
   not admit. The record is unchanged, so a row that already broke an unchanged invariant now
   refuses the next start under another digest. On SQLite and PostgreSQL alike
