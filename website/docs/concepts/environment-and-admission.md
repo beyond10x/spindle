@@ -684,18 +684,23 @@ row does not fit when:
   field is counted
 - a non-optional field is added, or a field is made required, that it lacks
 - the lifecycle state it rests in is removed
+- it breaks an invariant the new specification declares on its entity, judged as a row at rest is:
+  a row the invariant leaves unknown, such as one lacking a value the invariant reads, fits. Every
+  invariant of the entity is judged, also one the earlier specification declared, since the record
+  keeps none, so a row that broke an unchanged invariant refuses the next start under another
+  digest
 
 Otherwise `run` records the new specification and starts. Examples are an optional field added, a
 field made optional, or made required where every row holds it, an enum value added, a struct
-member added as optional, a newtype prefix, alphabet or invariant every stored value meets, a new
-entity or state, and any change to an entity that holds no row. A store with the same digest
-starts without a check. An invariant added to the entity itself is not checked against the rows.
+member added as optional, a newtype prefix, alphabet or invariant every stored value meets, an
+entity invariant every stored row holds, a new entity or state, and any change to an entity that
+holds no row. A store with the same digest starts without a check.
 
 Where a row does not fit, `run` exits 3 before listening, or before reading a stdin line, and
-prints on stdout the store and each entity and field (or state) that does not fit, with how many
-rows hold it. Nothing is written, so the rows and the record stay as they were, and every store of
-the run is checked before any records. No migration is offered: serve the earlier specification,
-or move the rows by hand.
+prints on stdout the store and each entity and field (or state, or invariant) that does not fit,
+with how many rows hold it, or break it: one line per broken invariant. Nothing is written, so
+the rows and the record stay as they were, and every store of the run is checked before any
+records. No migration is offered: serve the earlier specification, or move the rows by hand.
 
 ```text
 refused: the store of archive holds rows this specification cannot read

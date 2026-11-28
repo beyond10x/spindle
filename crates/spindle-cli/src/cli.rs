@@ -301,7 +301,9 @@ pub enum Command {
     /// otherwise it exits 3 before listening or reading stdin, writing nothing, and prints on
     /// stdout each entity and field (or state) whose stored rows the specification cannot read: a
     /// field removed or retyped while rows hold it, a non-optional field added that rows lack, a
-    /// state removed while rows rest in it, an entity removed while it holds rows. A store with
+    /// state removed while rows rest in it, an entity removed while it holds rows, and, one line
+    /// each, an invariant the specification declares on an entity that stored rows break (a row
+    /// the invariant leaves unknown fits). A store with
     /// rows and no record, as an earlier release wrote it, records the specification unchecked and
     /// logs one line saying so.
     Run {

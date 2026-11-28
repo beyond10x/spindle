@@ -8,8 +8,13 @@
 //! the new specification cannot read a stored row ([`Misfit`]): a field removed while a row holds
 //! a value of it, a field retyped while a row holds a value the new type does not read, a
 //! non-optional field added, or made required, while rows lack it, a lifecycle state removed
-//! while a row rests in it, or the entity removed or moved to another component's store. Nothing
-//! is migrated.
+//! while a row rests in it, the entity removed or moved to another component's store, or an
+//! invariant the new model declares on the entity that a stored row breaks. Nothing is migrated.
+//!
+//! Each invariant the new model declares on an entity is judged over every stored row of it, as
+//! a row at rest is judged ([`crate::at_rest`]): a row that leaves it `Unknown` holds it
+//! (`story:entity-invariant-over-stored-rows`). The record keeps no invariant, so each is judged
+//! whenever the digest differs, also one the recorded specification declared.
 //!
 //! A change fits when every stored value reads under the new shape, judged by value where the
 //! shape alone would refuse a readable row (coordinator decision D). Types are compared by
@@ -29,11 +34,13 @@ use std::fmt;
 use std::sync::Arc;
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::{ResolvedBody, ResolvedTypeRef};
+use ess_compiler::ir::{ResolvedBody, ResolvedEntity, ResolvedTypeRef};
 use ess_domain::entity::Invariant;
+use ess_primitives::predicate::Truth;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::facts::Facts;
 use crate::store::{Store, StoreError};
 
 /// The specification a store was written under: the model's digest and the shape of each entity
@@ -173,7 +180,9 @@ impl Shapes {
                     .collect(),
                 _ => BTreeMap::new(),
             };
-            let held = Held::of(store, entity, self.model.ir(), &reread)?;
+            // The entity as the new model declares it, every stored row judged by its invariants.
+            let judged = shape.and(self.model.ir()).zip(self.model.entity(entity));
+            let held = Held::of(store, entity, self.model.ir(), &reread, judged)?;
             if held.rows == 0 {
                 continue;
             }
@@ -191,6 +200,17 @@ impl Shapes {
                 });
                 continue;
             };
+            if let Some((_, declared)) = judged {
+                for (invariant, rows) in declared.invariants.iter().zip(&held.broken) {
+                    if *rows > 0 {
+                        misfits.push(Misfit::Invariant {
+                            entity: entity.clone(),
+                            invariant: invariant.statement.clone(),
+                            rows: *rows,
+                        });
+                    }
+                }
+            }
             let Some(was) = was else {
                 continue;
             };
@@ -321,6 +341,16 @@ pub enum Misfit {
         /// How many rows rest in it.
         rows: usize,
     },
+    /// An invariant the entity declares does not hold of rows that rest, judged as a row at rest
+    /// is ([`crate::at_rest`]): a row that leaves it `Unknown` holds it.
+    Invariant {
+        /// The entity.
+        entity: String,
+        /// The invariant's statement, as its author wrote it.
+        invariant: String,
+        /// How many rows break it.
+        rows: usize,
+    },
 }
 
 impl Misfit {
@@ -333,7 +363,8 @@ impl Misfit {
             | Self::Removed { entity, .. }
             | Self::Retyped { entity, .. }
             | Self::Required { entity, .. }
-            | Self::State { entity, .. } => entity,
+            | Self::State { entity, .. }
+            | Self::Invariant { entity, .. } => entity,
         }
     }
 
@@ -344,7 +375,10 @@ impl Misfit {
             Self::Removed { field, .. }
             | Self::Retyped { field, .. }
             | Self::Required { field, .. } => Some(field),
-            Self::Entity { .. } | Self::Moved { .. } | Self::State { .. } => None,
+            Self::Entity { .. }
+            | Self::Moved { .. }
+            | Self::State { .. }
+            | Self::Invariant { .. } => None,
         }
     }
 }
@@ -399,6 +433,15 @@ impl fmt::Display for Misfit {
                 f,
                 "{entity} state {state}: the state is removed; stored rows resting in it: {rows}"
             ),
+            Self::Invariant {
+                entity,
+                invariant,
+                rows,
+            } => write!(
+                f,
+                "{entity} invariant `{invariant}`: the invariant does not hold; stored rows \
+                 breaking it: {rows}"
+            ),
         }
     }
 }
@@ -408,12 +451,17 @@ impl Model {
         self.0.as_deref()
     }
 
-    /// The type of `entity`'s field `field` in the model.
-    fn field(&self, entity: &str, field: &str) -> Option<&ResolvedTypeRef> {
+    /// The entity `entity` as the model declares it.
+    fn entity(&self, entity: &str) -> Option<&ResolvedEntity> {
         self.ir()?
             .entities()
             .values()
-            .find(|candidate| candidate.name.to_string() == entity)?
+            .find(|candidate| candidate.name.to_string() == entity)
+    }
+
+    /// The type of `entity`'s field `field` in the model.
+    fn field(&self, entity: &str, field: &str) -> Option<&ResolvedTypeRef> {
+        self.entity(entity)?
             .fields
             .iter()
             .find(|candidate| candidate.name == field)
@@ -423,13 +471,9 @@ impl Model {
     /// The component that owns `entity`'s domain in the model, where the model declares the
     /// entity.
     fn owner(&self, entity: &str) -> Option<String> {
-        let ir = self.ir()?;
-        let domain = &ir
-            .entities()
-            .values()
-            .find(|candidate| candidate.name.to_string() == entity)?
-            .domain;
-        ir.components()
+        let domain = &self.entity(entity)?.domain;
+        self.ir()?
+            .components()
             .values()
             .find(|component| component.owns.contains(domain))
             .map(|component| component.name.to_string())
@@ -437,28 +481,45 @@ impl Model {
 }
 
 /// What the rows of one entity hold: how many rest, how many hold each field (a value, not
-/// `null`), how many rest in each state, and, of each field read again, how many hold a value
-/// its new type does not read.
+/// `null`), how many rest in each state, of each field read again, how many hold a value its new
+/// type does not read, and of each invariant judged, in the order declared, how many break it.
 #[derive(Default)]
 struct Held {
     rows: usize,
     fields: BTreeMap<String, usize>,
     states: BTreeMap<String, usize>,
     unread: BTreeMap<String, usize>,
+    broken: Vec<usize>,
 }
 
 impl Held {
     /// Reads every row of `entity`; each value of a field `reread` names is read under its new
-    /// type in `ir`, and is unread where either is missing.
+    /// type in `ir`, and is unread where either is missing. Where `judged` gives the entity as a
+    /// model declares it, each row is judged by each of its invariants as a row at rest is
+    /// (`rests`, `execute.rs`): one the row leaves `Unknown` it holds.
     fn of(
         store: &mut dyn Store,
         entity: &str,
         ir: Option<&EssIr>,
         reread: &BTreeMap<&str, Option<&ResolvedTypeRef>>,
+        judged: Option<(&EssIr, &ResolvedEntity)>,
     ) -> Result<Self, StoreError> {
-        let mut held = Self::default();
-        for (_, stored) in store.scan(entity)? {
+        let mut held = Self {
+            broken: vec![0; judged.map_or(0, |(_, declared)| declared.invariants.len())],
+            ..Self::default()
+        };
+        for (identity, stored) in store.scan(entity)? {
             held.rows += 1;
+            if let Some((model, declared)) =
+                judged.filter(|(_, declared)| !declared.invariants.is_empty())
+            {
+                let facts = Facts::row(model, declared, &identity, &stored.row, None);
+                for (invariant, broken) in declared.invariants.iter().zip(&mut held.broken) {
+                    if invariant.predicate.evaluate(&facts) == Truth::False {
+                        *broken += 1;
+                    }
+                }
+            }
             *held.states.entry(stored.row.state).or_default() += 1;
             for (field, value) in stored.row.fields {
                 if value.is_null() {
