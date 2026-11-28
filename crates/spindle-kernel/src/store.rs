@@ -8,6 +8,7 @@
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
 use serde::{Deserialize, Serialize};
@@ -670,6 +671,28 @@ pub trait Reading: Send + Sync {
             .into_iter()
             .map(|committed| (committed.position, committed))
             .collect())
+    }
+
+    /// [`Reading::events_placed_after`], given up once `stop` is set: a read that waits, for its
+    /// turn or for the feed to answer the store's own writes (PostgreSQL's withholds a write while
+    /// an older transaction is open anywhere on the server), looks at `stop` while it waits and
+    /// answers no event once it is set, so the thread that set it, as an egress stopping at exit,
+    /// waits at most one such look for it (`story:leader-exits-promptly-on-sigterm`). This
+    /// default, for a store whose reads do not wait, answers no event where `stop` is set before
+    /// the read, and reads as [`Reading::events_placed_after`] otherwise.
+    ///
+    /// # Errors
+    /// As [`Reading::events_placed_after`].
+    fn events_placed_after_unless_stopped(
+        &self,
+        position: u64,
+        limit: usize,
+        stop: &AtomicBool,
+    ) -> Result<Vec<(u64, Committed)>, StoreError> {
+        if stop.load(Ordering::SeqCst) {
+            return Ok(Vec::new());
+        }
+        self.events_placed_after(position, limit)
     }
 
     /// A position at or past every write that committed an event so far, as

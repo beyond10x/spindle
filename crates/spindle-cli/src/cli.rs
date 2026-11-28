@@ -161,7 +161,11 @@ pub enum Command {
     /// arrives is answered `503` at once; the request under way finishes, and those already
     /// waiting are answered in arrival order for up to `--drain` seconds. Then, as when the seed
     /// stops it, it takes no further request, writes every answer it has given, answers each
-    /// request still waiting `503`, and exits. `GET /__spindle/live` answers `200` while the
+    /// request still waiting `503`, and exits. It exits within `--drain` (counted only while
+    /// requests are waiting), plus the longest `timeout_ms` of a call `[egress]` posts to (a post
+    /// under way finishes), plus 5 s of the signal: each egress cursor is saved first, then each
+    /// lease is released, a release waiting at most 1 s, so a run standing by takes over at once
+    /// and does not post again what this one posted. `GET /__spindle/live` answers `200` while the
     /// run's thread answers a request it took or has asked for one within 60 s, `503` once it
     /// has done neither, with or without `--observe`. On a store kept in PostgreSQL with the
     /// setting `database_lease` a run that finds another process holding the lease of a
@@ -566,8 +570,9 @@ pub enum Command {
         /// once; the request under way always finishes, and so does one taken within the bound,
         /// but a `POST /api/reset`, answered `503` with nothing emptied. A bound too large for the
         /// clock sets none: the drain ends once no request is waiting. Each request still waiting
-        /// once the bound has passed is answered `503`, then the run exits 130 or 143. Only where
-        /// `run` serves HTTP.
+        /// once the bound has passed is answered `503`, then the run exits 130 or 143, within
+        /// this bound, the longest `timeout_ms` of an `[egress]` call and 5 s of the signal. Only
+        /// where `run` serves HTTP.
         #[arg(
             long,
             value_name = "SECONDS",

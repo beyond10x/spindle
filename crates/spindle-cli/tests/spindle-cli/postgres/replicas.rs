@@ -549,6 +549,187 @@ fn accepted(webhook: &super::super::egress::Webhook, count: usize) {
     }
 }
 
+/// The bound a leader exits within after SIGTERM (`run --help`): `--drain`, 20 s by default but
+/// counted only while requests wait, so 0 s here; the egress call's `timeout_ms`, 2000 in the
+/// egress tests' environment; and the teardown allowance of 5 s.
+const EXIT_BOUND: Duration = Duration::from_secs(2 + 5);
+
+/// The longest pause between two posts of one event by an egress lane (`BACKOFF_CAP`): the most
+/// the signal may come after the older transaction opened, so that it is held at most 13 s.
+const RETRY_CAP: Duration = Duration::from_secs(5);
+
+/// `story:leader-exits-promptly-on-sigterm`: a leader whose egress lane waits for the feed, which
+/// withholds the cursor the leader saved behind a transaction another session opened before it,
+/// exits within [`EXIT_BOUND`] of SIGTERM while that transaction is still open, the cursor saved
+/// and its leases released: the standby takes over at once and does not post t1 again.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_leader_exits_within_the_bound_under_an_open_transaction() {
+    use super::super::egress::Webhook;
+
+    const OPENED: &str = "tasks.board.TaskOpened";
+    let webhook = Webhook::start(500);
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment =
+        super::super::egress::environment(directory.path(), "postgres", &webhook.url(), &[OPENED]);
+    let schema = schema();
+    let (leader, standby) = leader_and_standby(&environment, &schema);
+    let (status, answer) = leader.open("t1");
+    assert_eq!(status, 201, "{answer}");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while webhook.received().is_empty() {
+        assert!(Instant::now() < deadline, "the leader never posted t1");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // T0: another session opens a transaction with an id, so the feed withholds every write
+    // committed after it until it ends.
+    let holder = Holder::open();
+    webhook.answer_with(200);
+    accepted(&webhook, 1);
+    // The leader saved its cursor after T0, and its lane reads the feed again, waiting for it.
+    let saved = Instant::now() + Duration::from_secs(5);
+    while super::sql(&[format!(
+        "SELECT count(*) FROM {schema}.spindle_board_events WHERE event_name = 'spindle.egress'"
+    )])[0]
+        == "0"
+    {
+        assert!(Instant::now() < saved, "the leader never saved its cursor");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::thread::sleep(Duration::from_millis(300));
+
+    let signalled = Instant::now();
+    let since = signalled.saturating_duration_since(holder.opened);
+    assert!(
+        since <= RETRY_CAP,
+        "the signal came {since:?} after the older transaction opened, past {RETRY_CAP:?}"
+    );
+    holder.end_at(signalled + EXIT_BOUND + Duration::from_secs(1));
+    let mut leader = leader;
+    leader.signal(rustix::process::Signal::TERM);
+    let (status, exited) = exit_status_within(&mut leader, signalled + EXIT_BOUND);
+    eprintln!(
+        "the leader exited {:?} after SIGTERM",
+        exited.saturating_duration_since(signalled)
+    );
+    assert_eq!(status.code(), Some(143), "{}", leader.printed());
+
+    let took = standby
+        .line_by(TOOK, exited + Duration::from_millis(1_334))
+        .unwrap_or_else(|| {
+            panic!(
+                "the standby did not take the released lease within 1.33 s of the exit: {}",
+                standby.printed()
+            )
+        });
+    eprintln!(
+        "the standby took the lease {:?} after the exit",
+        took.saturating_duration_since(exited)
+    );
+    standby.ready_by(exited + Duration::from_secs(10));
+    std::thread::sleep(Duration::from_secs(3));
+    holder.join();
+
+    let received = webhook.received();
+    let printed = format!("{received:?}");
+    assert!(
+        received.iter().all(
+            |posted| posted.body["event"] == OPENED && posted.body["fields"]["task_id"] == "t1"
+        ),
+        "only t1 was posted: {printed}"
+    );
+    let statuses: Vec<u16> = received.iter().map(|posted| posted.status).collect();
+    assert_eq!(statuses.first(), Some(&500), "{printed}");
+    assert_eq!(
+        statuses.iter().filter(|status| **status == 200).count(),
+        1,
+        "t1 was accepted once: {printed}"
+    );
+    assert_eq!(
+        statuses.last(),
+        Some(&200),
+        "the old leader's accepted post was the last; the new leader posted nothing: {printed}"
+    );
+}
+
+/// Waits until `replica` exits, at most until `deadline`: its status, and the instant the test
+/// read it.
+fn exit_status_within(replica: &mut Replica, deadline: Instant) -> (ExitStatus, Instant) {
+    loop {
+        if let Some(status) = replica.child.try_wait().expect("the run is waited on") {
+            return (status, Instant::now());
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the run did not exit within the bound: {}",
+            replica.printed()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// A transaction another session holds open with a transaction id, from [`Holder::opened`] until
+/// the instant [`Holder::end_at`] names, or for 13 s.
+struct Holder {
+    opened: Instant,
+    end: mpsc::Sender<Instant>,
+    thread: std::thread::JoinHandle<()>,
+}
+
+impl Holder {
+    /// The longest the transaction is held.
+    const MOST: Duration = Duration::from_secs(13);
+
+    fn open() -> Self {
+        let url = owner_url();
+        let (opened, open) = mpsc::channel();
+        let (end, ending) = mpsc::channel::<Instant>();
+        let thread = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("a runtime");
+            let (mut client, connection) = runtime
+                .block_on(tokio_postgres::connect(&url, tokio_postgres::NoTls))
+                .expect("a connection of the test's own");
+            let driver = runtime.spawn(connection);
+            let transaction = runtime
+                .block_on(client.transaction())
+                .expect("a transaction");
+            runtime
+                .block_on(transaction.simple_query("SELECT pg_current_xact_id()"))
+                .expect("the transaction takes an id");
+            let began = Instant::now();
+            opened.send(began).expect("the test waits");
+            let most = began + Self::MOST;
+            let until = ending
+                .recv_timeout(Self::MOST)
+                .map_or(most, |until| until.min(most));
+            std::thread::sleep(until.saturating_duration_since(Instant::now()));
+            runtime
+                .block_on(transaction.commit())
+                .expect("the transaction ends");
+            drop(client);
+            let _ = runtime.block_on(driver);
+        });
+        let opened = open.recv().expect("the transaction is open");
+        Self {
+            opened,
+            end,
+            thread,
+        }
+    }
+
+    fn end_at(&self, until: Instant) {
+        let _ = self.end.send(until);
+    }
+
+    fn join(self) {
+        self.thread.join().expect("the transaction ends");
+    }
+}
+
 /// Whether a database session writing to `schema`'s tables is inside a write transaction, between
 /// two of its statements, holding what it wrote or locked (it has a transaction id), for at least
 /// 150 ms. The session is found by the locks it holds on the tables of `schema`, which only the

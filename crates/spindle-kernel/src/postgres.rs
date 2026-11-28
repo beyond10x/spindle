@@ -466,22 +466,37 @@ impl Lease {
             .as_ref()
             .is_none_or(tokio_postgres::Client::is_closed)
         {
-            let client = session(&self.database, &self.runtime)?;
-            // A statement waits for a write holding the lease row no longer than a third of the
-            // term, so a renewal is tried again before the term runs out.
-            let wait = (self.term / 3).max(Duration::from_millis(200)).as_millis();
-            self.runtime
-                .block_on(client.batch_execute(&format!(
-                    "SET statement_timeout = {wait}; SET lock_timeout = {wait}"
-                )))
-                .map_err(|error| {
-                    StoreError::Backend(format!(
-                        "the connection for the leases did not take its timeouts: {error}"
-                    ))
-                })?;
-            self.client = Some(client);
+            self.client = Some(session(&self.database, &self.runtime)?);
+            if let Err(error) = self.timeouts(self.wait()) {
+                self.client = None;
+                return Err(error);
+            }
         }
         Ok(())
+    }
+
+    /// How long a statement waits for a write holding the lease row: a third of the term, so a
+    /// renewal is tried again before the term runs out.
+    fn wait(&self) -> Duration {
+        (self.term / 3).max(Duration::from_millis(200))
+    }
+
+    /// Sets the statement and lock timeouts of the connection to `wait`.
+    fn timeouts(&self, wait: Duration) -> Result<(), StoreError> {
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| StoreError::Backend("no connection for the lease".to_owned()))?;
+        let wait = wait.as_millis();
+        self.runtime
+            .block_on(client.batch_execute(&format!(
+                "SET statement_timeout = {wait}; SET lock_timeout = {wait}"
+            )))
+            .map_err(|error| {
+                StoreError::Backend(format!(
+                    "the connection for the leases did not take its timeouts: {error}"
+                ))
+            })
     }
 
     /// `error` of a statement on the lease of `component`'s tables.
@@ -631,15 +646,32 @@ impl Lease {
     }
 
     /// Ends the lease of `component`'s tables held under `token` now, so a process standing by
-    /// takes it at its next poll; nothing where another process took it.
+    /// takes it at its next poll; nothing where another process took it. Its statement waits at
+    /// most 1 s (`RELEASE_WAIT`) for itself and for the lease row's lock, whatever the term, so a
+    /// process that releases its leases as it exits waits at most that per lease
+    /// (`story:leader-exits-promptly-on-sigterm`, D3 A); the connection's timeouts are set back
+    /// after it.
     ///
     /// # Errors
-    /// [`StoreError::Backend`] where the lease cannot be written.
+    /// [`StoreError::Backend`] where the lease cannot be written, as when its row stayed locked
+    /// for 1 s: the lease then runs out by its time.
     pub fn release(&mut self, component: &str, token: u64) -> Result<(), StoreError> {
         held().remove(&place(&self.database, &prefix(component)));
-        self.run(component, Step::Release(token)).map(drop)
+        self.connected()?;
+        let wait = self.wait();
+        self.timeouts(wait.min(RELEASE_WAIT))?;
+        let released = self.run(component, Step::Release(token)).map(drop);
+        // A connection that did not take its timeouts back is made again for the next statement.
+        if self.client.is_some() && self.timeouts(wait).is_err() {
+            self.client = None;
+        }
+        released
     }
 }
+
+/// The longest a release of a lease waits for its statement and for the lease row's lock
+/// ([`Lease::release`]).
+const RELEASE_WAIT: Duration = Duration::from_secs(1);
 
 /// The longest lease a process may hold from its last renewal: a day.
 pub const LEASE_MAX: Duration = Duration::from_secs(86_400);

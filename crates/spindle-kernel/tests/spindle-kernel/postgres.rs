@@ -223,6 +223,55 @@ fn a_writer_reads_its_own_events_while_an_older_transaction_is_open() {
     );
 }
 
+/// `story:leader-exits-promptly-on-sigterm` (D1 A): a read of the feed by position through the
+/// reading handle, waiting for the store's own write that an older transaction withholds, gives
+/// up once its stop flag is set and answers no event, while that transaction is still open: an
+/// egress lane stopped at exit leaves its read at once.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_stopped_feed_read_returns_while_an_older_transaction_is_open() {
+    let database = database();
+    let mut store = open(&database, &fresh("stopped"));
+    let reading = store
+        .reading()
+        .expect("a PostgreSQL store reads beside its writer");
+    let holder = older_transaction(Duration::from_secs(2));
+    let mut change = created("west");
+    change.events = vec![spindle_kernel::Event {
+        name: "apart.match.Opened".to_owned(),
+        payload: serde_json::Map::new(),
+    }];
+    store.commit(&change).expect("the match is created");
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopping = Arc::clone(&stop);
+    let (answered, answer) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let placed = reading.events_placed_after_unless_stopped(0, 64, &stopping);
+        let _ = answered.send((Instant::now(), placed.map(|placed| placed.len())));
+    });
+    assert!(
+        answer.recv_timeout(Duration::from_millis(300)).is_err(),
+        "the read waits for the store's own write, which the older transaction withholds"
+    );
+    let stopped = Instant::now();
+    stop.store(true, Ordering::SeqCst);
+    let (returned, placed) = answer
+        .recv_timeout(Duration::from_millis(500))
+        .expect("the stopped read returns within 0.5 s, the older transaction still open");
+    assert!(
+        returned.saturating_duration_since(stopped) < Duration::from_millis(500),
+        "the read returned {:?} after its stop",
+        returned.saturating_duration_since(stopped)
+    );
+    assert_eq!(
+        placed.expect("the stopped read answers"),
+        0,
+        "it answers no event"
+    );
+    reader.join().expect("the reader ends");
+    holder.join().expect("the older transaction ends");
+}
+
 #[test]
 fn a_component_keeps_its_tables_under_spindle_and_its_name() {
     assert_eq!(postgres_prefix("rally-table"), "spindle_rally_table");
@@ -795,4 +844,67 @@ fn a_commit_under_a_taken_lease_is_refused() {
     );
     assert_eq!(loaded.version, 1);
     drop(second);
+}
+
+/// `story:leader-exits-promptly-on-sigterm` (D3 A): the release of a lease, as a run makes it at
+/// exit, waits at most 1 s for its statement and for the lease row's lock whatever the lease's
+/// term, where a renewal waits up to a third of it: under a lease of an hour, with another session
+/// holding the lease row `FOR UPDATE`, the release answers its error within 1.5 s.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_release_under_a_long_lease_waits_at_most_one_second() {
+    let database = database();
+    let component = fresh("released");
+    let mut lease =
+        Lease::connect(&database, Duration::from_secs(3600)).expect("a run connects for the lease");
+    let token = lease
+        .take(&component)
+        .expect("the lease is read")
+        .expect("no process holds the lease: the run takes it");
+    let table = format!(
+        "{}.{}_p_lease",
+        database.schema,
+        postgres_prefix(&component)
+    );
+    // Another session holds the lease row locked until the release answered, or for 10 s.
+    let url = database.url.clone();
+    let (locked, row) = std::sync::mpsc::channel();
+    let (answered, release) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        let (mut client, connection) = runtime
+            .block_on(tokio_postgres::connect(&url, tokio_postgres::NoTls))
+            .expect("a second connection");
+        let driver = runtime.spawn(connection);
+        let transaction = runtime
+            .block_on(client.transaction())
+            .expect("a transaction");
+        runtime
+            .block_on(transaction.simple_query(&format!("SELECT 1 FROM {table} FOR UPDATE")))
+            .expect("the lease row is locked");
+        locked.send(()).expect("the test waits");
+        let _ = release.recv_timeout(Duration::from_secs(10));
+        runtime
+            .block_on(transaction.commit())
+            .expect("the lock is let go");
+        drop(client);
+        let _ = runtime.block_on(driver);
+    });
+    row.recv().expect("the lease row is locked");
+    let started = Instant::now();
+    let released = lease.release(&component, token);
+    let took = started.elapsed();
+    let _ = answered.send(());
+    holder.join().expect("the other session ends");
+    assert!(
+        took < Duration::from_millis(1500),
+        "the release waited {took:?} for the locked lease row: {released:?}"
+    );
+    assert!(
+        released.is_err(),
+        "a release that waited out its lock answers an error: {released:?}"
+    );
 }
