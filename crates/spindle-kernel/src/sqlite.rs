@@ -2956,10 +2956,12 @@ pub(crate) fn meta(request_hash: String) -> CommandMeta {
 }
 
 /// `error` as the store's: a fence's refusal by its code alone, which names what refused the
-/// write ([`LogStore::fence`]).
+/// write ([`LogStore::fence`]); a deadline, which eventlog returns only before a commit begins
+/// (after, `UnknownCommit`), as [`StoreError::Busy`].
 pub(crate) fn backend(error: EventLogError) -> StoreError {
     match error {
         EventLogError::GuardRefused { code } => StoreError::Backend(code),
+        deadline @ EventLogError::Deadline { .. } => StoreError::Busy(deadline.to_string()),
         other => StoreError::Backend(other.to_string()),
     }
 }
@@ -2977,6 +2979,56 @@ mod tests {
     /// A store on a SQLite database in memory.
     fn store() -> SqliteStore {
         SqliteStore::open(Path::new(":memory:")).expect("the store opens")
+    }
+
+    /// `story:new-leader-write-while-old-paused`, D1 A: eventlog's deadline is the store's busy
+    /// error, displayed as every other store error; a fence's refusal stays its code, and every
+    /// other error stays [`StoreError::Backend`].
+    #[test]
+    fn a_deadline_is_the_busy_store_error() {
+        let deadline = EventLogError::Deadline {
+            operation: "database statement or lock",
+        };
+        let text = deadline.to_string();
+        let busy = backend(deadline);
+        assert!(
+            matches!(&busy, StoreError::Busy(detail) if *detail == text),
+            "{busy:?}"
+        );
+        assert_eq!(busy.to_string(), format!("store: {text}"));
+        let store_operation = backend(EventLogError::Deadline {
+            operation: "store operation",
+        });
+        assert!(
+            matches!(store_operation, StoreError::Busy(_)),
+            "{store_operation:?}"
+        );
+
+        let refused = backend(EventLogError::GuardRefused {
+            code: "fenced".to_owned(),
+        });
+        assert!(
+            matches!(&refused, StoreError::Backend(code) if code == "fenced"),
+            "{refused:?}"
+        );
+        for other in [
+            EventLogError::UnknownCommit,
+            EventLogError::Overloaded,
+            EventLogError::Closed,
+            EventLogError::Backend("down".to_owned()),
+            EventLogError::Committed {
+                cleanup: Box::new(EventLogError::Deadline {
+                    operation: "store operation",
+                }),
+            },
+        ] {
+            let text = other.to_string();
+            let mapped = backend(other);
+            assert!(
+                matches!(&mapped, StoreError::Backend(detail) if *detail == text),
+                "{mapped:?}"
+            );
+        }
     }
 
     fn change(identity: &str, expected: Option<u64>, state: &str) -> Change {

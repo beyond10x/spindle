@@ -1128,3 +1128,75 @@ fn a_release_under_a_long_lease_waits_at_most_one_second() {
         "a release that waited out its lock answers an error: {released:?}"
     );
 }
+
+/// `story:new-leader-write-while-old-paused`, D1 A: a commit held behind the component's
+/// publication lock, which a session outside spindle holds exclusive as eventlog's feed read
+/// takes it (`publication_gate`: `pg_advisory_xact_lock` on eventlog's `ADVISORY_KEY` for the
+/// coordinate `["<prefix>","publication"]`, in a session whose `search_path` is the store's
+/// schema), waits out the store's lock wait and returns [`spindle_kernel::StoreError::Busy`],
+/// displayed `store: …` as every store error; it appends nothing.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_commit_behind_the_publication_lock_is_busy() {
+    let database = database();
+    let component = fresh("busy");
+    let mut store = open(&database, &component);
+    let set = format!("SET search_path TO {}", database.schema);
+    let coordinate = serde_json::to_string(&[postgres_prefix(&component).as_str(), "publication"])
+        .expect("the coordinate");
+    let url = database.url.clone();
+    let (locked, held) = std::sync::mpsc::channel();
+    let (answered, end) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        let (mut client, connection) = runtime
+            .block_on(tokio_postgres::connect(&url, tokio_postgres::NoTls))
+            .expect("a second connection");
+        let driver = runtime.spawn(connection);
+        runtime
+            .block_on(client.batch_execute(&set))
+            .expect("the schema is set");
+        let transaction = runtime
+            .block_on(client.transaction())
+            .expect("a transaction");
+        runtime
+            .block_on(transaction.query_one(
+                "SELECT pg_advisory_xact_lock(hashtextextended(current_database() || ':' || \
+                 current_schema() || $1,0))::text",
+                &[&coordinate],
+            ))
+            .expect("the publication lock is taken");
+        locked.send(()).expect("the test waits");
+        let _ = end.recv_timeout(Duration::from_secs(10));
+        runtime
+            .block_on(transaction.commit())
+            .expect("the lock is let go");
+        drop(client);
+        let _ = runtime.block_on(driver);
+    });
+    held.recv().expect("the publication lock is held");
+    let started = Instant::now();
+    let committed = store.commit(&created("west"));
+    let took = started.elapsed();
+    let _ = answered.send(());
+    holder.join().expect("the other session ends");
+    let error = committed.expect_err("a commit behind the publication lock fails");
+    assert!(
+        matches!(error, spindle_kernel::StoreError::Busy(_)),
+        "{error:?}"
+    );
+    assert!(error.to_string().starts_with("store: "), "{error}");
+    assert!(took < Duration::from_secs(5), "the commit waited {took:?}");
+    assert_eq!(
+        store
+            .load("apart.match.Match", &json!("one"))
+            .expect("the store reads"),
+        None,
+        "the failed commit wrote no row"
+    );
+    let scan = store.scan("apart.match.Match").expect("the store scans");
+    assert_eq!(scan.version, 0, "the failed commit appended nothing");
+}
