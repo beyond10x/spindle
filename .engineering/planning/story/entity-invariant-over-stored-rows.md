@@ -33,7 +33,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 11
+revision: 12
 ---
 ## Outcome
 
@@ -69,6 +69,16 @@ existing `spec_change.rs` cases.
 - `an_entity_invariant_every_stored_row_holds_fits` (same file): no misfit.
 - `an_entity_invariant_a_stored_row_leaves_unknown_fits` (same file): a row on which the invariant
   evaluates `Unknown` fits.
+- `an_invariant_both_models_declare_is_judged_over_the_stored_rows` (same file, D1 A): the
+  recorded shapes and the new model both declare the same invariant on the entity, the two
+  specifications' digests differ in another field, and a stored row breaks the invariant (written
+  under a third model that lacks it); `Shapes::misfits` returns one invariant misfit naming the
+  entity, the statement and 1 row. The same case asserts that the recorded `Shape` serialises with
+  only `fields` and `states`, so the record format is unchanged.
+- `a_row_breaking_two_invariants_misfits_once_per_invariant` (same file, D2 A): the new model
+  declares two invariants on `archive.shelf.Book` and one stored row breaks both;
+  `Shapes::misfits` returns two invariant misfits, each naming its own statement and 1 row, and
+  their `Display` gives two lines.
 - `an_entity_invariant_a_stored_row_breaks_exits_before_listening`
   (`crates/spindle-cli/tests/spindle-cli/spec_change.rs`, default test step): a book stored under
   `spec-change-before` breaks the invariant of the new fixture

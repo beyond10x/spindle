@@ -76,6 +76,10 @@ After plan-critic round 1 (`review-result:wave33-acc-r1`, `wave33-par-r1`, `wave
   bounds, the timings each unit reports and that `story:postgres-lane-margin` merges first
   (`wave33-sco-r1`, `wave33-des-r1`).
 
+## Revision round 2
+
+- `story:entity-invariant-over-stored-rows`: two kernel cases added on `wave33-acc-r2`: an invariant both models declare is judged over the stored rows (D1 A, record format unchanged), and a row breaking two invariants gives two misfits (D2 A).
+
 ## Units
 
 | unit | story | surface | branch | tree |
