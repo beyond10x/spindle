@@ -237,6 +237,8 @@ makes, as ESS's served application makes them, are `{"refused": "<why>"}`:
 | `413` | a body announced over 1 MiB |
 
 A command the runtime cannot complete answers `501` with `{"refused", "committed"}`. A command
-whose store did not answer within its deadline, as a write held behind a lock another database
-session holds, answers `503` with `{"refused", "committed": false}`: nothing was written, and the
-same request is safe to send again. A view or events read held so still answers `501`.
+whose PostgreSQL store did not answer within its deadline, as a write held behind a lock another
+database session holds, answers `503` with `{"refused", "committed": false}`: nothing was written,
+and the same request is safe to send again. A SQLite store reports no deadline: a write it finds
+busy answers `501`. A read held so is not answered `503`: a view answers `501` `{"refused"}`, and
+`GET /api/events` and `GET /api/history` answer `500` `{"refused"}`.

@@ -69,18 +69,20 @@ are Spindle's releases.
   filled by `state move`) is taken as seeded: one line, nothing sent, and a complete record
   written. Resets write the record as they do `seed.json`, and one by a leased run without a seed
   removes it. Without `database_lease` nothing is recorded, as before (`story:seed-under-a-lease`).
-- A command whose store did not answer within its deadline answers `503`
+- A command whose PostgreSQL store did not answer within its deadline answers `503`
   `{"refused", "committed": false}`, safe to send again, where it answered `501`, the status of a
   command the runtime cannot complete; the request log records it `failed`, not `not-served`.
   eventlog's `Deadline`, which it returns only before a commit begins, reaches the ingress as the
-  new `spindle_kernel::StoreError::Busy`, displayed `store: …` as before, on PostgreSQL and
-  SQLite alike. The case seen: a write to a new leader while the former leader, paused, still held
-  a database session answered `501` "event store deadline exceeded during database statement or
-  lock"; the likely cause, read and not proven, is the component's publication lock, which
-  eventlog's feed read holds exclusive until its transaction ends and every write waits for. Such
-  a write now answers `503` until the paused leader's session ends at the store's idle timeout,
-  at most 10 s; the window is answered, not closed. A view or events read held so still answers
-  `501` (`story:new-leader-write-while-old-paused`).
+  new `spindle_kernel::StoreError::Busy`, displayed `store: …` as before. Only the PostgreSQL store
+  returns it: eventlog-sqlite 0.10.0 never returns `Deadline` (a busy SQLite database is its
+  `Backend` error), so a SQLite write still answers `501`. The case seen: a write to a new leader
+  while the former leader, paused, still held a database session answered `501` "event store
+  deadline exceeded during database statement or lock"; the likely cause, read and not proven, is
+  the component's publication lock, which eventlog's feed read holds exclusive until its
+  transaction ends and every write waits for. Such a write now answers `503` until the paused
+  leader's session ends at the store's idle timeout, at most 10 s; the window is answered, not
+  closed. Reads held so are unchanged: a view answers `501` `{"refused"}`, and `GET /api/events`
+  and `GET /api/history` answer `500` `{"refused"}` (`story:new-leader-write-while-old-paused`).
 
 ## [0.26.0] - 2026-11-28
 
