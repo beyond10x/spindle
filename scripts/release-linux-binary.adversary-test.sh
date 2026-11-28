@@ -763,7 +763,7 @@ cases=$((cases + 1))
 cases=$((cases + 1))
 ! sums "" IMAGES || fail "release.yml: publish passes when it does not know whether the commit has an image"
 
-# cosign: sign-blob writes the sha256 of the blob as its bundle (and fails on the asset named in
+# cosign: sign-blob writes the cksum of the blob as its bundle (and fails on the asset named in
 # cosign-fail-on), verify-blob passes only a blob whose sha256 is the bundle's; sign and verify of
 # an image print it. Every call is appended to cosign-log.
 mkdir -p "$work/sigtools"
@@ -788,11 +788,11 @@ case $command in
             echo "stub cosign: no signature for $subject" >&2
             exit 1
         fi
-        sha256sum <"$subject" | cut -d ' ' -f 1 >"$bundle"
+        cksum <"$subject" >"$bundle"
         ;;
     verify-blob)
         [ -f "$bundle" ] && [ -f "$subject" ] || exit 1
-        [ "$(sha256sum <"$subject" | cut -d ' ' -f 1)" = "$(cat "$bundle")" ] || { echo "stub cosign: invalid signature" >&2; exit 1; }
+        [ "$(cksum <"$subject")" = "$(cat "$bundle")" ] || { echo "stub cosign: invalid signature" >&2; exit 1; }
         echo "Verified OK"
         ;;
     sign | verify) [ -n "$subject" ] || exit 2; echo "$command $subject" ;;
@@ -827,7 +827,7 @@ assets_of() {
 # asset and its bundle, IMAGES and its bundle only where expected, and refuses an asset or a
 # bundle already on the page. gh: `release view` answers the names in page-names, `release
 # upload` is appended to gh-upload, `release download` copies page/ into --dir, and `attestation
-# verify` passes a subject whose sha256 is in attested, naming the commit in attested-commit.
+# verify` passes a subject whose cksum (an oci:// one by its digest) is in attested, naming the commit in attested-commit.
 step_script publish "Upload the archives" "$work/steps/upload.sh"
 mkdir -p "$work/ghtools"
 printf '#!%s\nrec=%s\n' "$shell" "$work/rec" >"$work/ghtools/gh"
@@ -848,7 +848,7 @@ case "$1 $2" in
     "attestation verify")
         case $3 in
             oci://*) sum=${3##*@sha256:} ;;
-            *) [ -f "$3" ] || exit 1; sum=$(sha256sum <"$3" | cut -d ' ' -f 1) ;;
+            *) [ -f "$3" ] || exit 1; sum=$(cksum <"$3") ;;
         esac
         grep -Fqx "$sum" "$rec/attested" || { echo "stub gh: no attestation for $3" >&2; exit 1; }
         # One attestation per line of attested-commit, `<commit> [<ref>]`: it names that commit
@@ -1289,7 +1289,39 @@ indent <= 8 && body ~ /^["'].*["'][ \t]*:([ \t]|$)/ { print "quoted-key " NR }
 indent <= 8 && body ~ /^<<[ \t]*:/ { print "merge-key " NR }
 indent <= 8 && (body ~ /^[?:][ \t]/ || body == "?" || body == ":") { print "explicit-key " NR }
 /^[ \t]*#/ { next }
-/^[^ ]/ { top = $0; sub(/:.*/, "", top); job = ""; inperm = 0 }
+/^[^ ]/ { top = $0; sub(/:.*/, "", top); job = ""; inperm = 0; blockat = -1 }
+# Under jobs:, outside block scalars (run: |, path: |, ...), at any depth: each job is a line
+# `  <name>:` whose keys sit at 4 spaces, nothing else is at 1 to 3 spaces, no key or list item
+# starts with a quote, a backslash or a flow collection, every key is a plain word, and no value
+# is a flow mapping or a flow sequence holding one, a quote or an escape. YAML reads any deeper
+# indentation and any flow form alike, so the job and permission checks below hold only where
+# the file has this shape.
+function has(s, chars,    i) {
+    for (i = 1; i <= length(chars); i++) if (index(s, substr(chars, i, 1))) return 1
+    return 0
+}
+top == "jobs" && blockat >= 0 && (indent > blockat || body == "") { next }
+top == "jobs" { blockat = -1 }
+top == "jobs" && indent > 0 && body != "" {
+    if (indent == 2) {
+        if ($0 !~ /^  [a-z][a-z0-9_-]*:[ \t]*$/) print "job-shape " NR
+        firstkey = 1
+    } else {
+        if (indent < 4 || (firstkey && indent != 4)) print "job-shape " NR
+        firstkey = 0
+    }
+    item = substr($0, indent + 1)
+    while (substr(item, 1, 2) == "- ") item = substr(item, 3)
+    if (has(substr(item, 1, 1), "\"'{[\\")) print "spelled-key " NR
+    colon = index(item, ":")
+    if (colon > 0) {
+        key = substr(item, 1, colon - 1)
+        value = trim(substr(item, colon + 1))
+        if (key !~ /^[A-Za-z0-9_-]+$/) print "spelled-key " NR
+        if (substr(value, 1, 1) == "{" || (substr(value, 1, 1) == "[" && has(value, "{\"':\\"))) print "flow-mapping " NR
+        if (value ~ /^[|>][-+0-9]*([ \t]+#.*)?$/) blockat = indent
+    }
+}
 /^on:/ { inon = 1; next }
 /^[^ ]/ { inon = 0 }
 inon && /^  [^ ]/ { v = trim($0); sub(/:.*/, "", v); print "on " v }
@@ -1312,9 +1344,9 @@ id_token_breach() {
     [ "$(printf '%s\n' "$facts" | sed -n 's/^on //p' | sort | tr '\n' ' ')" = "pull_request push workflow_dispatch " ] ||
         { echo "the workflow runs on other events than push, workflow_dispatch and pull_request"; return 1; }
     ! printf '%s\n' "$facts" | grep -q '^write-all ' || { echo "a permission is write-all"; return 1; }
-    odd=$(printf '%s\n' "$facts" | grep -E '^(spelled-permission|quoted-key|merge-key|explicit-key|continued) ' | tr '\n' ';')
+    odd=$(printf '%s\n' "$facts" | grep -E '^(spelled-permission|quoted-key|merge-key|explicit-key|continued|job-shape|spelled-key|flow-mapping) ' | tr '\n' ';')
     [ -z "$odd" ] ||
-        { echo "a permission is spelled with a quote, escape, anchor, alias, tag or flow, a key is quoted, merged or explicit, or a job's if goes on over another line: $odd"; return 1; }
+        { echo "a permission is spelled with a quote, escape, anchor, alias, tag or flow, a key is quoted, merged, explicit or not a plain word, a value is a flow mapping, a job is not '  <name>:' with its keys at 4 spaces, or a job's if goes on over another line: $odd"; return 1; }
     [ "$(printf '%s\n' "$facts" | grep '^id-token ' | sort | tr '\n' ';')" = "id-token image-manifest block;id-token sign block;" ] ||
         { echo "id-token is not write on sign and image-manifest alone: $(printf '%s\n' "$facts" | grep '^id-token ' | tr '\n' ';')"; return 1; }
     [ "$(printf '%s\n' "$facts" | grep '^attestations ' | tr '\n' ';')" = "attestations sign block;" ] ||
@@ -1352,11 +1384,14 @@ mutant() {
         kind == "anchor-alias" && $0 == "  ui:" { print "    permissions: *granted" }
         kind == "merge-key" && $0 == "  ui:" { print "    <<: *granted" }
         kind == "explicit-key" && $0 == "  ui:" { print "    ? permissions"; print "    : read-all" }
+        kind == "step-quoted-key" && $0 == "      - name: Sign each asset with cosign" { print "        \"continue-on-error\": true" }
+        kind == "flow-value" && $0 == "  publish:" { print "    env: {A: b}" }
+        kind == "indent-three" && $0 == "  ui:" { print "   timeout-minutes: 5" }
     ' "$workflow" >"$work/mutant.yml"
 }
 for kind in top build if-removed or-true or-true-outside unparenthesised-or folded-if write-all flow attest-publish target \
     quoted-parens double-quoted-parens escaped-quote-parens unclosed-literal anchor-alias merge-key explicit-key \
-    continued-after-blank; do
+    continued-after-blank step-quoted-key flow-value indent-three; do
     mutant "$kind"
     cases=$((cases + 1))
     if cmp -s "$workflow" "$work/mutant.yml"; then
@@ -1499,7 +1534,7 @@ on_page() {
     rm -rf "$work/rec/page"
     mkdir -p "$work/rec/page"
     cp "$work/dist/"* "$work/rec/page/"
-    (cd "$work/rec/page" && for asset in $(assets_of "$1"); do sha256sum <"$asset" | cut -d ' ' -f 1; done) >"$work/rec/attested"
+    (cd "$work/rec/page" && for asset in $(assets_of "$1"); do cksum <"$asset"; done) >"$work/rec/attested"
     printf '%s\n' "$hex" >>"$work/rec/attested"
 }
 verify_run() {

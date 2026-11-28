@@ -47,10 +47,11 @@ are Spindle's releases.
   `actions/attest-build-provenance` v4.2.2 is pinned by commit. `publish` uploads each bundle with
   its asset, then downloads every asset back from the page and verifies it with
   `cosign verify-blob` and `gh attestation verify`, the image with `cosign verify` and
-  `gh attestation verify oci://`, and fails the run on any check that fails. Every attestation
-  must be signed by `release.yml` at `refs/heads/main` or at the tag's ref, each at the tag's ref
-  must name the tagged commit, and one must name the commit of the run, so a backfill passes
-  beside the attestations of the tag run and of earlier backfills. The README tells a
+  `gh attestation verify oci://`, and fails the run on any check that fails. `gh` must answer one
+  JSON list, every attestation in it must be signed by `release.yml` at `refs/heads/main` or at
+  the tag's ref, each at the tag's ref must name the tagged commit, and one must name the commit
+  of the run, so a backfill passes beside the attestations of the tag run and of earlier
+  backfills. The README tells a
   consumer how to verify each (`story:release-artifacts-signed`).
 
 ### Fixed

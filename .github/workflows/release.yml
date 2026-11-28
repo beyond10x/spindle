@@ -1052,13 +1052,17 @@ jobs:
             if [ "$status" -eq 0 ]; then
               jq -r '.[].verificationResult.signature.certificate | "signed by \(.buildSignerURI) at \(.sourceRepositoryDigest)"' \
                 "$RUNNER_TEMP/attested.json" >> "$summary" 2>&1 || status=1
-              if ! jq -e --arg commit "$commit" --arg tagged "$COMMIT" --arg main "$at_main" --arg tag "$at_tag" '
-                type == "array" and length > 0
-                and ([.[] | .verificationResult.signature.certificate
-                      | {signer: .buildSignerURI, named: .sourceRepositoryDigest}] as $all
-                     | all($all[]; .signer == $main or .signer == $tag)
-                       and all($all[]; .signer != $tag or .named == $tagged)
-                       and any($all[]; .named == $commit))
+              # Slurped, so the output must be one JSON document: jq -e alone answers for the last of
+              # several.
+              if ! jq -e -s --arg commit "$commit" --arg tagged "$COMMIT" --arg main "$at_main" --arg tag "$at_tag" '
+                length == 1
+                and (.[0]
+                     | type == "array" and length > 0
+                       and ([.[] | .verificationResult.signature.certificate
+                             | {signer: .buildSignerURI, named: .sourceRepositoryDigest}] as $all
+                            | all($all[]; .signer == $main or .signer == $tag)
+                              and all($all[]; .signer != $tag or .named == $tagged)
+                              and any($all[]; .named == $commit)))
               ' "$RUNNER_TEMP/attested.json" > /dev/null 2>&1; then
                 echo "Not every attestation is signed by $at_main or $at_tag, one at the tag's ref names a commit other than $COMMIT, or none names $commit." >> "$summary"
                 status=1

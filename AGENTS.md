@@ -269,15 +269,17 @@ cut from `main`:
    downloads them back and verifies each with `cosign verify-blob` and `gh attestation verify`
    (each attestation must be signed by `release.yml` at `refs/heads/main` or at the tag's ref,
    each at the tag's ref must name the tagged commit, and one must name the commit expected for
-   the run: the tagged commit on a tag push, `github.sha` on a backfill), refuses a copy of one
-   archive with one byte changed, and
+   the run: the tagged commit on a tag push, `github.sha` on a backfill; `gh` must print one JSON
+   list), refuses a copy of one archive with one byte changed, and
    verifies the image with `cosign verify` and `gh attestation verify oci://<line>`, each command
    and its output in the run's summary; a failed check fails the run. The signing identity is
    `https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/tags/<version>`, or
    `@refs/heads/main` for a backfill. The stub cases of
    `task check:the_release_binary_checks_refuse_what_they_must` test every mode and run the
    workflow's tag, checksum, cosign install, signing, upload and verification steps on stub tools,
-   and check the permissions of every job. A pull request that changes the
+   and check the permissions of every job, refusing a `jobs:` section whose jobs are not each a
+   `<name>:` line at 2 spaces with their keys at 4, or whose keys are quoted, escaped or written in
+   flow style at any depth, under gawk and mawk alike. A pull request that changes the
    workflow, the script or the Containerfile runs the builds, builds and checks both images, and
    publishes and pushes nothing. `workflow_dispatch` with `tag` backfills an existing tag whose
    page lacks the assets: a version older than 0.26.0 without a root `Containerfile` builds no
