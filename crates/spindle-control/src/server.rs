@@ -161,14 +161,21 @@ fn host_is_own(request: &Request<Incoming>, port: u16) -> bool {
     host == format!("127.0.0.1:{port}") || host == format!("localhost:{port}")
 }
 
-/// Compares two strings in time that depends only on their lengths.
-fn same(left: &str, right: &str) -> bool {
-    left.len() == right.len()
-        && left
-            .bytes()
-            .zip(right.bytes())
-            .fold(0u8, |differ, (a, b)| differ | (a ^ b))
-            == 0
+/// Whether `given` is `token`, compared in time that depends only on the token's length: every
+/// byte of `token` is read against `given`'s byte at its place, or a zero past `given`'s end,
+/// whatever `given`'s length, so the time tells a caller neither where they differ nor how long
+/// the token is (`story:listener-limits`, D5 A).
+fn same(given: &str, token: &str) -> bool {
+    let given = given.as_bytes();
+    let differ = token.bytes().enumerate().fold(
+        u8::from(given.len() != token.len()),
+        |differ, (index, expected)| {
+            #[cfg(test)]
+            tests::COMPARED.with(|compared| compared.set(compared.get() + 1));
+            differ | (given.get(index).copied().unwrap_or(0) ^ expected)
+        },
+    );
+    differ == 0
 }
 
 /// Whether the request carries `token`, as `?t=` or as a bearer credential.
@@ -389,4 +396,46 @@ async fn ask(address: SocketAddr, path: &str, token: &str) -> Result<(StatusCode
         .map_err(|error| error.to_string())?
         .to_bytes();
     Ok((status, body))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use super::same;
+
+    thread_local! {
+        /// How many byte pairs [`same`] compared on this thread.
+        pub(super) static COMPARED: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// How many byte pairs `same(given, token)` compares, and its answer.
+    fn compared(given: &str, token: &str) -> (usize, bool) {
+        COMPARED.with(|compared| compared.set(0));
+        let answer = same(given, token);
+        (COMPARED.with(Cell::get), answer)
+    }
+
+    #[test]
+    fn the_control_token_compare_takes_the_same_time_for_any_length() {
+        let token = "control-token-of-the-run";
+        let (equal, matched) = compared(token, token);
+        assert!(matched, "the token matches itself");
+        assert_eq!(equal, token.len(), "the whole token is read");
+        for given in [
+            "",
+            "c",
+            "control-token-of-the-ru",
+            "control-token-of-the-ruX",
+            "control-token-of-the-run!",
+            "control-token-of-the-run-and-much-more-than-it",
+        ] {
+            let (read, matched) = compared(given, token);
+            assert!(!matched, "{given:?} is not the token");
+            assert_eq!(
+                read, equal,
+                "{given:?} reads as many bytes as the token's own length"
+            );
+        }
+    }
 }

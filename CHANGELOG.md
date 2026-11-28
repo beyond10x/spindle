@@ -17,6 +17,16 @@ are Spindle's releases.
   none, nothing is issued, held for the declared bound. Every such scenario was skipped before.
   An await is not counted among a replay's commands, and its act's line names no outcome.
   `spindle_host` gains `Host::identities` (`story:conform-awaits-system-steps`).
+- A served `run` bounds its listener: `--max-connections` (512) connections at once, one over it
+  waiting in the kernel's backlog until one closes; `--max-head-bytes` (16384) bytes of a
+  request's head, and 100 headers, a larger head answered `431` and its connection closed before
+  anything is handed on or recorded; a keep-alive connection that sends no request for 10 s
+  closed; and `--request-timeout` (30) seconds per request from the end of its body read, a
+  request no thread took by then answered `503` with `"committed": false` and never run, one
+  taken `504`, its command still completing. `spindle_ingress` gains `Limits` and
+  `Surface::limited`. The proxy secret, the guarded listener's token and `spindle-control`'s token
+  are compared in time that depends only on their own length, where a presented value of another
+  length returned at once (`story:listener-limits`).
 - `task check:postgres` without `SPINDLE_TEST_DATABASE_URL` starts its own throwaway PostgreSQL
   cluster under `target/` with CI's server options (TLS from a CA it issues, which it exports as
   `SPINDLE_TEST_DATABASE_CA`, `max_locks_per_transaction=256`, `max_connections=300`), runs the

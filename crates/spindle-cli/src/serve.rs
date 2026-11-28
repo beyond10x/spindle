@@ -148,6 +148,9 @@ pub(crate) struct Serving<'a> {
     /// `--drain`: how long, once a signal arrives, the run goes on answering the requests already
     /// waiting for it.
     pub drain: Duration,
+    /// `--max-connections`, `--max-head-bytes` and `--request-timeout`: the bounds the listener
+    /// serves within ([`Surface::limited`], `story:listener-limits`).
+    pub limits: spindle_ingress::Limits,
     /// `--clock`: the host runs on a manual clock starting at this instant, which it steps forward
     /// between commands on `POST /api/clock` and on a reset world's `clock`
     /// ([`Host::stepping`]); the system clock without it, which steps on neither.
@@ -465,6 +468,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         (Some(capacity), None) => surface.observing_series(capacity, serving.observe_series),
         (None, _) => surface,
     };
+    let surface = surface.limited(serving.limits);
     // The seed's state, published by `Seeding` on this thread and answered by the listener at
     // `GET /__spindle/seed` and `GET /__spindle/ready`, with or without `--observe`.
     let published = serving

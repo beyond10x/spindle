@@ -31,6 +31,7 @@ mod exposed;
 mod grants;
 mod health;
 mod instance_history;
+mod limits;
 mod metrics_read;
 mod observe;
 mod outcome_headers;

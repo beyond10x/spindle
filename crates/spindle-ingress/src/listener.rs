@@ -9,7 +9,7 @@
 use std::convert::Infallible;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -23,7 +23,7 @@ use hyper::header::{
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use serde_json::{Map, Value};
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{Semaphore, oneshot, watch};
 use tokio::task::JoinSet;
 
 use spindle_host::{Failed, Host, Reader};
@@ -33,10 +33,11 @@ use crate::console::{Console, Worlds};
 use crate::health::{LIVENESS, Probed, SeedState};
 use crate::observe::{Answered, By, Note, Reserved, Target};
 use crate::router::{Asked, BODY_LIMIT, Pending, Response as Reply};
-use crate::surface::{Caller, Route, Surface, Unverified};
+use crate::surface::{Caller, Limits, Route, Surface, Unverified};
 
-/// How long a connection may take to send a request's head; a slower one is closed.
-pub const HEADER_READ: Duration = Duration::from_secs(10);
+/// How long a connection may take to send a request's head, the next one of a keep-alive
+/// connection included; a slower one is closed. The default of [`Limits::head_read`].
+pub const HEADER_READ: Duration = Limits::DEFAULT.head_read;
 
 /// How long a request's body may take to arrive once its head has; a slower one is refused `408`.
 pub const BODY_READ: Duration = Duration::from_secs(10);
@@ -45,14 +46,32 @@ pub const BODY_READ: Duration = Duration::from_secs(10);
 /// out of descriptors, before it accepts again.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
 
+/// An exchange no thread has taken yet ([`Exchange::claim`]).
+const QUEUED: u8 = 0;
+/// An exchange [`Listener::next`] handed to the caller's thread.
+const TAKEN: u8 = 1;
+/// An exchange its request time passed while queued, answered `503` and never handed.
+const LAPSED: u8 = 2;
+
 /// One request for a route, waiting for its answer.
 #[derive(Debug)]
 pub struct Exchange {
     pending: Pending,
     reply: oneshot::Sender<(Reply, Answered)>,
+    /// Who decides the exchange first ([`QUEUED`], [`TAKEN`], [`LAPSED`]): the caller's thread
+    /// taking it, or its request time passing (`story:listener-limits`, D3 A).
+    claim: Arc<AtomicU8>,
 }
 
 impl Exchange {
+    /// Claims the exchange for the caller's thread; `false` where its request time passed first,
+    /// and it was answered `503` without it.
+    fn take(&self) -> bool {
+        self.claim
+            .compare_exchange(QUEUED, TAKEN, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    }
+
     /// The route the request is for; `None` for a console route, the metrics or the topology.
     pub fn route(&self) -> Option<&Route> {
         match &self.pending.asked {
@@ -299,14 +318,21 @@ fn loopback(port: u16) -> SocketAddr {
     SocketAddr::from((Ipv4Addr::LOCALHOST, port))
 }
 
-/// Compares two strings in time that depends only on their lengths.
-fn same(left: &str, right: &str) -> bool {
-    left.len() == right.len()
-        && left
-            .bytes()
-            .zip(right.bytes())
-            .fold(0u8, |differ, (a, b)| differ | (a ^ b))
-            == 0
+/// Whether `given` is `secret`, compared in time that depends only on the secret's length: every
+/// byte of `secret` is read against `given`'s byte at its place, or a zero past `given`'s end,
+/// whatever `given`'s length, so the time tells a caller neither where they differ nor how long
+/// the secret is (`story:listener-limits`).
+fn same(given: &str, secret: &str) -> bool {
+    let given = given.as_bytes();
+    let differ = secret.bytes().enumerate().fold(
+        u8::from(given.len() != secret.len()),
+        |differ, (index, expected)| {
+            #[cfg(test)]
+            tests::COMPARED.with(|compared| compared.set(compared.get() + 1));
+            differ | (given.get(index).copied().unwrap_or(0) ^ expected)
+        },
+    );
+    differ == 0
 }
 
 /// An HTTP/1.1 listener serving one [`Surface`], on 127.0.0.1 unless bound with
@@ -352,7 +378,8 @@ impl Listener {
     /// announced over [`BODY_LIMIT`] `413` before it is read; one that does not arrive within
     /// [`BODY_READ`] `408`, and one that breaks off `400`. A head not sent within
     /// [`HEADER_READ`] closes the connection. A failed accept is retried, and the listener goes
-    /// on.
+    /// on. The surface's [`Limits`] bound the connections it holds, each head and each request's
+    /// time ([`Surface::limited`]).
     ///
     /// On a surface made [`Surface::proving_callers`] each request for a command or view is
     /// handed on with the caller its header proves where it also carries the proxy's secret, both
@@ -541,6 +568,14 @@ impl Listener {
         let (sender, exchanges) = mpsc::channel();
         let (shutdown, mut stopped) = oneshot::channel::<Stop>();
         let health = Arc::new(Health::new());
+        // One place per connection held: at the cap the loop accepts no connection until one
+        // closes, and the kernel's backlog holds the rest (`story:listener-limits`, D2 A).
+        let places = Arc::new(Semaphore::new(
+            surface
+                .limits()
+                .connections
+                .clamp(1, Semaphore::MAX_PERMITS),
+        ));
         // Its reads of the events are cut off where they wait once the run stops taking work, so a
         // read waiting for a store's feed does not hold the listener's close
         // (`story:leader-exits-promptly-on-sigterm`).
@@ -570,15 +605,20 @@ impl Listener {
                                 Ok(Stop::Draining(grace)) => break grace,
                                 Ok(Stop::Now) | Err(_) => return Ok::<(), io::Error>(()),
                             },
-                            accepted = listener.accept() => match accepted {
-                                Ok((stream, _)) => {
-                                    connections.spawn(connection(
-                                        Arc::clone(&served),
-                                        stream,
-                                        closed.clone(),
-                                    ));
+                            accepted = async {
+                                let place = Arc::clone(&places).acquire_owned().await;
+                                (place, listener.accept().await)
+                            } => match accepted {
+                                (Ok(place), Ok((stream, _))) => {
+                                    let (served, closed) = (Arc::clone(&served), closed.clone());
+                                    connections.spawn(async move {
+                                        connection(served, stream, closed).await;
+                                        drop(place);
+                                    });
                                 }
-                                Err(_) => tokio::time::sleep(ACCEPT_BACKOFF).await,
+                                // The places are never closed.
+                                (Err(_), Ok(_)) => {}
+                                (_, Err(_)) => tokio::time::sleep(ACCEPT_BACKOFF).await,
                             },
                             Some(_) = connections.join_next(), if !connections.is_empty() => {}
                         }
@@ -612,11 +652,23 @@ impl Listener {
     /// The next request for a route, waiting at most `timeout`; `None` when none arrived. Each
     /// call counts as the caller's thread answering for `GET /__spindle/live`, as it starts and as
     /// it returns; from a request it hands until the next call, the caller holds that request and
-    /// reads live however long it takes to answer it.
+    /// reads live however long it takes to answer it. A request whose request time passed while
+    /// it was queued was answered `503` and is never handed ([`Surface::limited`]).
     pub fn next(&self, timeout: Duration) -> Option<Exchange> {
         self.health.holding.store(false, Ordering::SeqCst);
         self.health.beat();
-        let next = self.exchanges.as_ref()?.recv_timeout(timeout).ok();
+        let exchanges = self.exchanges.as_ref()?;
+        let until = Instant::now().checked_add(timeout);
+        let next = loop {
+            let left = until.map_or(timeout, |until| {
+                until.saturating_duration_since(Instant::now())
+            });
+            match exchanges.recv_timeout(left) {
+                Ok(exchange) if exchange.take() => break Some(exchange),
+                Ok(_) => {}
+                Err(_) => break None,
+            }
+        };
         self.health.beat();
         self.health.holding.store(next.is_some(), Ordering::SeqCst);
         next
@@ -674,11 +726,12 @@ impl Drop for Listener {
     }
 }
 
-/// Serves one connection, HTTP/1.1, its heads bounded by [`HEADER_READ`]; over TLS where the
-/// listener serves it, once the handshake has completed within [`HEADER_READ`]. A handshake that
-/// fails or does not complete in time, or is under way once `closing` reads `true`, closes the
-/// connection with no HTTP read or written. Once `closing` reads `true`, the connection writes the
-/// answer it holds, if any, and closes.
+/// Serves one connection, HTTP/1.1, each head bounded by the surface's [`Limits::head_read`]
+/// ([`HEADER_READ`] by default), [`Limits::head_bytes`] and [`Limits::headers`]; over TLS where
+/// the listener serves it, once the handshake has completed within [`Limits::head_read`]. A
+/// handshake that fails or does not complete in time, or is under way once `closing` reads `true`,
+/// closes the connection with no HTTP read or written. Once `closing` reads `true`, the connection
+/// writes the answer it holds, if any, and closes.
 async fn connection(
     served: Arc<Served>,
     stream: tokio::net::TcpStream,
@@ -687,7 +740,7 @@ async fn connection(
     let Some(tls) = served.tls.clone() else {
         return answering(served, stream, closing).await;
     };
-    let handshake = tokio::time::timeout(HEADER_READ, tls.accept(stream));
+    let handshake = tokio::time::timeout(served.surface.limits().head_read, tls.accept(stream));
     let stream = tokio::select! {
         shaken = handshake => match shaken {
             Ok(Ok(stream)) => stream,
@@ -703,10 +756,16 @@ async fn answering<S>(served: Arc<Served>, stream: S, mut closing: watch::Receiv
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
+    let limits = served.surface.limits();
     let service = hyper::service::service_fn(move |request| handle(Arc::clone(&served), request));
+    // hyper answers a head over either bound `431` and closes, before the service runs; its head
+    // read time also runs while a kept-alive connection waits for its next head, so an idle one
+    // holds a place of the cap for at most that long.
     let serving = hyper::server::conn::http1::Builder::new()
         .timer(TokioTimer::new())
-        .header_read_timeout(HEADER_READ)
+        .header_read_timeout(limits.head_read)
+        .max_header_size(limits.head_bytes)
+        .max_headers(limits.headers)
         .serve_connection(TokioIo::new(stream), service);
     tokio::pin!(serving);
     tokio::select! {
@@ -944,9 +1003,9 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
 }
 
 /// The caller `headers` prove in `header` ([`Caller::proven`]), where they also carry `secret` in
-/// [`Surface::SECRET_HEADER`], compared in time that depends only on the lengths ([`same`]);
-/// `None` where either header is absent or given more than once, or the secret is another. No
-/// value is printed.
+/// [`Surface::SECRET_HEADER`], compared in time that depends only on the secret's length
+/// ([`same`]); `None` where either header is absent or given more than once, or the secret is
+/// another. No value is printed.
 fn proven(headers: &HeaderMap, header: &str, secret: &str) -> Option<Caller> {
     if !presents(headers, secret) {
         return None;
@@ -955,7 +1014,7 @@ fn proven(headers: &HeaderMap, header: &str, secret: &str) -> Option<Caller> {
 }
 
 /// Whether `headers` carry `secret` once in [`Surface::SECRET_HEADER`], compared in time that
-/// depends only on the lengths ([`same`]).
+/// depends only on the secret's length ([`same`]).
 fn presents(headers: &HeaderMap, secret: &str) -> bool {
     once(headers, Surface::SECRET_HEADER)
         .and_then(|presented| presented.to_str().ok())
@@ -983,14 +1042,26 @@ fn once<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a HeaderValue> {
 /// blocking thread of its own, beside the host's thread and every other read; anything else
 /// handed to the host's thread as an [`Exchange`]. The `503` refusal where the listener is
 /// stopping or stopped before answering, and `500` where a read stopped without an answer.
+///
+/// Answered within the surface's [`Limits::request_time`] of now, the end of the request's body
+/// read (`story:listener-limits`, D3 A, D4 A): a request no thread has taken by then is answered
+/// `503` with `committed: false` and [`Listener::next`] never hands it; one taken, or a read under
+/// way, `504`, the thread's later answer dropped.
 async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), Answer> {
+    let time = served.surface.limits().request_time;
+    // A time past what the clock can name sets no deadline.
+    let deadline = tokio::time::Instant::now().checked_add(time);
     let pending = match served.reader.get() {
         Some(reader) if pending.reads(reader) => {
             let reader = reader.clone();
-            match tokio::task::spawn_blocking(move || pending.read(&reader)).await {
-                Ok(Ok(read)) => return Ok(read),
-                Ok(Err(pending)) => *pending,
-                Err(_) => return Err(Answer::refusal(500, "the read stopped before answering")),
+            let read = tokio::task::spawn_blocking(move || pending.read(&reader));
+            match within(deadline, read).await {
+                Some(Ok(Ok(read))) => return Ok(read),
+                Some(Ok(Err(pending))) => *pending,
+                Some(Err(_)) => {
+                    return Err(Answer::refusal(500, "the read stopped before answering"));
+                }
+                None => return Err(late(time)),
             }
         }
         _ => pending,
@@ -1004,12 +1075,57 @@ async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), 
         return Err(standing_by());
     }
     let (reply, replying) = oneshot::channel();
-    if served.exchanges.send(Exchange { pending, reply }).is_err() {
+    let claim = Arc::new(AtomicU8::new(QUEUED));
+    let exchange = Exchange {
+        pending,
+        reply,
+        claim: Arc::clone(&claim),
+    };
+    if served.exchanges.send(exchange).is_err() {
         return Err(Answer::refusal(503, "the listener is stopping"));
     }
-    replying
-        .await
-        .map_err(|_| Answer::refusal(503, "the listener stopped before answering"))
+    match within(deadline, replying).await {
+        Some(answered) => {
+            answered.map_err(|_| Answer::refusal(503, "the listener stopped before answering"))
+        }
+        None if claim
+            .compare_exchange(QUEUED, LAPSED, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok() =>
+        {
+            Err(unclaimed(time))
+        }
+        None => Err(late(time)),
+    }
+}
+
+/// `future`'s output, or `None` once `deadline` has passed first; no deadline waits for it.
+async fn within<F: Future>(deadline: Option<tokio::time::Instant>, future: F) -> Option<F::Output> {
+    match deadline {
+        Some(deadline) => tokio::time::timeout_at(deadline, future).await.ok(),
+        None => Some(future.await),
+    }
+}
+
+/// The answer to a request no thread took within its request `time`, which is never handed:
+/// `503` with `committed: false`.
+fn unclaimed(time: Duration) -> Answer {
+    let mut answer = Answer::refusal(
+        503,
+        format!("no thread took the request within its request time of {time:?}"),
+    );
+    if let Some(Value::Object(body)) = &mut answer.body {
+        body.insert("committed".to_owned(), Value::Bool(false));
+    }
+    answer
+}
+
+/// The answer to a request taken and not answered within its request `time`, whose command
+/// still completes.
+fn late(time: Duration) -> Answer {
+    Answer::refusal(
+        504,
+        format!("the request was not answered within its request time of {time:?}"),
+    )
 }
 
 /// The refusal of a request that arrives once the run stops taking work.
@@ -1115,7 +1231,44 @@ fn replied(reply: Reply) -> Response<Full<Bytes>> {
 
 #[cfg(test)]
 mod tests {
-    use super::Guard;
+    use std::cell::Cell;
+
+    use super::{Guard, same};
+
+    thread_local! {
+        /// How many byte pairs [`same`] compared on this thread.
+        pub(super) static COMPARED: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// How many byte pairs `same(given, secret)` compares, and its answer.
+    fn compared(given: &str, secret: &str) -> (usize, bool) {
+        COMPARED.with(|compared| compared.set(0));
+        let answer = same(given, secret);
+        (COMPARED.with(Cell::get), answer)
+    }
+
+    #[test]
+    fn the_secret_compare_takes_the_same_time_for_any_length() {
+        let secret = "s3cret-of-the-proxy";
+        let (equal, matched) = compared(secret, secret);
+        assert!(matched, "the secret matches itself");
+        assert_eq!(equal, secret.len(), "the whole secret is read");
+        for given in [
+            "",
+            "s",
+            "s3cret-of-the-prox",
+            "s3cret-of-the-proxZ",
+            "s3cret-of-the-proxy!",
+            "s3cret-of-the-proxy-and-much-more-than-it",
+        ] {
+            let (read, matched) = compared(given, secret);
+            assert!(!matched, "{given:?} is not the secret");
+            assert_eq!(
+                read, equal,
+                "{given:?} reads as many bytes as the secret's own length"
+            );
+        }
+    }
 
     #[test]
     fn the_token_pair_is_not_query_input() {

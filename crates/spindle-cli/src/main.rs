@@ -253,6 +253,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
             observe_series,
             seed,
             drain,
+            max_connections,
+            max_head_bytes,
+            request_timeout,
             clock,
             mint_seed,
             log_format,
@@ -286,6 +289,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
             caller_token: caller_token.as_deref(),
             seed: seed.as_deref(),
             drain: Duration::from_secs(drain),
+            limits: spindle_ingress::Limits {
+                connections: usize::try_from(max_connections).unwrap_or(usize::MAX),
+                head_bytes: usize::try_from(max_head_bytes).unwrap_or(usize::MAX),
+                request_time: Duration::from_secs(request_timeout),
+                ..spindle_ingress::Limits::DEFAULT
+            },
             clock,
             mint_seed,
             log_format,
@@ -653,6 +662,9 @@ struct Execute<'a> {
     seed: Option<&'a Path>,
     /// `--drain`: how long a served run answers the requests waiting when a signal arrives.
     drain: Duration,
+    /// `--max-connections`, `--max-head-bytes` and `--request-timeout`: the bounds a served run's
+    /// listener holds to.
+    limits: spindle_ingress::Limits,
     /// `--clock`: the instant the run's manual clock starts at, the system clock without it.
     clock: Option<std::time::SystemTime>,
     /// `--mint-seed`: the seed every identity and generated value is minted from.
@@ -684,6 +696,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         caller_token,
         seed,
         drain,
+        limits,
         clock,
         mint_seed,
         log_format,
@@ -894,6 +907,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 tls: listening_tls,
                 seed,
                 drain,
+                limits,
                 clock,
                 mint_seed,
                 egress,
