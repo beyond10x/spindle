@@ -572,8 +572,10 @@ pub fn carries_world(body: &[u8]) -> bool {
 /// answer within its deadline ([`StoreError::Busy`]) is kept: while the reset has changed no row
 /// ([`Host::reset_changed_rows`]) it answers `503` with `{"refused", "committed": false}`
 /// ([`Answer::busy`]), and once it has, `500`, saying that the store is kept and that the reset
-/// can be sent again (`story:reset-on-a-busy-store-keeps-the-store`). Any other store that could
-/// not be emptied or written is refused `500`, naming why.
+/// can be sent again (`story:reset-on-a-busy-store-keeps-the-store`). A world row whose commit
+/// outcome is unknown ([`StoreError::Unknown`]) keeps the store and answers `500` with
+/// `{"refused", "committed": "unknown"}` ([`Answer::unknown`]). Any other store that could not be
+/// emptied or written is refused `500`, naming why.
 pub fn reset(host: &mut Host, body: &[u8], worlds: Option<Worlds<'_>>) -> Answer {
     let world = if carries_world(body) {
         let read = serde_json::from_slice::<Value>(body)
@@ -609,6 +611,7 @@ pub fn reset(host: &mut Host, body: &[u8], worlds: Option<Worlds<'_>>) -> Answer
                  kept as the reset left it: the reset can be sent again"
             ),
         ),
+        Err(error @ HostError::Store(StoreError::Unknown(_))) => Answer::unknown(error.to_string()),
         Err(error) => Answer::refusal(500, error.to_string()),
     }
 }

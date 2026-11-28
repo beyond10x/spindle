@@ -216,8 +216,9 @@ fn an_unknown_commit_answers_500_with_committed_unknown() {
 }
 
 /// A reset whose world row ends with its outcome unknown keeps the store and answers `500`
-/// naming the unknown outcome, as before (the coordinator's decision D-U2-r1): the next command
-/// reaches the same store rather than one lost in the reset.
+/// `{"refused", "committed": "unknown"}` naming the unknown outcome (the coordinator's decisions
+/// D-U2-r1 and D-U2-r1c): the next command reaches the same store rather than one lost in the
+/// reset.
 #[test]
 fn a_reset_whose_world_row_is_unknown_answers_500_and_keeps_the_store() {
     let (mut host, _listener, _open, commits) = served();
@@ -245,6 +246,10 @@ fn a_reset_whose_world_row_is_unknown_answers_500_and_keeps_the_store() {
             .as_str()
             .is_some_and(|refused| refused.contains("outcome unknown")),
         "the refusal names the outcome as unknown: {body}"
+    );
+    assert_eq!(
+        body["committed"], "unknown",
+        "the reset answers as a command whose outcome is unknown (D-U2-r1c): {body}"
     );
     assert_eq!(
         commits.load(Ordering::SeqCst),

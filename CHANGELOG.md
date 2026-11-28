@@ -108,9 +108,9 @@ are Spindle's releases.
   lost does not replace it with its `503`. eventlog's `UnknownCommit` reaches the ingress as the
   new `spindle_kernel::StoreError::Unknown`, displayed `store: …` as before, answered by the new
   `spindle_ingress::Answer::unknown`. A reset whose removal or forgetting of events meets it loses
-  the store, as before; one whose world row meets it keeps the store and answers `500` naming the
-  unknown outcome, as before. A removal or a world row that meets it now counts as a changed row
-  (`spindle_host::Host::reset_changed_rows` reads `true`), since it may have landed, so a caller
+  the store, as before; one whose world row meets it keeps the store and answers `500`
+  `{"refused", "committed": "unknown"}`. A removal or a world row that meets it now counts as a changed
+  row (`spindle_host::Host::reset_changed_rows` reads `true`), since it may have landed, so a caller
   does not put back what it removed for the reset.
   Only the PostgreSQL store returns it; a store failure before COMMIT answers `503` or `501` as
   before (`story:unknown-commit-answered-as-unknown`).
