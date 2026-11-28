@@ -1147,10 +1147,10 @@ pub struct Limits {
 }
 
 impl Limits {
-    /// 512 connections, a head of 16 KiB and 100 headers, 30 s per request and 10 s per head.
+    /// 512 connections, a head of 64 KiB and 100 headers, 30 s per request and 10 s per head.
     pub const DEFAULT: Self = Self {
         connections: 512,
-        head_bytes: 16 * 1024,
+        head_bytes: 64 * 1024,
         headers: 100,
         request_time: Duration::from_secs(30),
         head_read: Duration::from_secs(10),

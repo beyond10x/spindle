@@ -235,7 +235,7 @@ makes, as ESS's served application makes them, are `{"refused": "<why>"}`:
 | `408` | a body that does not arrive in time |
 | `411` | a chunked body |
 | `413` | a body announced over 1 MiB |
-| `431` | a head over the listener's size (16 KiB, `run --max-head-bytes`) or over 100 headers, with no body; the connection closes, and nothing of the request is handed on or recorded |
+| `431` | a head over the listener's size (64 KiB, `run --max-head-bytes`) or over 100 headers, with no body; the connection closes, and nothing of the request is handed on or recorded |
 | `503` | a request no thread took within its request time (30 s from the end of its body read, `run --request-timeout`), with `"committed": false`: it never runs |
 | `504` | a request taken and not answered within its request time; its command still completes |
 

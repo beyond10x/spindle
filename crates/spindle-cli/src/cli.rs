@@ -611,7 +611,7 @@ pub enum Command {
         #[arg(
             long,
             value_name = "BYTES",
-            default_value_t = 16384,
+            default_value_t = 65536,
             value_parser = clap::value_parser!(u32).range(1..),
             conflicts_with = "scenario"
         )]

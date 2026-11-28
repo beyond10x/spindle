@@ -18,7 +18,7 @@ are Spindle's releases.
   An await is not counted among a replay's commands, and its act's line names no outcome.
   `spindle_host` gains `Host::identities` (`story:conform-awaits-system-steps`).
 - A served `run` bounds its listener: `--max-connections` (512) connections at once, one over it
-  waiting in the kernel's backlog until one closes; `--max-head-bytes` (16384) bytes of a
+  waiting in the kernel's backlog until one closes; `--max-head-bytes` (65536) bytes of a
   request's head, and 100 headers, a larger head answered `431` and its connection closed before
   anything is handed on or recorded; a keep-alive connection that sends no request for 10 s
   closed; and `--request-timeout` (30) seconds per request from the end of its body read, a

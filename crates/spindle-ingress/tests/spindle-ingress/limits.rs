@@ -232,6 +232,42 @@ fn a_head_over_the_limit_answers_431() {
     );
 }
 
+/// A query of 60 KiB, as a consumer's long view list sends, is under the default head limit of
+/// 64 KiB: the read reaches the caller's thread and its answer is written, not `431`.
+#[test]
+fn a_head_under_the_default_is_answered() {
+    let (surface, _, _) = surface(Limits::DEFAULT);
+    let view = surface
+        .routes()
+        .iter()
+        .find(|route| route.operation.name() == "study.desk.AllDesks")
+        .expect("the surface serves the view")
+        .path
+        .clone();
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let query = format!("pad={}", "q".repeat(60 * 1024));
+    let request =
+        format!("GET {view}?{query} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n");
+    let asked = sent(address, request, DUE);
+    let exchange = listener
+        .next(DUE)
+        .expect("a head of 60 KiB reaches the caller's thread");
+    assert_eq!(
+        exchange.query().len(),
+        query.len(),
+        "the whole query is handed on"
+    );
+    exchange.respond(Answer {
+        status: 200,
+        body: Some(json!({"rows": []})),
+        headers: Vec::new(),
+    });
+    let (answered, _) = asked.join().expect("the client's thread ends");
+    let (status, body) = answered.expect("the read is answered");
+    assert_eq!(status, 200, "a head under the default is answered: {body}");
+}
+
 #[test]
 fn an_idle_connection_is_closed_and_frees_its_place() {
     let limits = Limits {

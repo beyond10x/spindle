@@ -1,7 +1,7 @@
 //! `run --max-connections`, `--max-head-bytes` and `--request-timeout` bound the served listener
 //! (`story:listener-limits`). One run served with `--max-connections 1 --max-head-bytes 8192
 //! --request-timeout 1` shows each flag taking effect, each check one the defaults (512
-//! connections, a head of 16 KiB, 30 s per request) would not pass.
+//! connections, a head of 64 KiB, 30 s per request) would not pass.
 //!
 //! The fixture `tests/fixtures/served-held-cause` holds its command on an external cause the
 //! environment binds to an HTTP call: the desk this test runs answers a request whose id starts
@@ -268,7 +268,7 @@ fn run_flags_bound_the_listener() {
     let help = String::from_utf8_lossy(&help.stdout).into_owned();
     for (flag, default) in [
         ("--max-connections", "[default: 512]"),
-        ("--max-head-bytes", "[default: 16384]"),
+        ("--max-head-bytes", "[default: 65536]"),
         ("--request-timeout", "[default: 30]"),
     ] {
         assert_eq!(default_after(&help, flag), default, "{flag}");
@@ -292,7 +292,7 @@ fn run_flags_bound_the_listener() {
     // Each check is made whatever an earlier one found, and every one that fails is named.
     let mut failed = Vec::new();
 
-    // A head of 12 KiB: over the flag's 8192, under the default 16 KiB.
+    // A head of 12 KiB: over the flag's 8192, under the default 64 KiB.
     let mut stream = connect(address);
     let pad = format!("X-Pad: {}\r\n", "a".repeat(12 * 1024));
     stream
