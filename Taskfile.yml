@@ -204,7 +204,7 @@ tasks:
       - '{{.NEXTEST}} --no-run'
       - defer: { task: test:slowest, vars: { NEXTEST_PROFILE: postgres } }
       - "sh scripts/within.sh 100 {{.NEXTEST}} --run-ignored all -E '{{.TESTS}}'"
-      - "sh scripts/within.sh 20 cargo nextest run --locked -p spindle-kernel --test spindle-kernel --run-ignored all -E 'binary_id(=spindle-kernel::spindle-kernel) and test(={{.ALONE}})'"
+      - "sh scripts/within.sh 20 {{.NEXTEST}} --run-ignored all -E 'binary_id(=spindle-kernel::spindle-kernel) and test(={{.ALONE}})'"
 
   check:postgres-lane-script:
     desc: scripts/postgres-lane.sh, on PostgreSQL's binaries from SPINDLE_PG_BIN or PATH (it fails without initdb and pg_ctl), stops and removes its cluster when its command fails and on SIGINT, prints a major other than 17 with a warning, makes and starts the cluster with SPINDLE_PG_BIN's binaries, and starts none when SPINDLE_TEST_DATABASE_URL is set
