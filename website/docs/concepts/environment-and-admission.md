@@ -320,8 +320,21 @@ Records found alike in several tables are one record: a rollback to a release wi
 components, and a roll forward again, can leave the same record in two tables, and the next write
 keeps the one in the first component's table, in one statement under every lease involved. Records
 that differ stop the start with exit 1, naming the tables; keep the row `seed` of one of them and
-remove the others. `story:seed-record-after-a-component-is-removed` tracks the record of a
-component a later release removes. The rules above hold, with
+remove the others.
+
+A record kept by a component that a later release removed is found too. Where no current
+component's lease table holds a record, the start looks once, with one query of `pg_tables`, for
+lease tables of no current component: by their table name (`spindle_…_p_lease`), since a hashed
+prefix cannot be turned back into a component name, and read only where the table holds a `lease`
+row. A record found there is used as one found in a current table: records alike are one, records
+that differ stop the start with exit 1 naming the tables. The next write moves it to the first
+component's table in one statement under two leases: the first component's, and the old table's
+own, which the process takes for the move and releases after. While another process holds that
+table's lease, as a process of the old release still running does, the record is read and not
+moved: the next write goes to the first component's table, and from then on the record there wins,
+since the old tables are looked at only when no current table holds a record. So one schema holds
+one leased deployment: lease tables of another deployment in the same schema would be read as
+those of removed components. The rules above hold, with
 the store in place of the state:
 
 - With the same seed file and every entry done, `run` prints that the seed already ran on the
@@ -336,7 +349,8 @@ the store in place of the state:
   done. A store with no row and no record gets the whole seed.
 
 A reset writes the record as it writes `seed.json`, and one by a leased run without `--seed`
-removes the row. Any other store, in PostgreSQL without `database_lease` or in memory, records
+removes the row, also from the lease tables of removed components, each under its own lease; a
+table whose lease another process holds keeps its row, and a line says so. Any other store, in PostgreSQL without `database_lease` or in memory, records
 nothing: every start sends the whole seed, so a second start applies nothing new only where every
 entry is a create whose command declares `existing_instance:`.
 

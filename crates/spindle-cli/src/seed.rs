@@ -33,7 +33,10 @@
 //! A run on PostgreSQL given `database_lease` keeps the same record as the row `seed` of the
 //! lease table of its first component in name order, which the lease thread reads and writes on
 //! the lease connection, each write landing only while the lease is this run's
-//! ([`crate::database::SeedRow`], `story:seed-under-a-lease`). It decides from that record
+//! ([`crate::database::SeedRow`], `story:seed-under-a-lease`). The record is looked for in every
+//! current component's lease table and, where none holds one, in the lease tables of components a
+//! later release removed, found by table name (`story:seed-record-after-a-component-is-removed`).
+//! It decides from that record
 //! whatever lease token it took, standing by first or not, as a `--state` run decides from
 //! [`MARKER`], with one difference: a store that holds rows and no record (seeded before the
 //! record existed, or filled by `state move`) is taken as seeded by this file: the record is

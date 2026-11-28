@@ -552,17 +552,25 @@ impl Lease {
     /// returned.
     fn run(&mut self, component: &str, step: Step) -> Result<Option<u64>, StoreError> {
         let table = self.table(component)?;
+        self.step(&table, component, step)
+    }
+
+    /// Runs `step` on the lease row of `table`, which a refusal calls `named`, and answers the
+    /// token its statement returned.
+    fn step(&mut self, table: &str, named: &str, step: Step) -> Result<Option<u64>, StoreError> {
         let term = self.term.as_secs_f64();
         let (statement, token) = match step {
             Step::Take => (TAKE, None),
+            Step::TakeExisting => (TAKE_EXISTING, None),
             Step::Renew(token) => (RENEW, Some(token)),
             Step::Release(token) => (RELEASE, Some(token)),
         };
-        let statement = statement.replace("{table}", &table);
+        let taking = matches!(step, Step::Take | Step::TakeExisting);
+        let statement = statement.replace("{table}", table);
         let token = token.map(|token| i64::try_from(token).unwrap_or(i64::MAX));
         let tenant = crate::sqlite::TENANT;
         let parameters: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = match (&step, &token) {
-            (Step::Take, _) => vec![&tenant, &LEASE_ROW, &term],
+            (Step::Take | Step::TakeExisting, _) => vec![&tenant, &LEASE_ROW, &term],
             (Step::Renew(_), Some(token)) => vec![&tenant, &LEASE_ROW, &term, token],
             (_, Some(token)) => vec![&tenant, &LEASE_ROW, token],
             (_, None) => vec![&tenant, &LEASE_ROW],
@@ -571,10 +579,7 @@ impl Lease {
         // reads the lease as held: a standby stands by and connects again for its next ask.
         if let Err(error) = self.connected() {
             self.trouble = Some(error.to_string());
-            return match step {
-                Step::Take => Ok(None),
-                _ => Err(error),
-            };
+            return if taking { Ok(None) } else { Err(error) };
         }
         let client = self
             .client
@@ -593,9 +598,9 @@ impl Lease {
                 .and_then(|token| u64::try_from(token).ok())),
             // A take that waited out its lock or statement timeout found the row locked by the
             // holder's write, which holds it for its whole transaction: the lease is held.
-            Err(error) if matches!(step, Step::Take) && busy(&error) => Ok(None),
+            Err(error) if taking && busy(&error) => Ok(None),
             Err(error) => {
-                let failed = self.failed(&error, component);
+                let failed = self.failed(&error, named);
                 let closed = self
                     .client
                     .as_ref()
@@ -605,7 +610,7 @@ impl Lease {
                     self.trouble = Some(failed.to_string());
                     // A take whose connection was closed, as by the server, reads the lease as
                     // held; the next ask connects again.
-                    if matches!(step, Step::Take) {
+                    if taking {
                         return Ok(None);
                     }
                 }
@@ -669,10 +674,16 @@ impl Lease {
     /// for 1 s: the lease then runs out by its time.
     pub fn release(&mut self, component: &str, token: u64) -> Result<(), StoreError> {
         held().remove(&place(&self.database, &prefix(component)));
+        let table = self.table(component)?;
+        self.released(&table, component, token)
+    }
+
+    /// [`Lease::release`] of the lease row of `table`, which a refusal calls `named`.
+    fn released(&mut self, table: &str, named: &str, token: u64) -> Result<(), StoreError> {
         self.connected()?;
         let wait = self.wait();
         self.timeouts(wait.min(RELEASE_WAIT))?;
-        let released = self.run(component, Step::Release(token)).map(drop);
+        let released = self.step(table, named, Step::Release(token)).map(drop);
         // A connection that did not take its timeouts back is made again for the next statement.
         if self.client.is_some() && self.timeouts(wait).is_err() {
             self.client = None;
@@ -700,19 +711,7 @@ impl Lease {
         // A table not created yet holds no record, and the read creates none.
         let statement = SEED_READ.replace("{table}", &self.lease_table(component));
         let row = self.seed_statement(component, &statement, &[&tenant, &SEED_ROW], true)?;
-        row.map(|row| {
-            let text: String = row.try_get(0).map_err(|error| {
-                StoreError::Backend(format!(
-                    "the seed record of {component} was not read: {error}"
-                ))
-            })?;
-            serde_json::from_str(&text).map_err(|error| {
-                StoreError::Backend(format!(
-                    "the seed record of {component} is not JSON: {error}"
-                ))
-            })
-        })
-        .transpose()
+        record(row, component)
     }
 
     /// Writes `body` as the row `seed` of `component`'s lease table, in one statement that writes
@@ -798,13 +797,29 @@ impl Lease {
         (to, to_token): (&str, u64),
         body: &serde_json::Value,
     ) -> Result<(), StoreError> {
+        let mut sources = Vec::new();
+        for (component, token) in from {
+            sources.push((self.table(component)?, (*component).to_owned(), *token));
+        }
+        let table = self.table(to)?;
+        self.gathered((&table, to, to_token), &sources, body)
+    }
+
+    /// [`Lease::gather_seed`] into `to`'s lease table out of `sources`, each a lease table, the
+    /// name a refusal calls it and the token its lease is held at.
+    fn gathered(
+        &mut self,
+        (table, to, to_token): (&str, &str, u64),
+        sources: &[(String, String, u64)],
+        body: &serde_json::Value,
+    ) -> Result<(), StoreError> {
         let tenant = crate::sqlite::TENANT;
         let text = body.to_string();
         let mut tokens = vec![i64::try_from(to_token).unwrap_or(i64::MAX)];
-        let mut tables = vec![self.table(to)?];
-        for (component, token) in from {
+        let mut tables = vec![table.to_owned()];
+        for (source, _, token) in sources {
             tokens.push(i64::try_from(*token).unwrap_or(i64::MAX));
-            tables.push(self.table(component)?);
+            tables.push(source.clone());
         }
         let statement = seed_gathering(&tables);
         let mut parameters: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
@@ -817,8 +832,12 @@ impl Lease {
             Some(_) => Ok(()),
             None => {
                 let leases: Vec<String> = std::iter::once((to, to_token))
-                    .chain(from.iter().copied())
-                    .map(|(component, token)| format!("{component} at token {token}"))
+                    .chain(
+                        sources
+                            .iter()
+                            .map(|(_, named, token)| (named.as_str(), *token)),
+                    )
+                    .map(|(named, token)| format!("{named} at token {token}"))
                     .collect();
                 Err(StoreError::Backend(format!(
                     "fenced: the leases of {} are not all held by this session, so this process \
@@ -826,6 +845,176 @@ impl Lease {
                     leases.join(", ")
                 )))
             }
+        }
+    }
+
+    /// The lease tables of the schema that belong to no component of `current`, each as
+    /// `<schema>.<name>`, in name order: every table whose name is a lease table's,
+    /// `spindle_…_p_lease`, listed with one query of `pg_tables`
+    /// (`story:seed-record-after-a-component-is-removed`, D2 A). A table is named by its name, since
+    /// a hashed prefix ([`prefix`]) cannot be turned back into a component name, and only names of
+    /// lowercase ASCII letters and `_`, as every prefix is, of a table with the columns of a lease
+    /// table, are listed. A table listed may hold no lease row: [`Lease::orphan_seed_record`]
+    /// reads only one that does.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where the tables cannot be listed.
+    pub fn orphan_tables(&mut self, current: &[&str]) -> Result<Vec<String>, StoreError> {
+        let suffix = format!("_p_{}", LEASE.name);
+        let known: BTreeSet<String> = current
+            .iter()
+            .map(|component| format!("{}{suffix}", prefix(component)))
+            .collect();
+        // `_` in a `LIKE` pattern matches any one character, so each is escaped.
+        let pattern = format!("{PREFIX}_%{suffix}").replace('_', "\\_");
+        if let Err(error) = self.connected() {
+            self.trouble = Some(error.to_string());
+            return Err(error);
+        }
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| StoreError::Backend("no connection for the lease".to_owned()))?;
+        let schema = self.database.schema.clone();
+        let listed = self.runtime.block_on(client.query(
+            "SELECT listed.tablename::text FROM pg_catalog.pg_tables AS listed \
+             WHERE listed.schemaname = $1::text AND listed.tablename LIKE $2::text \
+             AND (SELECT count(*) FROM pg_catalog.pg_attribute AS shape \
+             WHERE shape.attrelid = format('%I.%I', listed.schemaname, listed.tablename)::regclass \
+             AND shape.attname IN ('tenant_id', 'row_key', 'body') AND NOT shape.attisdropped) = 3 \
+             ORDER BY listed.tablename",
+            &[&schema, &pattern],
+        ));
+        let rows = match listed {
+            Ok(rows) => {
+                self.trouble = None;
+                rows
+            }
+            Err(error) => {
+                let failed = StoreError::Backend(format!(
+                    "the lease tables of the schema {schema} were not listed: {error}"
+                ));
+                if self
+                    .client
+                    .as_ref()
+                    .is_some_and(tokio_postgres::Client::is_closed)
+                    || dropped(&error)
+                {
+                    self.client = None;
+                    self.trouble = Some(failed.to_string());
+                }
+                return Err(failed);
+            }
+        };
+        Ok(rows
+            .iter()
+            .filter_map(|row| row.try_get::<_, String>(0).ok())
+            .filter(|name| lease_name(name) && !known.contains(name))
+            .map(|name| format!("{schema}.{name}"))
+            .collect())
+    }
+
+    /// What the row `seed` of `table`, one [`Lease::orphan_tables`] listed, holds: `None` where
+    /// there is none, where the table holds no lease row, and where it no longer exists
+    /// (`story:seed-record-after-a-component-is-removed`, D2 A).
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where `table` is not a lease table of the schema, or the row cannot
+    /// be read.
+    pub fn orphan_seed_record(
+        &mut self,
+        table: &str,
+    ) -> Result<Option<serde_json::Value>, StoreError> {
+        self.orphan(table)?;
+        let tenant = crate::sqlite::TENANT;
+        let statement = ORPHAN_SEED_READ.replace("{table}", table);
+        let row =
+            self.seed_statement(table, &statement, &[&tenant, &LEASE_ROW, &SEED_ROW], true)?;
+        record(row, table)
+    }
+
+    /// Takes the lease of `table`, one [`Lease::orphan_tables`] listed, where its lease row is
+    /// free: answers its new token, or `None` while another process holds it, as one of the
+    /// release that still has the component may, and also where the take waited out its timeout
+    /// or its connection was closed. A table with no lease row is given none. No store is opened
+    /// under it (`story:seed-record-after-a-component-is-removed`, D1 A).
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where `table` is not a lease table of the schema, or the lease
+    /// cannot be read or written.
+    pub fn take_orphan(&mut self, table: &str) -> Result<Option<u64>, StoreError> {
+        self.orphan(table)?;
+        self.step(table, table, Step::TakeExisting)
+    }
+
+    /// Ends the lease of `table` held under `token` now, as [`Lease::release`] does a component's.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where `table` is not a lease table of the schema, or the lease
+    /// cannot be written.
+    pub fn release_orphan(&mut self, table: &str, token: u64) -> Result<(), StoreError> {
+        self.orphan(table)?;
+        self.released(table, table, token)
+    }
+
+    /// Writes `body` as the row `seed` of the lease table of `to`'s component and removes the row
+    /// `seed` of each table of `from`, each a table [`Lease::orphan_tables`] listed with the token
+    /// its lease is held at ([`Lease::take_orphan`]), in one statement that does all of it only
+    /// while each of those lease rows names its token and this connection's session, every one
+    /// locked meanwhile (`story:seed-record-after-a-component-is-removed`, D1 A).
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where a table of `from` is not a lease table of the schema, where
+    /// a row cannot be written, and, naming the leases, where a lease row names another token or
+    /// session.
+    pub fn gather_orphan_seed(
+        &mut self,
+        from: &[(&str, u64)],
+        (to, to_token): (&str, u64),
+        body: &serde_json::Value,
+    ) -> Result<(), StoreError> {
+        let mut sources = Vec::new();
+        for (table, token) in from {
+            self.orphan(table)?;
+            sources.push(((*table).to_owned(), (*table).to_owned(), *token));
+        }
+        let table = self.table(to)?;
+        self.gathered((&table, to, to_token), &sources, body)
+    }
+
+    /// Removes the row `seed` of `table`, one [`Lease::orphan_tables`] listed, where there is
+    /// one, only while its lease row names `token` and this connection's session.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where `table` is not a lease table of the schema, where the row
+    /// cannot be removed, and, naming the lease, where the lease row names another token or
+    /// session.
+    pub fn forget_orphan_seed(&mut self, table: &str, token: u64) -> Result<(), StoreError> {
+        self.orphan(table)?;
+        let tenant = crate::sqlite::TENANT;
+        let held = i64::try_from(token).unwrap_or(i64::MAX);
+        let statement = SEED_FORGET.replace("{table}", table);
+        let removed = self.seed_statement(
+            table,
+            &statement,
+            &[&tenant, &LEASE_ROW, &held, &SEED_ROW],
+            false,
+        )?;
+        match removed {
+            Some(_) => Ok(()),
+            None => Err(deposed(table, token, "remove")),
+        }
+    }
+
+    /// Checks that `table` is a lease table of this schema, `<schema>.spindle_…_p_lease`, as
+    /// [`Lease::orphan_tables`] lists them: a statement names it as it is.
+    fn orphan(&self, table: &str) -> Result<(), StoreError> {
+        match table.strip_prefix(&format!("{}.", self.database.schema)) {
+            Some(name) if lease_name(name) => Ok(()),
+            _ => Err(StoreError::Backend(format!(
+                "{table} is not a lease table of the schema {}",
+                self.database.schema
+            ))),
         }
     }
 
@@ -888,9 +1077,41 @@ fn deposed(component: &str, token: u64, what: &str) -> StoreError {
     ))
 }
 
+/// The seed record `row` holds, of the lease table a refusal calls `named`.
+fn record(
+    row: Option<tokio_postgres::Row>,
+    named: &str,
+) -> Result<Option<serde_json::Value>, StoreError> {
+    row.map(|row| {
+        let text: String = row.try_get(0).map_err(|error| {
+            StoreError::Backend(format!("the seed record of {named} was not read: {error}"))
+        })?;
+        serde_json::from_str(&text).map_err(|error| {
+            StoreError::Backend(format!("the seed record of {named} is not JSON: {error}"))
+        })
+    })
+    .transpose()
+}
+
+/// Whether `name` is that of a lease table, `spindle_…_p_lease`, of lowercase ASCII letters and
+/// `_` alone, as every [`prefix`] is.
+fn lease_name(name: &str) -> bool {
+    name.starts_with(&format!("{PREFIX}_"))
+        && name.ends_with(&format!("_p_{}", LEASE.name))
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+}
+
 /// Reads the row `$2` of the lease table. `$1` the tenant.
 const SEED_READ: &str =
     "SELECT body::text FROM {table} WHERE tenant_id = $1::text AND row_key = $2::text";
+
+/// Reads the row `$3` of a lease table found by its name, only where the table holds the lease
+/// row `$2`: a table whose name matches and that holds no lease row is not read. `$1` the tenant.
+const ORPHAN_SEED_READ: &str = "SELECT seed.body::text FROM {table} AS seed \
+     WHERE seed.tenant_id = $1::text AND seed.row_key = $3::text AND EXISTS (SELECT 1 \
+     FROM {table} AS lease WHERE lease.tenant_id = $1::text AND lease.row_key = $2::text)";
 
 /// Writes `$5`, JSON text, as the row `$4` where the lease row `$2` names the token `$3` and this
 /// session, the lease row locked meanwhile; answers a row only where it wrote. `$1` the tenant.
@@ -984,6 +1205,8 @@ fn dropped(error: &tokio_postgres::Error) -> bool {
 /// What [`Lease::run`] does to a lease row.
 enum Step {
     Take,
+    /// [`TAKE_EXISTING`]: a take that writes no lease row where there is none.
+    TakeExisting,
     Renew(u64),
     Release(u64),
 }
@@ -1000,6 +1223,16 @@ const TAKE: &str = "INSERT INTO {table} AS lease (tenant_id, row_key, body) \
      WHERE (lease.body->>'until')::float8 <= extract(epoch FROM clock_timestamp())::float8 \
      OR NOT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = (lease.body->>'pid')::int) \
      RETURNING (body->>'token')::bigint";
+
+/// [`TAKE`] of a lease row that exists, as that of a table found by its name: where there is no
+/// lease row it writes none. Answers the new token.
+const TAKE_EXISTING: &str = "UPDATE {table} AS lease SET body = jsonb_build_object( \
+     'token', (lease.body->>'token')::bigint + 1, 'pid', pg_backend_pid(), \
+     'until', extract(epoch FROM clock_timestamp())::float8 + $3::float8) \
+     WHERE lease.tenant_id = $1::text AND lease.row_key = $2::text \
+     AND ((lease.body->>'until')::float8 <= extract(epoch FROM clock_timestamp())::float8 \
+     OR NOT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = (lease.body->>'pid')::int)) \
+     RETURNING (lease.body->>'token')::bigint";
 
 /// Moves the lease's end a term past now where it still names the token and this session, the
 /// one that took it: a lease whose session ended is free ([`TAKE`]), so a process whose lease

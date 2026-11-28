@@ -565,8 +565,12 @@ pub enum Command {
         /// table, so one kept before a component that sorts first was added is found, and the
         /// next write moves it to the first one's. Records alike in several tables, as a rollback
         /// across a release that changed the components may leave them, are used as one, and the
-        /// next write keeps one; records that differ exit 1 naming the tables, see
-        /// story:seed-record-after-a-component-is-removed. A
+        /// next write keeps one; records that differ exit 1 naming the tables. Where no current
+        /// component's table holds a record, the start looks once for lease tables of components
+        /// the specification no longer has, by their table name, reading those that hold a lease
+        /// row, so a record kept by a removed component is found; the next write moves it to the
+        /// first component's table under that table's own lease too, and leaves it where another
+        /// process holds that lease. One schema holds one leased deployment. A
         /// store with rows and no record (seeded by an earlier release, or filled by `state
         /// move`) is taken as seeded: the record is written with every entry done and none is
         /// sent. Otherwise nothing is recorded and every start sends the whole seed. `POST

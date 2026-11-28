@@ -281,6 +281,9 @@ pub(crate) struct Leases {
     /// The components other than the first whose lease tables the seed's record was read from,
     /// which the next write removes it from as it writes the first one's ([`Leases::answer`]).
     elsewhere: Vec<String>,
+    /// The lease tables of no current component the seed's record was read from, by table name,
+    /// which the next write moves it out of under each one's own lease ([`Leases::moved`]).
+    orphans: Vec<String>,
 }
 
 impl Leases {
@@ -307,6 +310,7 @@ impl Leases {
             held: BTreeMap::new(),
             told: None,
             elsewhere: Vec::new(),
+            orphans: Vec::new(),
         }))
     }
 
@@ -436,9 +440,13 @@ impl Leases {
     /// holding none, so a record a run of an earlier specification kept under another first
     /// component is found. Records found alike in several tables, as a release rolled back and
     /// forward across a change of components leaves them, are one record; records that differ
-    /// are refused, naming the tables. The next write gathers a record found elsewhere into the
-    /// first component's table, in one statement under every lease involved; a removal removes
-    /// it from every table.
+    /// are refused, naming the tables. Where no current component's table holds a record, the
+    /// lease tables of no current component, as those of a component a later release removed,
+    /// are looked for once by their table name and read the same way
+    /// (`story:seed-record-after-a-component-is-removed`, D2 A, D3 A). The next write gathers a
+    /// record found elsewhere into the first component's table, in one statement under every
+    /// lease involved, an old table's taken for it ([`Leases::moved`]); a removal removes it from
+    /// every table, the old ones included.
     fn answer(&mut self, ask: Ask) {
         let held: Vec<(String, u64)> = self
             .components
@@ -464,7 +472,9 @@ impl Leases {
                 let _ = reply.send(self.read(&held));
             }
             Ask::Write(body, reply) => {
-                let written = if self.elsewhere.is_empty() {
+                let written = if !self.orphans.is_empty() {
+                    self.moved(&first, token, &body)
+                } else if self.elsewhere.is_empty() {
                     self.lease.record_seed(&first, token, &body)
                 } else {
                     let from: Vec<(&str, u64)> = self
@@ -494,7 +504,11 @@ impl Leases {
                     }
                 }
                 if removed.is_ok() {
+                    removed = self.forget_orphans().map_err(|error| error.to_string());
+                }
+                if removed.is_ok() {
                     self.elsewhere.clear();
+                    self.orphans.clear();
                 }
                 let _ = reply.send(removed);
             }
@@ -514,20 +528,16 @@ impl Leases {
                 found.push((component.clone(), body));
             }
         }
+        self.orphans.clear();
         let Some((_, body)) = found.first().cloned() else {
-            return Ok(None);
+            return self.orphaned();
         };
         if found.iter().any(|(_, other)| *other != body) {
             let tables: Vec<String> = found
                 .iter()
                 .map(|(component, _)| self.table_of(component))
                 .collect();
-            return Err(format!(
-                "the seed is recorded differently in more than one lease table, {}, as a release \
-                 rolled back across a change of its components may leave it: keep the row `seed` \
-                 of one of them and remove the others, so a start knows which entries are done",
-                tables.join(" and ")
-            ));
+            return Err(differently(&tables));
         }
         let first = held.first().map(|(component, _)| component.as_str());
         self.elsewhere = found
@@ -536,6 +546,135 @@ impl Leases {
             .filter(|component| Some(component.as_str()) != first)
             .collect();
         Ok(Some(body))
+    }
+
+    /// The seed's record looked for, where no current component's lease table holds one, in the
+    /// lease tables of no current component: listed by table name with one query, and read only
+    /// where a table holds a lease row (`story:seed-record-after-a-component-is-removed`, D2 A).
+    /// Records alike are one; records that differ are refused naming the tables (D3 A). Notes
+    /// the tables it was found in.
+    fn orphaned(&mut self) -> Result<Option<serde_json::Value>, String> {
+        let mut found = Vec::new();
+        for table in self.orphan_tables().map_err(|error| error.to_string())? {
+            if let Some(body) = self
+                .lease
+                .orphan_seed_record(&table)
+                .map_err(|error| error.to_string())?
+            {
+                found.push((table, body));
+            }
+        }
+        let Some((_, body)) = found.first().cloned() else {
+            return Ok(None);
+        };
+        if found.iter().any(|(_, other)| *other != body) {
+            let tables: Vec<String> = found.into_iter().map(|(table, _)| table).collect();
+            return Err(differently(&tables));
+        }
+        self.orphans = found.into_iter().map(|(table, _)| table).collect();
+        Ok(Some(body))
+    }
+
+    /// The lease tables of the schema of no component of this run's specification.
+    fn orphan_tables(&mut self) -> Result<Vec<String>, spindle_kernel::StoreError> {
+        let current: Vec<&str> = self.components.iter().map(String::as_str).collect();
+        self.lease.orphan_tables(&current)
+    }
+
+    /// Writes `body` as the record in the first component's lease table, `first` held at
+    /// `token`, and moves it out of the lease tables of no current component it was read from:
+    /// in one statement under the first component's lease and each such table's own, which this
+    /// run takes for the move and releases after (`story:seed-record-after-a-component-is-removed`,
+    /// D1 A). While another process holds one of those, as one of the release that still has the
+    /// component may, the record is written into the first component's table alone and the old
+    /// rows are left: a start reads the current table's from then on.
+    fn moved(
+        &mut self,
+        first: &str,
+        token: u64,
+        body: &serde_json::Value,
+    ) -> Result<(), spindle_kernel::StoreError> {
+        let mut taken = Vec::new();
+        let mut kept_by = None;
+        let mut failed = None;
+        for table in &self.orphans {
+            match self.lease.take_orphan(table) {
+                Ok(Some(held)) => taken.push((table.clone(), held)),
+                Ok(None) => {
+                    kept_by = Some(table.clone());
+                    break;
+                }
+                Err(error) => {
+                    failed = Some(error);
+                    break;
+                }
+            }
+        }
+        let written = match (failed, kept_by) {
+            (Some(error), _) => Err(error),
+            (None, Some(table)) => {
+                crate::log::warn(format!(
+                    "the seed record in {table}, the lease table of a component this \
+                     specification no longer has, is left there: another process holds that \
+                     table's lease, as one of an earlier release still running may; the record \
+                     is now kept in {}",
+                    self.table_of(first)
+                ))
+                .write();
+                self.lease.record_seed(first, token, body)
+            }
+            (None, None) => {
+                let from: Vec<(&str, u64)> = taken
+                    .iter()
+                    .map(|(table, held)| (table.as_str(), *held))
+                    .collect();
+                self.lease.gather_orphan_seed(&from, (first, token), body)
+            }
+        };
+        for (table, held) in &taken {
+            if let Err(error) = self.lease.release_orphan(table, *held) {
+                crate::log::warn(format!(
+                    "the lease of {table} was not released after the seed record was moved out \
+                     of it; it runs out by its time: {error}"
+                ))
+                .write();
+            }
+        }
+        if written.is_ok() {
+            self.orphans.clear();
+        }
+        written
+    }
+
+    /// Removes the seed's record from the lease tables of no current component, as a reset by a
+    /// run without a seed removes it from the current ones (`story:seed-under-a-lease`, D6 A):
+    /// each under its own lease, taken for it and released after. A table whose lease another
+    /// process holds keeps its row, and a line says so.
+    fn forget_orphans(&mut self) -> Result<(), spindle_kernel::StoreError> {
+        for table in self.orphan_tables()? {
+            if self.lease.orphan_seed_record(&table)?.is_none() {
+                continue;
+            }
+            let Some(held) = self.lease.take_orphan(&table)? else {
+                crate::log::warn(format!(
+                    "the seed record in {table}, the lease table of a component this \
+                     specification no longer has, is left there: another process holds that \
+                     table's lease"
+                ))
+                .write();
+                continue;
+            };
+            let forgotten = self.lease.forget_orphan_seed(&table, held);
+            if let Err(error) = self.lease.release_orphan(&table, held) {
+                crate::log::warn(format!(
+                    "the lease of {table} was not released after the seed record was removed \
+                     from it; it runs out by its time: {error}"
+                ))
+                .write();
+            }
+            forgotten?;
+        }
+        Ok(())
     }
 
     /// The lease table of `component`, `<schema>.<prefix>_p_lease`.
@@ -623,6 +762,16 @@ impl Leases {
             }
         }
     }
+}
+
+/// The refusal of records of the seed that differ, found in the lease tables `tables`.
+fn differently(tables: &[String]) -> String {
+    format!(
+        "the seed is recorded differently in more than one lease table, {}, as a release rolled \
+         back across a change of its components may leave it: keep the row `seed` of one of them \
+         and remove the others, so a start knows which entries are done",
+        tables.join(" and ")
+    )
 }
 
 /// What the run's thread asks the lease thread ([`Leases::renewing`]).

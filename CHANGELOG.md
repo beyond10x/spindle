@@ -69,6 +69,20 @@ are Spindle's releases.
   filled by `state move`) is taken as seeded: one line, nothing sent, and a complete record
   written. Resets write the record as they do `seed.json`, and one by a leased run without a seed
   removes it. Without `database_lease` nothing is recorded, as before (`story:seed-under-a-lease`).
+- A leased `run` on PostgreSQL finds its seed record also when a later release removed the
+  component whose lease table held it: a part-done seed resumes after its count, and another seed
+  file exits 1 naming both digests. Before, the record was read only from the current components'
+  tables, so the store's rows with no record read as seeded and a complete record was written
+  over it. Where no current component's lease table holds a record, the start lists the schema's
+  lease tables of no current component by table name, with one `pg_tables` query, and reads those
+  that hold a `lease` row (`spindle_kernel::Lease::orphan_tables`, `orphan_seed_record`); records
+  alike are one, records that differ exit 1 naming the tables, and a record in a current table
+  wins. The next write moves the record to the first component's table in one statement under
+  that table's lease and the old table's own, which the run takes for it and releases after
+  (`take_orphan`, `gather_orphan_seed`, `release_orphan`); while another process holds the old
+  table's lease the record is read and not moved, and a line says so. A reset by a leased run
+  without a seed removes the record from those tables too (`forget_orphan_seed`). One schema
+  holds one leased deployment (`story:seed-record-after-a-component-is-removed`).
 
 ## [0.26.0] - 2026-11-28
 
