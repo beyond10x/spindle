@@ -84,7 +84,7 @@ pub use mint::{Identity, Mint, Seeded, Uuid, UuidV4};
 #[cfg(feature = "postgres")]
 pub use postgres::{
     Database, LEASE_MAX, Lease, PostgresStore, RESERVED as POSTGRES_RESERVED, fenced,
-    prefix as postgres_prefix,
+    prefix as postgres_prefix, store_wait as postgres_store_wait,
 };
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 pub use sqlite::LogStore;

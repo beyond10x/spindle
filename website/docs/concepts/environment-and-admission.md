@@ -320,8 +320,21 @@ Records found alike in several tables are one record: a rollback to a release wi
 components, and a roll forward again, can leave the same record in two tables, and the next write
 keeps the one in the first component's table, in one statement under every lease involved. Records
 that differ stop the start with exit 1, naming the tables; keep the row `seed` of one of them and
-remove the others. `story:seed-record-after-a-component-is-removed` tracks the record of a
-component a later release removes. The rules above hold, with
+remove the others.
+
+A record kept by a component that a later release removed is found too. Where no current
+component's lease table holds a record, the start looks once, with one query of `pg_tables`, for
+lease tables of no current component: by their table name (`spindle_…_p_lease`), since a hashed
+prefix cannot be turned back into a component name, and read only where the table holds a `lease`
+row. A record found there is used as one found in a current table: records alike are one, records
+that differ stop the start with exit 1 naming the tables. The next write moves it to the first
+component's table in one statement under two leases: the first component's, and the old table's
+own, which the process takes for the move and releases after. While another process holds that
+table's lease, as a process of the old release still running does, the record is read and not
+moved: the next write goes to the first component's table, and from then on the record there wins,
+since the old tables are looked at only when no current table holds a record. So one schema holds
+one leased deployment: lease tables of another deployment in the same schema would be read as
+those of removed components. The rules above hold, with
 the store in place of the state:
 
 - With the same seed file and every entry done, `run` prints that the seed already ran on the
@@ -336,7 +349,27 @@ the store in place of the state:
   done. A store with no row and no record gets the whole seed.
 
 A reset writes the record as it writes `seed.json`, and one by a leased run without `--seed`
-removes the row. Any other store, in PostgreSQL without `database_lease` or in memory, records
+removes the row. A body that is not a world of the model, or a world clock the run cannot take, is
+refused first, `400` or `409`, and touches no record. From the lease tables of removed components
+it then removes the row, before it empties any store: it first takes each table's own lease,
+which it keeps until it answers, and then removes every row in one transaction. While another
+process holds one of those leases, as a process of the old release still running may, the reset
+is refused `409`, naming the table and that another process holds its lease, and no row is
+touched; where a row cannot be removed, it is refused `500` naming the table, and no row is
+removed. Either way it changes nothing: no store is emptied and every record stays, since a store
+emptied with the old record left would read as seeded at the next start. Once that process has
+ended, or the row `seed` of that table is removed, the reset can be sent again. A reset that then
+changes no store's rows puts the rows back, in one transaction, before it answers, whatever it
+answers: `400` for a row of its world, `503` where the lease was lost and the fence refused its
+first write, `500` where a store refused its first removal. A run that lost its lease while the
+reset ran keeps renewing the leases of the removed components' tables, not its own, until the
+reset has put the rows back, as long as the reset's store operations may still wait, then exits.
+A reset that removed no such row keeps its answer as it is. Its answer stands; where the put-back
+fails, the answer, at least `500`, also names the tables whose record was lost, and the next start
+with the seed may take the store as seeded, so reset the store before it. The run waits for the
+removal and the put-back as long as their statements may take, a statement's timeout for each.
+Where the removal of a current table's row fails after the reset, a line names that table. Any
+other store, in PostgreSQL without `database_lease` or in memory, records
 nothing: every start sends the whole seed, so a second start applies nothing new only where every
 entry is a create whose command declares `existing_instance:`.
 

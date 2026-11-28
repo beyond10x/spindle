@@ -115,6 +115,38 @@ are Spindle's releases.
   `503`, as before. A `POST /api/reset` held so answers `500` and leaves the component's store
   lost until the run restarts, as before (`story:reset-on-a-busy-store-keeps-the-store`)
   (`story:new-leader-write-while-old-paused`).
+- A leased `run` on PostgreSQL finds its seed record also when a later release removed the
+  component whose lease table held it: a part-done seed resumes after its count, and another seed
+  file exits 1 naming both digests. Before, the record was read only from the current components'
+  tables, so the store's rows with no record read as seeded and a complete record was written
+  over it. Where no current component's lease table holds a record, the start lists the schema's
+  lease tables of no current component by table name, with one `pg_tables` query, and reads those
+  that hold a `lease` row (`spindle_kernel::Lease::orphan_tables`, `orphan_seed_record`); records
+  alike are one, records that differ exit 1 naming the tables, and a record in a current table
+  wins. The next write moves the record to the first component's table in one statement under
+  that table's lease and the old table's own, which the run takes for it and releases after
+  (`take_orphan`, `gather_orphan_seed`, `release_orphan`); while another process holds the old
+  table's lease the record is read and not moved, and a line says so. A reset by a leased run
+  without a seed removes the record from those tables too, before it empties any store: it
+  refuses a body that is not a world, or a world clock it cannot take, before it touches a record;
+  then it takes every such table's lease, which it keeps until it answers (`renew_orphan`), and
+  removes every record in one transaction (`forget_orphan_seeds`). While another process holds
+  one lease the reset is refused `409` naming the table and no record is touched; where a record
+  cannot be removed it is refused `500` naming the table and none is removed. Either changes
+  nothing, since a store emptied with the old record left would read as seeded at the next start.
+  A reset that then changes no store's rows (`spindle_host::Host::reset_changed_rows`) puts the
+  records back in one transaction before it answers (`record_orphan_seeds`), whatever it answers:
+  `400` for a row of its world, `503` where the lease's fence refused its first write, `500` where
+  a store refused its first removal; a run that lost its lease puts them back before it exits,
+  renewing the leases of those tables, not its own, until the reset asks, at most two store
+  operations (`spindle_kernel::postgres_store_wait`) and the run's wait for its lease thread. The
+  answer stands, and where the put-back fails it also names the tables whose record was lost, at
+  least `500`; a reset whose claim took no lease, as on a schema with no removed component, keeps
+  its answer as it is. The run waits for the claim and the put-back a statement's timeout for each of
+  their statements, so a slow put-back is not answered as lost; a claim it stopped waiting for is
+  undone behind it: no lease is kept and no record is lost. A removal from a current table that
+  fails after the reset is printed naming that table.
+  One schema holds one leased deployment (`story:seed-record-after-a-component-is-removed`).
 
 ## [0.26.0] - 2026-11-28
 
