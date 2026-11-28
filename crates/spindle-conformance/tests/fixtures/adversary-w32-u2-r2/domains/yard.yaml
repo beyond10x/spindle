@@ -1,0 +1,153 @@
+domain: lamps.yard
+summary: A caller installs lamps, one of them under a serial the runtime mints; the system lights a lamp it decides is bright, and stamps a dark lamp with a code it decides.
+types:
+  - name: lamps.yard.LampId
+    kind: newtype
+    of: String
+entities:
+  - name: lamps.yard.Lamp
+    identity:
+      name: lamp_id
+      type: lamps.yard.LampId
+    fields:
+      - name: code
+        type: Optional<Integer>
+    lifecycle:
+      initial: Dark
+      states: [Dark, Lit, Stamped]
+      terminal: [Lit, Stamped]
+      transitions:
+        - name: light
+          from: [Dark]
+          to: Lit
+        - name: stamp
+          from: [Dark]
+          to: Stamped
+errors:
+  - name: lamps.yard.Dim
+    summary: The system decided the lamp is not bright.
+    fields: []
+  - name: lamps.yard.LampStateConflict
+    summary: The lamp is not dark.
+    fields: []
+  - name: lamps.yard.NoLamp
+    summary: No lamp carries the identity.
+    fields: []
+events:
+  - name: lamps.yard.Installed
+    fields:
+      - name: lamp_id
+        type: lamps.yard.LampId
+  - name: lamps.yard.Tagged
+    fields:
+      - name: lamp_id
+        type: lamps.yard.LampId
+      - name: serial
+        type: Integer
+  - name: lamps.yard.Lit
+    fields:
+      - name: lamp_id
+        type: lamps.yard.LampId
+  - name: lamps.yard.Stamped
+    fields:
+      - name: lamp_id
+        type: lamps.yard.LampId
+      - name: code
+        type: Integer
+views:
+  - name: lamps.yard.Lamps
+    source: lamps.yard.Lamp
+    consistency: read_your_writes
+    fields:
+      - name: lamp_id
+        type: lamps.yard.LampId
+      - name: code
+        type: Optional<Integer>
+      - name: state
+        type: lamps.yard.Lamp.State
+actors:
+  - name: lamps.yard.Caller
+    may: [lamps.yard.Install, lamps.yard.InstallTagged]
+  - name: lamps.yard.Lighter
+    system: true
+    may: [lamps.yard.Switch]
+  - name: lamps.yard.Stamper
+    system: true
+    may: [lamps.yard.Stamp]
+commands:
+  - name: lamps.yard.Install
+    input:
+      - name: lamp_id
+        type: lamps.yard.LampId
+    outcomes:
+      - name: installed
+        creates: lamps.yard.Lamp
+        instance: lamp_id
+        emits: [lamps.yard.Installed]
+        payload:
+          lamps.yard.Installed: {lamp_id: input.lamp_id}
+        summary: The lamp is installed dark.
+  - name: lamps.yard.InstallTagged
+    input:
+      - name: lamp_id
+        type: lamps.yard.LampId
+    outcomes:
+      - name: tagged
+        creates: lamps.yard.Lamp
+        instance: lamp_id
+        emits: [lamps.yard.Tagged]
+        payload:
+          lamps.yard.Tagged:
+            lamp_id: input.lamp_id
+            serial: {generated: true}
+        summary: The lamp is installed dark under a serial the runtime mints.
+  - name: lamps.yard.Switch
+    input:
+      - name: lamp_id
+        type: lamps.yard.LampId
+      - name: bright
+        type: Boolean
+    outcomes:
+      - name: lit
+        when: bright == true
+        moves: lamps.yard.Lamp.light
+        instance: lamp_id
+        emits: [lamps.yard.Lit]
+        payload:
+          lamps.yard.Lit: {lamp_id: input.lamp_id}
+        summary: The system decided the lamp is bright and lit it.
+      - name: dim
+        error: lamps.yard.Dim
+        summary: The system decided the lamp is not bright.
+      - name: wrong-state
+        wrong_state: true
+        error: lamps.yard.LampStateConflict
+        summary: The lamp is lit or stamped already.
+      - name: no-lamp
+        unknown_instance: true
+        error: lamps.yard.NoLamp
+        summary: No lamp carries the identity.
+  - name: lamps.yard.Stamp
+    input:
+      - name: lamp_id
+        type: lamps.yard.LampId
+      - name: code
+        type: Integer
+    outcomes:
+      - name: stamped
+        moves: lamps.yard.Lamp.stamp
+        instance: lamp_id
+        sets:
+          code: input.code
+        emits: [lamps.yard.Stamped]
+        payload:
+          lamps.yard.Stamped: {lamp_id: input.lamp_id, code: input.code}
+        summary: The system stamps the dark lamp with a code it decides.
+      - name: wrong-state
+        wrong_state: true
+        error: lamps.yard.LampStateConflict
+        summary: The lamp is lit or stamped already.
+      - name: no-lamp
+        unknown_instance: true
+        error: lamps.yard.NoLamp
+        summary: No lamp carries the identity.

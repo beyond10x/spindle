@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-28T08:12:25Z",
+  "actor": "human:operator",
+  "artifact": "story:postgres-lane-runs-locally",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "Local lane on the script's own cluster (PostgreSQL 17.12, en_US.utf8): wave/32 at 96ca009b, which carries integration/2026-11-28-1: task check:postgres exit 0, 174 passed in 46.3 s (within 46.8 s of 100 s), timing case 4.2 s of 20 s, cluster removed and postmaster not alive. pg_stat_activity peak of one lane run on unit/w32-seed-lease at 84316b4b (carries integration/2026-11-28-1): 100 rows of max_connections=300; on base 0b1614c9 before the batch: 59 (round 1) and 91 (round 2). check:postgres-lane-script 32 cases, check:postgres-lane-adversary 21 cases, check:postgres-options-adversary 11 cases, all passed."
+  }
+}

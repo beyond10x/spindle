@@ -8,6 +8,7 @@
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
 use serde::{Deserialize, Serialize};
@@ -672,6 +673,46 @@ pub trait Reading: Send + Sync {
             .collect())
     }
 
+    /// [`Reading::events_placed_after`], given up once `stop` is set: a read that waits, for its
+    /// turn or for the feed to answer the store's own writes (PostgreSQL's withholds a write while
+    /// an older transaction is open anywhere on the server), looks at `stop` while it waits and
+    /// answers no event once it is set, so the thread that set it, as an egress stopping at exit,
+    /// waits at most one such look for it (`story:leader-exits-promptly-on-sigterm`). This
+    /// default, for a store whose reads do not wait, answers no event where `stop` is set before
+    /// the read, and reads as [`Reading::events_placed_after`] otherwise.
+    ///
+    /// # Errors
+    /// As [`Reading::events_placed_after`].
+    fn events_placed_after_unless_stopped(
+        &self,
+        position: u64,
+        limit: usize,
+        stop: &AtomicBool,
+    ) -> Result<Vec<(u64, Committed)>, StoreError> {
+        if stop.load(Ordering::SeqCst) {
+            return Ok(Vec::new());
+        }
+        self.events_placed_after(position, limit)
+    }
+
+    /// [`Reading::events_after`], whose waits, for its turn or for the feed to answer the store's
+    /// own writes, look at `stop` and are given up once it is set: `None` for a read given up,
+    /// which read nothing to answer; its events, `Some`, for a read that did not wait or whose
+    /// wait ended first, the flag set by then or not (`story:leader-exits-promptly-on-sigterm`).
+    /// This default, for a store whose reads do not wait, always reads.
+    ///
+    /// # Errors
+    /// As [`Reading::events_after`].
+    fn events_after_unless_stopped(
+        &self,
+        position: u64,
+        limit: usize,
+        stop: &AtomicBool,
+    ) -> Result<Option<Vec<Committed>>, StoreError> {
+        let _ = stop;
+        self.events_after(position, limit).map(Some)
+    }
+
     /// A position at or past every write that committed an event so far, as
     /// [`Store::events_head`] answers it.
     ///
@@ -680,6 +721,17 @@ pub trait Reading: Send + Sync {
     /// the events it commits.
     fn events_head(&self) -> Result<u64, StoreError> {
         Err(no_events())
+    }
+
+    /// [`Reading::events_head`], given up as [`Reading::events_after_unless_stopped`] is: `None`
+    /// for a read given up while it waited, the head for one that did not wait or whose wait
+    /// ended first. This default, for a store whose reads do not wait, always reads.
+    ///
+    /// # Errors
+    /// As [`Reading::events_head`].
+    fn events_head_unless_stopped(&self, stop: &AtomicBool) -> Result<Option<u64>, StoreError> {
+        let _ = stop;
+        self.events_head().map(Some)
     }
 
     /// The id of the log of events the store keeps, as [`Store::events_id`] answers it; `0`

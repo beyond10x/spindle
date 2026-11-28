@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-28T08:12:25Z",
+  "actor": "human:operator",
+  "artifact": "story:seed-under-a-lease",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "Lane before 33.1 s (153 tests), after 40.1 s (161), final round 27.6 s (172), each within 100 s; pg_stat_activity peak 78, then 87, then 100, of 300 (no raise: more than 50 below). wave/32 at 96ca009b: lane 174 passed in 46.3 s."
+  }
+}

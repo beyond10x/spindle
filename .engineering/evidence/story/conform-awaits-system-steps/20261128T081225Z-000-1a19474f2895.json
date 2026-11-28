@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-28T08:12:25Z",
+  "actor": "human:operator",
+  "artifact": "story:conform-awaits-system-steps",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "unit/w32-await at a6ba65d8: spindle-conformance 141 passed, 3 ignored (one parked as story:await-mints-count-generated-values); spindle-cli replay 44 passed; executed 431 -> 443 over the conformance, replay and host lanes; the repository's own conformance count unchanged (skipped = 0). wave/32 at 96ca009b: task check exit 0, 2131 passed."
+  }
+}

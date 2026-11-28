@@ -138,16 +138,21 @@ certificate, and the probes are `tcpSocket` probes
 
 When SIGTERM or SIGINT arrives, `GET /__spindle/ready` answers `503` at once, even while a command
 holds the run, and every request that arrives from then on is answered `503` at once; the three
-routes above still answer. The command under way finishes. The requests already waiting are then
+routes above still answer. The command under way finishes. A `GET /api/events` or
+`GET /api/history` under way beside it that completes is answered normally; one still waiting for
+the store, for its feed or its turn, is cut off and answered `503`, so no such wait holds the exit.
+The requests already waiting are then
 answered with their outcomes, in arrival order, for up to
 [`--drain`](../reference/cli.md#run--drain) seconds, 20 by default, counted from when the command
 under way finished; one taken within that bound finishes even past it. A `POST /api/reset` taken
 in the drain is answered `503` and empties nothing. A bound too large for the clock sets no
 deadline: the drain ends once no request is waiting. Each request still waiting
 once the bound has passed is answered `503`, every answer is written, and the run exits 143 for
-SIGTERM or 130 for SIGINT. `--drain 0` answers none of the waiting requests. So a rolling restart
-fails no request already accepted, provided the orchestrator's grace period covers the external
-call under way and the drain bound.
+SIGTERM or 130 for SIGINT. `--drain 0` answers none of the waiting requests. The run exits within
+the drain bound, counted only while requests wait, the longest `timeout_ms` of an `[egress]` call
+(a post under way finishes) and 5 s of the signal. So a rolling restart fails no request already
+accepted, provided the orchestrator's grace period covers the external call under way and that
+bound.
 
 ## Resources
 

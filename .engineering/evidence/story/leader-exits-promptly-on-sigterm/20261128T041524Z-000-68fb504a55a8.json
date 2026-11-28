@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-28T04:15:24Z",
+  "actor": "human:operator",
+  "artifact": "story:leader-exits-promptly-on-sigterm",
+  "kind": "story",
+  "revision": 4,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "review-result:wave32-des-r2",
+    "review": "review-result:wave32-des-r2",
+    "outcome": "no-op"
+  }
+}

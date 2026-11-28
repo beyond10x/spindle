@@ -185,25 +185,36 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         if: steps.paths.outputs.class == 'code'
 
+      - name: The PostgreSQL lane script stops and removes its cluster, its cases and the adversary's
+        if: steps.paths.outputs.class == 'code'
+        run: |
+          set -euo pipefail
+          bin=
+          for found in /usr/lib/postgresql/*/bin; do
+            if [ -x "$found/initdb" ]; then bin=$found; fi
+          done
+          if [ -z "$bin" ]; then
+            echo "no PostgreSQL bin directory with initdb under /usr/lib/postgresql on this runner" >&2
+            exit 1
+          fi
+          SPINDLE_PG_BIN="$bin" task check:postgres-lane-script
+          SPINDLE_PG_BIN="$bin" task check:postgres-lane-adversary
+
       - name: PostgreSQL 17 on loopback, its TLS certificate issued by a CA of this run
         if: steps.paths.outputs.class == 'code'
         run: |
           set -euo pipefail
           dir="$RUNNER_TEMP/postgres"
-          mkdir -p "$dir"
-          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=spindle-test-ca \
-            -keyout "$dir/ca.key" -out "$dir/ca.pem" \
-            -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign
-          openssl req -newkey rsa:2048 -nodes -subj /CN=localhost -keyout "$dir/server.key" -out "$dir/server.csr"
-          printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth\n' > "$dir/server.ext"
-          openssl x509 -req -in "$dir/server.csr" -CA "$dir/ca.pem" -CAkey "$dir/ca.key" -CAcreateserial \
-            -days 1 -extfile "$dir/server.ext" -out "$dir/server.pem"
+          sh scripts/postgres-lane.sh tls "$dir"
           chmod 644 "$dir/server.key"
+          options=$(sh scripts/postgres-lane.sh options /tmp/server.pem /tmp/server.key)
+          mapfile -t options <<< "$options"
           docker run -d --name postgres -p 127.0.0.1:5432:5432 \
             -e POSTGRES_USER=owner -e POSTGRES_PASSWORD=owner -e POSTGRES_DB=spindle \
             -v "$dir:/certs:ro" --entrypoint sh postgres:17 -c \
-            'install -o postgres -g postgres -m 600 /certs/server.key /tmp/server.key && install -o postgres -g postgres -m 644 /certs/server.pem /tmp/server.pem && exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/tmp/server.pem -c ssl_key_file=/tmp/server.key -c max_locks_per_transaction=256 -c max_connections=300'
-          for attempt in $(seq 1 60); do
+            'install -o postgres -g postgres -m 600 /certs/server.key /tmp/server.key && install -o postgres -g postgres -m 644 /certs/server.pem /tmp/server.pem && exec docker-entrypoint.sh postgres "$@"' \
+            sh "${options[@]}"
+          for _ in $(seq 1 60); do
             if docker exec postgres pg_isready -h 127.0.0.1 -U owner -d spindle >/dev/null 2>&1; then
               break
             fi

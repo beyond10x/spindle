@@ -1,0 +1,137 @@
+---
+format: aep.planning-md/3
+id: review-result:wave32-acc-r1
+kind: review-result
+status: active
+title: Plan critic (acceptance), round 1, on wave 32
+relations:
+- reviews: story:postgres-lane-runs-locally
+- reviews: story:conform-awaits-system-steps
+- reviews: story:leader-exits-promptly-on-sigterm
+- reviews: story:seed-under-a-lease
+revision: 1
+---
+needs-revision
+
+- story:postgres-lane-runs-locally — the clean-up promise "also when a test fails or the run gets SIGINT" rests on an assertion that the same task runs "at its end", which SIGINT interrupts, and no check or red-first case exercises a failing run or an interrupted one — .engineering/planning/story/postgres-lane-runs-locally.md:44-47
+- story:postgres-lane-runs-locally — the Outcome promises that the script prints its major version, warns off 17 and honours `SPINDLE_PG_BIN` (D3 A), but no acceptance line observes any of the three — .engineering/planning/story/postgres-lane-runs-locally.md:30-31
+- story:postgres-lane-runs-locally — the wave page adds a duty the story does not hold: record the `pg_stat_activity` peak and raise `max_connections` if it comes within 50, so the story can close without it — .engineering/waves/wave-32.md:68-72
+- story:conform-awaits-system-steps — "`conform` over the fixture reports 0 skipped, and `conformance.toml` keeps `skipped = 0`" is two statements, sits in a list headed "All tests below" with no test name, and its second half already holds before the work (`conformance.toml:88` says `skipped = 0`, and D5 A adds no await scenario to Spindle's own suite) — .engineering/planning/story/conform-awaits-system-steps.md:60
+- story:conform-awaits-system-steps — the fixture is described only as "a command every grant of which is a `system: true` actor", so it need not hold an optional input, a stated input or a `when_related:` input, and a host that mints every input would pass the parity line against D1 A's input order — .engineering/planning/story/conform-awaits-system-steps.md:49-55
+- story:conform-awaits-system-steps — the Outcome promises `run --scenario` runs an awaiting scenario, but every acceptance line goes through `conform` or `HostTarget` and none replays a scenario — .engineering/planning/story/conform-awaits-system-steps.md:28
+- story:leader-exits-promptly-on-sigterm — the Outcome says each release at exit waits at most 1 s per statement whatever `database_lease` is (D3 A), and no acceptance line observes that bound — .engineering/planning/story/leader-exits-promptly-on-sigterm.md:45-46
+- story:leader-exits-promptly-on-sigterm — the Outcome says every cursor a lane handed back is saved before the leases are released, and the end-to-end test names no assertion that t1 is not posted again after the takeover — .engineering/planning/story/leader-exits-promptly-on-sigterm.md:44-46
+- story:leader-exits-promptly-on-sigterm — the end-to-end bound is "the bound `run --help` names", which the Outcome says is "measured and adjusted before merge" and which is drain + 2 s + 5 s with the test's drain and `timeout_ms` unstated, so the pass line moves with the implementation, and the hold can only outlast it while the bound stays under the 10 s cap — .engineering/planning/story/leader-exits-promptly-on-sigterm.md:65-66
+- story:leader-exits-promptly-on-sigterm — "within two thirds of the lease of that exit" cannot be read the same way twice, because the acceptance names neither the lease value nor the instant the two thirds are counted from — .engineering/planning/story/leader-exits-promptly-on-sigterm.md:67-68
+- story:leader-exits-promptly-on-sigterm — the first bullet joins a documentation outcome (the wait "named in the story's closing record", no location given) to a kernel test that is "red first on 0.26.0", and a stopped `events_placed_after` has no form on 0.26.0 to be red with — .engineering/planning/story/leader-exits-promptly-on-sigterm.md:58-62
+- story:seed-under-a-lease — the Outcome says resets write and delete the record (D6 A), and none of the six named tests resets a leased PostgreSQL run — .engineering/planning/story/seed-under-a-lease.md:51-52
+- story:seed-under-a-lease — the Outcome says the lease thread writes the record only while the lease row names this process's token (D3 A), and no test shows a deposed process failing to write — .engineering/planning/story/seed-under-a-lease.md:48-49
+- story:seed-under-a-lease — `another_seed_file_is_refused_before_serving` holds two independent outcomes (exit 1 naming both digests, and "on a store that holds no row it seeds from the first entry"), so one can pass while the other fails — .engineering/planning/story/seed-under-a-lease.md:76-77
+
+Read: five artifacts (the four stories and `wave-32.md`, with `cat -n`), plus `critic-rubric.md`, ESS 0.99.2 `runner/await_outcome.rs`, `Taskfile.yml`, `.config/nextest.toml`, `postgres-lane-margin.md`, and the cited `replicas.rs`, `adversary_w31_u6.rs`, `seed.rs`, `serve.rs` and `sqlite.rs` ranges. I did not run `aep plan artifact show`, `kinds` or `lifecycle`; the bodies came from the files directly.
+
+Could not establish:
+- Whether the kernel red-first test can fail on 0.26.0, since the cause named is unproven and the stop API does not exist there.
+- How `a_killed_leader_resumes_the_seed_after_its_count` holds entry 2 so the kill lands after entry 1. The state-directory tests use a holding desk, but the PostgreSQL tests have no such fixture.
+- Out of my lane, not counted in the verdict: `story:postgres-lane-margin` records the lane at 112.3 s of 120 s on CI, and U3 and U4 add 8 process tests to it, one of about 9 s. That is a coupling and budget matter for the other critics.
+
+```findings
+- file: .engineering/planning/story/postgres-lane-runs-locally.md
+  line: 44
+  category: acceptance
+  severity: blocker
+  verdict: needs-revision
+  origin: introduced
+  message: "the clean-up promise 'also when a test fails or the run gets SIGINT' rests on an assertion the task runs 'at its end', which SIGINT interrupts, and no check or red-first case exercises a failing run or an interrupted one"
+- file: .engineering/planning/story/postgres-lane-runs-locally.md
+  line: 30
+  category: acceptance
+  severity: warning
+  verdict: needs-revision
+  origin: introduced
+  message: "the Outcome promises that the script prints its major version, warns off 17 and honours SPINDLE_PG_BIN (D3 A), and no acceptance line observes any of the three"
+- file: .engineering/waves/wave-32.md
+  line: 68
+  category: acceptance
+  severity: warning
+  verdict: needs-revision
+  origin: introduced
+  message: "the wave page adds a duty the story's acceptance does not hold (record the pg_stat_activity peak, raise max_connections if it comes within 50), so story:postgres-lane-runs-locally can close without it"
+- file: .engineering/planning/story/conform-awaits-system-steps.md
+  line: 60
+  category: acceptance
+  severity: warning
+  verdict: needs-revision
+  origin: introduced
+  message: "the 0-skipped line is two statements in a list headed 'All tests below' with no test name, and its conformance.toml half (skipped = 0) already holds before the work, since D5 A adds no await scenario to the repository's own suite"
+- file: .engineering/planning/story/conform-awaits-system-steps.md
+  line: 49
+  category: acceptance
+  severity: warning
+  verdict: needs-revision
+  origin: introduced
+  message: "the fixture is described only as a command every grant of which is a system actor, so it need not hold an optional, a stated or a when_related input, and a host that mints every input would pass the parity line against D1 A's input order"
+- file: .engineering/planning/story/conform-awaits-system-steps.md
+  line: 28
+  category: acceptance
+  severity: warning
+  verdict: needs-revision
+  origin: introduced
+  message: "the Outcome promises run --scenario runs an awaiting scenario, and every acceptance line goes through conform or HostTarget with none replaying a scenario"
+- file: .engineering/planning/story/leader-exits-promptly-on-sigterm.md
+  line: 45
+  category: acceptance
+  severity: blocker
+  verdict: needs-revision
+  origin: introduced
+  message: "the Outcome says each release at exit waits at most 1 s per statement whatever database_lease is (D3 A), and no acceptance line observes that bound"
+- file: .engineering/planning/story/leader-exits-promptly-on-sigterm.md
+  line: 44
+  category: acceptance
+  severity: warning
+  verdict: needs-revision
+  origin: introduced
+  message: "the Outcome says every cursor a lane handed back is saved before the leases are released, and the end-to-end test names no assertion that t1 is not posted again after the takeover"
+- file: .engineering/planning/story/leader-exits-promptly-on-sigterm.md
+  line: 65
+  category: acceptance
+  severity: warning
+  verdict: needs-revision
+  origin: introduced
+  message: "the end-to-end bound is whatever run --help names, which the Outcome says is measured and adjusted before merge, and the test's drain and timeout_ms are unstated, so the pass line moves with the implementation and the 10 s hold can outlast it only while the bound stays under 10 s"
+- file: .engineering/planning/story/leader-exits-promptly-on-sigterm.md
+  line: 67
+  category: acceptance
+  severity: warning
+  verdict: needs-revision
+  origin: introduced
+  message: "'within two thirds of the lease of that exit' cannot be read the same way twice, because it names neither the lease value nor the instant the two thirds are counted from"
+- file: .engineering/planning/story/leader-exits-promptly-on-sigterm.md
+  line: 58
+  category: acceptance
+  severity: warning
+  verdict: needs-revision
+  origin: introduced
+  message: "the first bullet joins a documentation outcome (the wait named in a 'closing record' with no location) to a kernel test 'red first on 0.26.0' that uses a stop that has no form on 0.26.0"
+- file: .engineering/planning/story/seed-under-a-lease.md
+  line: 51
+  category: acceptance
+  severity: blocker
+  verdict: needs-revision
+  origin: introduced
+  message: "the Outcome says resets write and delete the record (D6 A), and none of the six named tests resets a leased PostgreSQL run"
+- file: .engineering/planning/story/seed-under-a-lease.md
+  line: 48
+  category: acceptance
+  severity: warning
+  verdict: needs-revision
+  origin: introduced
+  message: "the Outcome says the lease thread writes the record only while the lease row names this process's token (D3 A), and no test shows a deposed process failing to write"
+- file: .engineering/planning/story/seed-under-a-lease.md
+  line: 76
+  category: acceptance
+  severity: warning
+  verdict: needs-revision
+  origin: introduced
+  message: "another_seed_file_is_refused_before_serving holds two independent outcomes (exit 1 naming both digests, and seeding from the first entry on a store with no row), so one can pass while the other fails"
+```

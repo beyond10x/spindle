@@ -302,20 +302,51 @@ the record as it was. On the next start:
 A request id is remembered by the start that sends its entry; a start that resumes the seed also
 remembers those of the entries sent before it that were not rejected, so a repeat of one is
 already there. `POST /api/reset` on a run without `--seed` removes `seed.json`: the next start with
-a seed treats the state as one written without it. A store kept elsewhere, in PostgreSQL or in
-memory, records nothing: every start sends the whole seed, so a second start applies nothing new
-only where every entry is a create whose command declares `existing_instance:`.
+a seed treats the state as one written without it.
+
+### A seed on PostgreSQL with a lease
+
+A run on PostgreSQL given `database_lease` keeps the same record in the store: the row `seed` of
+the lease table of its first component in name order (`<prefix>_p_lease`, which `store migrate`
+already creates), holding the digest, the entries done and those rejected, as `seed.json` does.
+The process that leads writes it after each entry, on the connection that holds its leases, and a
+write lands only while the lease row still names that process's token and database session. Every
+process that leads decides from it, whatever lease token it took: a restart of the only process, a
+standby that takes over, and a process that leads after one that took the leases and never seeded
+(one that exited 3 on a misfit) alike. A start looks for the record in every component's lease
+table, so a record kept before a later specification added a component that sorts first is still
+found; the next write moves it to the first component's table, in one statement under both leases.
+Records found alike in several tables are one record: a rollback to a release with other
+components, and a roll forward again, can leave the same record in two tables, and the next write
+keeps the one in the first component's table, in one statement under every lease involved. Records
+that differ stop the start with exit 1, naming the tables; keep the row `seed` of one of them and
+remove the others. `story:seed-record-after-a-component-is-removed` tracks the record of a
+component a later release removes. The rules above hold, with
+the store in place of the state:
+
+- With the same seed file and every entry done, `run` prints that the seed already ran on the
+  PostgreSQL store, naming the row `seed` and its table, and sends no entry.
+- With some entries not done, as after a leader killed mid-seed, the next process to lead sends the
+  rest.
+- With another seed file, the process exits 1 before it serves a request, naming both digests,
+  unless the store holds no row; a standby that takes over exits so too, and a supervisor that
+  restarts it meets the same exit until the file or the store changes.
+- A store that holds rows and no record, as 0.26.0 or `state move` leaves one, is taken as seeded by
+  the file given: one line says so, no entry is sent, and the record is written with every entry
+  done. A store with no row and no record gets the whole seed.
+
+A reset writes the record as it writes `seed.json`, and one by a leased run without `--seed`
+removes the row. Any other store, in PostgreSQL without `database_lease` or in memory, records
+nothing: every start sends the whole seed, so a second start applies nothing new only where every
+entry is a create whose command declares `existing_instance:`.
 
 ### What a seed does not do
 
 - Two `run` processes on one store kept in PostgreSQL without `database_lease` each submit the
   whole file; only `existing_instance:` outcomes keep that from writing twice. Given
-  `database_lease`, the seed runs only under the first token of the leases: a process that takes
-  every lease at token 1, the first ever taken on those tables, submits it. One that takes a lease
-  at a later token, after standing by or on a restart of the only process, skips it, logs the
-  component and the token, and reads ready at once
-  ([several processes on one store](#several-processes-on-one-store)). A leader killed before its
-  seed ended leaves the rest unsent.
+  `database_lease`, only the process that leads sends it, deciding from the store's record
+  ([a seed on PostgreSQL with a lease](#a-seed-on-postgresql-with-a-lease)). An entry the leader
+  was killed in may have been applied without being recorded, and is then sent again.
 - `POST /api/reset` drops the seed's entries not yet sent, so a reset that arrives while the seed
   runs ends that run with the counts it reached. With no world it then empties every store,
   records 0 entries done in `seed.json`, and submits the seed again, from its first entry to its
@@ -567,7 +598,9 @@ database's clock. Each process takes the lease of every component in name order 
 connection of its own, one of the serving role's beyond its pools
 ([the role's limit](#state-in-postgresql)), and leads once it holds them all. The leader renews
 them every fifth of `database_lease` on that same session, and retries a renewal that did not land
-at once; a clean exit, on SIGINT or SIGTERM, releases them. A renewal lands only on the session
+at once; a clean exit, on SIGINT or SIGTERM, releases them once every egress cursor is saved, each
+release waiting at most 1 s whatever `database_lease` is, so a standby takes over at its next poll.
+A renewal lands only on the session
 that took the lease: a leader whose lease connection was closed (a terminated backend, a dropped
 connection, an idle-session timeout) has given its leases up, and exits 1 at its next renewal.
 
@@ -581,8 +614,9 @@ refused: the process connects again for its next ask, and prints a warning namin
 the connection error, once each time the error changes, and a line once it connects again; its
 readiness reads as any standby's. A lease is free once its end has passed, or once the database
 session that holds it has ended, as a killed process's does. On taking them all the
-process opens the stores, builds its host and serves; it skips the seed, which runs only under
-the leases' first token. Its stderr shows the takeover:
+process opens the stores, builds its host and serves, and decides the seed from the store's record
+([a seed on PostgreSQL with a lease](#a-seed-on-postgresql-with-a-lease)). Its stderr shows the
+takeover:
 
 ```text
 b10x-spindle: standing by: another process holds the lease of board, so this run serves nothing until it takes the leases of board, ledger

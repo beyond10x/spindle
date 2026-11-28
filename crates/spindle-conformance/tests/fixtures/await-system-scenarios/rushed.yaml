@@ -1,0 +1,30 @@
+type: ess-scenario/1
+domain: dispatch.desk
+scenario: the-system-rushes-a-ticket
+summary: The system rushes a waiting ticket on the express lane to the one free agent, passing over a busy one.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: dispatch.desk.AddAgent
+    actor: dispatch.desk.Caller
+    input: {agent_id: busy-agent, free: false}
+    outcome: added
+  - at: 2026-01-05T09:00:01Z
+    command: dispatch.desk.AddAgent
+    actor: dispatch.desk.Caller
+    input: {agent_id: free-agent, free: true}
+    outcome: added
+  - at: 2026-01-05T09:00:02Z
+    command: dispatch.desk.Open
+    actor: dispatch.desk.Caller
+    input: {ticket_id: t-1}
+    outcome: opened
+  - at: 2026-01-05T09:00:03Z
+    command: dispatch.desk.Route
+    input: {ticket_id: t-1, lane: express}
+    outcome: rushed
+    events:
+      - event: dispatch.desk.Rushed
+        payload: {ticket_id: t-1, agent: free-agent}
+assert:
+  - view: dispatch.desk.Tickets
+    contains: {ticket_id: t-1, agent: free-agent, state: Rushed}

@@ -460,6 +460,11 @@ pub enum HostError {
     /// The caller asked the host to stop while it waited for its peers.
     #[error("stopped while waiting for peers")]
     Stopped,
+    /// A read of the events through a [`Reader`] stopped by its flag ([`Reader::stopped_by`]) was
+    /// waiting, for a store's feed or for its turn, when the flag was set, and was given up: it
+    /// read nothing to answer (`story:leader-exits-promptly-on-sigterm`).
+    #[error("the read was given up: the run is stopping")]
+    ReadStopped,
 }
 
 /// What a host does with an event binding whose `on_failure` is `retry`.
@@ -1497,6 +1502,24 @@ impl Host {
         Ok(())
     }
 
+    /// The identity of every instance of `entity` (its qualified name) the store of the component
+    /// that owns it holds, in the order the store scans them ([`spindle_kernel::Scan`]: by the
+    /// identity's canonical JSON text).
+    ///
+    /// # Errors
+    /// [`HostError::NoEntity`] where the model declares no `entity`,
+    /// [`HostError::Unsupported`] where no running component owns it, and [`HostError::Store`]
+    /// where the store cannot be read.
+    pub fn identities(&mut self, entity: &str) -> Result<Vec<Value>, HostError> {
+        let owner = holding(&self.ir, entity)?;
+        Ok(store_of(&mut self.components, &owner)?
+            .scan(entity)?
+            .rows
+            .into_iter()
+            .map(|(identity, _)| identity)
+            .collect())
+    }
+
     /// The running component whose store `row` of `entity` rests in, once the row is checked
     /// against the entity's invariants; the errors of [`Host::establish`] before it writes.
     fn resting(&self, entity: &str, identity: &Value, row: &Row) -> Result<String, HostError> {
@@ -1796,6 +1819,7 @@ impl Host {
             emitted: Arc::clone(&self.emitted),
             run: self.run,
             sequence: Arc::clone(&self.sequence),
+            stop: None,
         }
     }
 

@@ -1,0 +1,30 @@
+type: ess-scenario/1
+domain: lamps.hall
+scenario: the-system-sends-the-free-crew
+summary: The system sends the one free crew to a dark lamp, passing over a busy one.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: lamps.hall.AddCrew
+    actor: lamps.hall.Caller
+    input: {crew_id: busy-crew, free: false}
+    outcome: added
+  - at: 2026-01-05T09:00:01Z
+    command: lamps.hall.AddCrew
+    actor: lamps.hall.Caller
+    input: {crew_id: free-crew, free: true}
+    outcome: added
+  - at: 2026-01-05T09:00:02Z
+    command: lamps.hall.Install
+    actor: lamps.hall.Caller
+    input: {lamp_id: lamp-1}
+    outcome: installed
+  - at: 2026-01-05T09:00:03Z
+    command: lamps.hall.Dispatch
+    input: {lamp_id: lamp-1}
+    outcome: served
+    events:
+      - event: lamps.hall.Dispatched
+        payload: {lamp_id: lamp-1, crew: free-crew}
+assert:
+  - view: lamps.hall.Lamps
+    contains: {lamp_id: lamp-1, crew: free-crew, state: Served}

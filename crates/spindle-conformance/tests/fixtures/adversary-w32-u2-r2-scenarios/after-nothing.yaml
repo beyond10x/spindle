@@ -1,0 +1,24 @@
+type: ess-scenario/1
+domain: lamps.yard
+scenario: the-system-stamps-a-lamp-it-left-dark
+summary: The system leaves a dim lamp dark, then stamps it with the first code it decides.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: lamps.yard.Install
+    actor: lamps.yard.Caller
+    input: {lamp_id: lamp-1}
+    outcome: installed
+  - at: 2026-01-05T09:00:01Z
+    command: lamps.yard.Switch
+    input: {lamp_id: lamp-1}
+    outcome: dim
+  - at: 2026-01-05T09:00:02Z
+    command: lamps.yard.Stamp
+    input: {lamp_id: lamp-1}
+    outcome: stamped
+    events:
+      - event: lamps.yard.Stamped
+        payload: {lamp_id: lamp-1, code: 2}
+assert:
+  - view: lamps.yard.Lamps
+    contains: {lamp_id: lamp-1, code: 2, state: Stamped}

@@ -1,0 +1,25 @@
+format: ess/34
+system: lamps
+version: v1
+summary: Lamps a caller installs, which the system lights or stamps itself.
+domains:
+  - lamps.yard
+components:
+  - component: yard
+    summary: Installs lamps, and lights and stamps them.
+    owns:
+      domains:
+        - lamps.yard
+    accepts:
+      commands:
+        - lamps.yard.Install
+        - lamps.yard.InstallTagged
+        - lamps.yard.Switch
+        - lamps.yard.Stamp
+    publishes:
+      events:
+        - lamps.yard.Installed
+        - lamps.yard.Tagged
+        - lamps.yard.Lit
+        - lamps.yard.Stamped
+    reached_by: in_process

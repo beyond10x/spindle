@@ -53,6 +53,8 @@ mod adversary_w31_u4;
 mod adversary_w31_u5;
 mod adversary_w31_u6;
 mod adversary_w31_u7;
+mod adversary_w32_u2;
+mod adversary_w32_u3;
 mod adversary_world;
 mod adversary_world_spec;
 mod binding_shapes;

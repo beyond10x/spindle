@@ -1,0 +1,32 @@
+type: ess-scenario/1
+domain: lamps.yard
+scenario: the-system-stamps-two-lamps
+summary: The system stamps two lamps, each with the next code it decides.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: lamps.yard.Install
+    actor: lamps.yard.Caller
+    input: {lamp_id: lamp-1}
+    outcome: installed
+  - at: 2026-01-05T09:00:01Z
+    command: lamps.yard.Install
+    actor: lamps.yard.Caller
+    input: {lamp_id: lamp-2}
+    outcome: installed
+  - at: 2026-01-05T09:00:02Z
+    command: lamps.yard.Stamp
+    input: {lamp_id: lamp-1}
+    outcome: stamped
+    events:
+      - event: lamps.yard.Stamped
+        payload: {lamp_id: lamp-1, code: 2}
+  - at: 2026-01-05T09:00:03Z
+    command: lamps.yard.Stamp
+    input: {lamp_id: lamp-2}
+    outcome: stamped
+    events:
+      - event: lamps.yard.Stamped
+        payload: {lamp_id: lamp-2, code: 3}
+assert:
+  - view: lamps.yard.Lamps
+    contains: {lamp_id: lamp-2, code: 3, state: Stamped}

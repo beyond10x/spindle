@@ -6,6 +6,70 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `conform`, `run --scenario` and `spindle_conformance::HostTarget` run a scenario that awaits a
+  step its system takes itself, a command every grant of which is a `system: true` actor (ess/27):
+  the await issues the command into the scenario's host as that actor, the first by name, with the
+  inputs its system decides chosen in the order of ESS's interpreter (the instance, a stated
+  value, then absent for an `Optional`, the held rows a `when_related:` guard reads, or one minted
+  value), and answers the first that takes an accepting branch, or the forced external one; with
+  none, nothing is issued, held for the declared bound. Every such scenario was skipped before.
+  An await is not counted among a replay's commands, and its act's line names no outcome.
+  `spindle_host` gains `Host::identities` (`story:conform-awaits-system-steps`).
+- `task check:postgres` without `SPINDLE_TEST_DATABASE_URL` starts its own throwaway PostgreSQL
+  cluster under `target/` with CI's server options (TLS from a CA it issues, which it exports as
+  `SPINDLE_TEST_DATABASE_CA`, `max_locks_per_transaction=256`, `max_connections=300`), runs the
+  lane against it and removes it, on success, failure and SIGINT alike; the task fails when the
+  directory or the postmaster is left. `initdb` and `pg_ctl` of PostgreSQL 13 or later come from
+  `SPINDLE_PG_BIN` or `PATH`, and a major other than 17 is printed with a warning; the cluster
+  takes CI's `en_US.UTF-8` locale where the host has it, else `C.UTF-8` with a warning. With
+  `SPINDLE_TEST_DATABASE_URL` set it starts nothing, as before. `scripts/postgres-lane.sh` holds
+  the options, CI's `docker run` passes its image exactly those, and `task check` refuses any
+  other server option CI's PostgreSQL job could set (`story:postgres-lane-runs-locally`).
+
+### Fixed
+
+- A leading `run` on PostgreSQL exits within `--drain` (counted only while requests wait), the
+  longest `timeout_ms` of an `[egress]` call and 5 s of SIGINT or SIGTERM, also while another
+  session on the server holds a transaction open, and `run --help` names that bound. The wait
+  that held the exit was the egress lane's read of the feed: once the run had saved a cursor
+  after the older transaction began, the read waited in `LogStore::published` for the feed to
+  answer that write, up to `PUBLISH_WAIT` (30 s) or until the transaction ended, and the run
+  joined the lane before it released its leases: in the case that measures it the leader exited
+  8.0 s after the signal, and at most 0.15 s now (20 runs). The read is given up once the lane
+  is stopped (`spindle_kernel::Reading::events_placed_after_unless_stopped`, whose wait for a
+  turn stops too), the cursors are still saved before the leases are released, and each release
+  at exit waits at most 1 s for its statement and the lease row's lock, where it waited a third
+  of `database_lease`. The same wait held the exit through a `GET /api/events` or
+  `GET /api/history` under way beside the run's thread, which the listener's close waited for:
+  such a read cut off by the signal while it waits for the store, for its feed or its turn,
+  answers `503` `{"refused": "the run is stopping"}`, as every request that arrives after the
+  signal is; a read that completes answers normally, with its events, even after the signal
+  (`spindle_host::Reader::stopped_by`, `HostError::ReadStopped`, and the reading handle's
+  `events_after_unless_stopped` and `events_head_unless_stopped`, which return `None` only for a
+  read they gave up) (`story:leader-exits-promptly-on-sigterm`).
+- A `run` on PostgreSQL given `database_lease` and a seed decides the seed from a record of its
+  progress in the store, whatever lease token it took, as a `--state` run decides it from
+  `seed.json`. Before, the seed ran only while every lease was at its first token, so a restart of
+  the only process, a changed seed file and a first process that took its leases and exited before
+  seeding (exit 3 on a misfit) never seeded again. The record is the row `seed` of the first
+  component's `<prefix>_p_lease` table, `{"digest", "done", "rejected"}`, which `store migrate`
+  already creates: written by the lease thread on the lease connection only while the lease row
+  names the run's token and session (`spindle_kernel::Lease::seed_record`, `record_seed`,
+  `forget_seed`), so no connection is added. A start looks for it in every component's lease
+  table, so a record kept before a component that sorts first was added is found, and the next
+  write moves it to the first one's in one statement under both leases (`Lease::move_seed`); a
+  records alike in several tables, as a rollback across a release that changed the components
+  leaves them, are used as one and gathered into the first one's table (`Lease::gather_seed`),
+  while records that differ exit 1 naming the tables. With no record and no row the whole seed is
+  sent; with the same file part done the rest is sent, rejected entries first; once done, one line
+  names the store and nothing is sent; another file exits 1 before the run serves a request, naming both
+  digests, unless the store holds no row. A store with rows and no record (seeded by 0.26.0, or
+  filled by `state move`) is taken as seeded: one line, nothing sent, and a complete record
+  written. Resets write the record as they do `seed.json`, and one by a leased run without a seed
+  removes it. Without `database_lease` nothing is recorded, as before (`story:seed-under-a-lease`).
+
 ## [0.26.0] - 2026-11-28
 
 ### Added

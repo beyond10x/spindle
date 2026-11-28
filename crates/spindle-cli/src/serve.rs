@@ -18,8 +18,7 @@ use spindle_host::{
 };
 use spindle_ingress::console::{self, Worlds};
 use spindle_ingress::{
-    Answer, Caller, Console, Exchange, Listener, Recorder, SeedPhase, SeedProgress, SeedState,
-    Surface, Unfixed,
+    Answer, Caller, Console, Exchange, Listener, Recorder, SeedState, Surface, Unfixed,
 };
 use spindle_spec::EssIr;
 
@@ -591,32 +590,19 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             .write();
         }
     }
-    // Where a `--state` records the seed applied to it (`seed.json`), a seed it does not record
-    // stops the run here, before listening.
-    let taken_again = kept.as_ref().and_then(crate::database::Kept::taken_again);
+    // Where a `--state` records the seed applied to it (`seed.json`), or a leading run on
+    // PostgreSQL records it in the store under its lease whatever token it took
+    // (`story:seed-under-a-lease`), a seed it does not record stops the run here, before it
+    // serves a request.
+    let record = match (&kept, serving.state) {
+        (Some(kept), _) => crate::seed::Record::Store(kept.seed_row()),
+        (None, Some(state)) => crate::seed::Record::State(state),
+        (None, None) => crate::seed::Record::Nowhere,
+    };
     let mut seeding = match (serving.seed, published) {
-        // The seed runs only under the first token of each lease: a run that took one at a later
-        // token, standing by first or not, skips it (`story:several-writers-one-postgres`, D5).
-        (Some(seed), Some(published)) if taken_again.is_some() => {
-            let (component, token) = taken_again.unwrap_or_default();
-            log::info(format!(
-                "seed {} is not submitted: this run took the lease of {component} at token \
-                 {token}, and the seed runs only under a lease's first token",
-                seed.path().display()
-            ))
-            .field("component", component)
-            .field("token", token)
-            .write();
-            published.publish(SeedProgress {
-                phase: SeedPhase::Ended,
-                left: 0,
-                ..SeedProgress::starting(published.read().entries)
-            });
-            None
-        }
         (Some(seed), Some(published)) => Some(crate::seed::begin(
             seed,
-            serving.state,
+            record,
             &mut host,
             recorder.clone(),
             published,
@@ -775,6 +761,24 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             exchange.respond(answer);
             continue;
         }
+        if exchange.console() == Some(Console::Reset)
+            && let Some(held) = kept.as_ref()
+        {
+            // A leased run without a seed: a reset that empties the store or loads a world leaves
+            // no seed's entries done, so the store's record goes (`story:seed-under-a-lease`,
+            // D6 A). A reset the lease's fence refused answers `503`, as any write does (D4).
+            let mut answer = console::reset(&mut host, exchange.body(), Some(&worlds));
+            if answer.status == 200 {
+                if let Some(recorder) = recorder.as_ref() {
+                    recorder.count_reset();
+                }
+                crate::seed::forget_row(&held.seed_row());
+            } else if crate::database::Kept::fenced().is_some() {
+                answer = Answer::refusal(503, LEASE_LOST);
+            }
+            exchange.respond(answer);
+            continue;
+        }
         // A write the lease's fence refused, as once the session holding the lease ended and
         // another process took it, answers `503`; so does a write that failed committing nothing
         // where the lease is then found lost, as one whose database session a process taking
@@ -857,12 +861,21 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             .write();
         }
     };
-    // Every answer handed back is written, and each request still queued is answered 503, before
-    // the run exits; readiness reads 503 meanwhile.
+    // The run ends in this order, within the bound `run --help` names after a signal
+    // (`story:leader-exits-promptly-on-sigterm`):
+    // 1. the listener writes every answer handed back and answers each request still queued
+    //    `503`, readiness reading `503` meanwhile;
+    // 2. the egress halts: each lane leaves after its post under way, at most the call's
+    //    `timeout_ms`, or gives up its read of the feed at once;
+    // 3. the cursors the lanes handed back are saved in the components' stores;
+    // 4. the host closes its stores;
+    // 5. the leases are released, each release waiting at most 1 s, so a standby takes over only
+    //    once nothing of this run writes, and posts nothing this run posted.
     stopping.store(true, Ordering::SeqCst);
     listener.close(CLOSE_GRACE);
-    // The lanes stop, each after its post under way, and the cursors they handed back are saved.
     drop(egress);
+    drop(host);
+    drop(kept);
     Ok(code)
 }
 

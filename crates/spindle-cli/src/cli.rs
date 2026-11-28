@@ -159,9 +159,15 @@ pub enum Command {
     /// or SIGTERM (exit 130 or 143), or until a seed that rejected an entry ends (exit 1,
     /// `--seed`). On the signal `GET /__spindle/ready` answers `503` and every request that
     /// arrives is answered `503` at once; the request under way finishes, and those already
-    /// waiting are answered in arrival order for up to `--drain` seconds. Then, as when the seed
+    /// waiting are answered in arrival order for up to `--drain` seconds. A read of the events or
+    /// a history beside it that completes is answered normally; one still waiting for the store,
+    /// for its feed or its turn, is cut off and answered `503`. Then, as when the seed
     /// stops it, it takes no further request, writes every answer it has given, answers each
-    /// request still waiting `503`, and exits. `GET /__spindle/live` answers `200` while the
+    /// request still waiting `503`, and exits. It exits within `--drain` (counted only while
+    /// requests are waiting), plus the longest `timeout_ms` of a call `[egress]` posts to (a post
+    /// under way finishes), plus 5 s of the signal: each egress cursor is saved first, then each
+    /// lease is released, a release waiting at most 1 s, so a run standing by takes over at once
+    /// and does not post again what this one posted. `GET /__spindle/live` answers `200` while the
     /// run's thread answers a request it took or has asked for one within 60 s, `503` once it
     /// has done neither, with or without `--observe`. On a store kept in PostgreSQL with the
     /// setting `database_lease` a run that finds another process holding the lease of a
@@ -552,9 +558,19 @@ pub enum Command {
         /// of the entries sent before it, and prints that the seed already ran once every one is
         /// done; one with another file exits 1 before listening, naming both digests, unless the
         /// state holds no row. A state without `seed.json` gets the whole seed, then the record,
-        /// and a reset by a run without `--seed` removes it. Without `--state` nothing is
-        /// recorded and every start sends the whole seed. `POST /api/reset` drops the entries
-        /// not yet sent; with no world it then records 0 entries done and submits the seed
+        /// and a reset by a run without `--seed` removes it. On PostgreSQL with `database_lease`
+        /// the same record is the row `seed` of the first component's lease table
+        /// (`<prefix>_p_lease`), written by the leading process under its lease whatever lease
+        /// token it took, and read the same way. It is looked for in every component's lease
+        /// table, so one kept before a component that sorts first was added is found, and the
+        /// next write moves it to the first one's. Records alike in several tables, as a rollback
+        /// across a release that changed the components may leave them, are used as one, and the
+        /// next write keeps one; records that differ exit 1 naming the tables, see
+        /// story:seed-record-after-a-component-is-removed. A
+        /// store with rows and no record (seeded by an earlier release, or filled by `state
+        /// move`) is taken as seeded: the record is written with every entry done and none is
+        /// sent. Otherwise nothing is recorded and every start sends the whole seed. `POST
+        /// /api/reset` drops the entries not yet sent; with no world it then records 0 entries done and submits the seed
         /// again, from its first entry, before it answers, its end line counting that run alone,
         /// and with a world it loads that world alone and records every entry done.
         #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
@@ -566,8 +582,9 @@ pub enum Command {
         /// once; the request under way always finishes, and so does one taken within the bound,
         /// but a `POST /api/reset`, answered `503` with nothing emptied. A bound too large for the
         /// clock sets none: the drain ends once no request is waiting. Each request still waiting
-        /// once the bound has passed is answered `503`, then the run exits 130 or 143. Only where
-        /// `run` serves HTTP.
+        /// once the bound has passed is answered `503`, then the run exits 130 or 143, within
+        /// this bound, the longest `timeout_ms` of an `[egress]` call and 5 s of the signal. Only
+        /// where `run` serves HTTP.
         #[arg(
             long,
             value_name = "SECONDS",
