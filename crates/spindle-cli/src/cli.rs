@@ -595,9 +595,10 @@ pub enum Command {
         /// The most connections a served run holds at once. A connection over it waits in the
         /// kernel's backlog, neither accepted nor refused, until one of them closes; a
         /// keep-alive connection that sends no request for 10 s is closed, and so is one whose
-        /// answer can be written no further for 10 s, as to a client that never reads, so an
-        /// idle or stalled one holds its place for at most that long. Only where `run` serves
-        /// HTTP.
+        /// body stalls for 10 s (refused `408`) or whose answer can be written no further for
+        /// 10 s, as to a client that never reads, so an idle or stalled one holds its place for
+        /// at most that long. When the run stops, each connection still waiting at the cap is
+        /// taken and answered `503`. Only where `run` serves HTTP.
         #[arg(
             long,
             value_name = "COUNT",

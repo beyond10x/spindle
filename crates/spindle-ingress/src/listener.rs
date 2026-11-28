@@ -39,7 +39,8 @@ use crate::surface::{Caller, Limits, Route, Surface, Unverified};
 /// connection included; a slower one is closed. The default of [`Limits::head_read`].
 pub const HEADER_READ: Duration = Limits::DEFAULT.head_read;
 
-/// How long a request's body may take to arrive once its head has; a slower one is refused `408`.
+/// How long a request's body may take to arrive once its head has, or the surface's
+/// [`Limits::head_read`] where that is shorter; a slower one is refused `408`.
 pub const BODY_READ: Duration = Duration::from_secs(10);
 
 /// How long the listener waits after accepting a connection failed, such as when the process is
@@ -61,15 +62,29 @@ pub struct Exchange {
     /// Who decides the exchange first ([`QUEUED`], [`TAKEN`], [`LAPSED`]): the caller's thread
     /// taking it, or its request time passing (`story:listener-limits`, D3 A).
     claim: Arc<AtomicU8>,
+    /// When its request time passes; `None` for a time past what the clock can name. Kept here
+    /// and not only in the connection's future, which hyper drops once the client leaves, so a
+    /// request whose client left is never handed past its time (adversary finding F1 of round 2).
+    deadline: Option<Instant>,
 }
 
 impl Exchange {
     /// Claims the exchange for the caller's thread; `false` where its request time passed first,
-    /// and it was answered `503` without it.
+    /// and it is then never handed: claimed lapsed here if no one claimed it yet, and answered
+    /// `503` where its client still waits.
     fn take(&self) -> bool {
+        let claimed = if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            LAPSED
+        } else {
+            TAKEN
+        };
         self.claim
-            .compare_exchange(QUEUED, TAKEN, Ordering::SeqCst, Ordering::SeqCst)
+            .compare_exchange(QUEUED, claimed, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
+            && claimed == TAKEN
     }
 
     /// The route the request is for; `None` for a console route, the metrics or the topology.
@@ -612,7 +627,7 @@ impl Listener {
                                 (Ok(place), Ok((stream, _))) => {
                                     let (served, closed) = (Arc::clone(&served), closed.clone());
                                     connections.spawn(async move {
-                                        connection(served, stream, closed).await;
+                                        connection(served, stream, Some(closed)).await;
                                         drop(place);
                                     });
                                 }
@@ -623,9 +638,14 @@ impl Listener {
                             Some(_) = connections.join_next(), if !connections.is_empty() => {}
                         }
                     };
-                    // No connection is accepted from here on; each one open writes the answer it
-                    // holds, then closes.
-                    drop(listener);
+                    // Each connection already waiting in the backlog, at the cap or not yet
+                    // accepted, is taken without a place and answers its one request, `503` as
+                    // every request after the close does, rather than being reset with the socket
+                    // (adversary finding F2 of round 2); none is accepted after these. Each one
+                    // open writes the answer it holds, then closes.
+                    for stream in backlog(listener) {
+                        connections.spawn(connection(Arc::clone(&served), stream, None));
+                    }
                     let _ = closing.send(true);
                     let _ = tokio::time::timeout(grace, async {
                         while connections.join_next().await.is_some() {}
@@ -698,9 +718,10 @@ impl Listener {
 
     /// Stops the listener so that no client reads a closed connection where an answer was due:
     /// each request handed over and not yet taken with [`Listener::next`] is answered `503`, and
-    /// so is each one that reaches the listener from now on; no connection is accepted; every
-    /// answer already given to an [`Exchange`] is written, and each connection closed once its
-    /// answer is. Returns once the server thread has ended, waiting at most `grace` for the
+    /// so is each one that reaches the listener from now on; each connection waiting in the
+    /// socket's backlog then, at the connection cap or not yet accepted, is taken and its one
+    /// request answered, and no connection after them is accepted; every answer already given to
+    /// an [`Exchange`] is written, and each connection closed once its answer is. Returns once the server thread has ended, waiting at most `grace` for the
     /// connections; one still open then, such as a client still sending its body, is dropped.
     pub fn close(mut self, grace: Duration) {
         if let Some(exchanges) = self.exchanges.take() {
@@ -733,11 +754,12 @@ impl Drop for Listener {
 /// closes the connection with no HTTP read or written. Once `closing` reads `true`, the connection
 /// writes the answer it holds, if any, and closes. A write that makes no progress within
 /// [`Limits::head_read`], as to a client that never reads its answers, closes the connection, over
-/// TLS as over plain TCP ([`Stalling`]).
+/// TLS as over plain TCP ([`Stalling`]). Without `closing`, for a connection taken from the
+/// backlog once the listener closes, it answers its one request and closes.
 async fn connection(
     served: Arc<Served>,
     stream: tokio::net::TcpStream,
-    mut closing: watch::Receiver<bool>,
+    mut closing: Option<watch::Receiver<bool>>,
 ) {
     let stream = Stalling::new(stream, served.surface.limits().head_read);
     let Some(tls) = served.tls.clone() else {
@@ -749,9 +771,38 @@ async fn connection(
             Ok(Ok(stream)) => stream,
             Ok(Err(_)) | Err(_) => return,
         },
-        _ = closing.wait_for(|closing| *closing) => return,
+        () = closed(&mut closing) => return,
     };
     answering(served, stream, closing).await;
+}
+
+/// Returns once `closing` reads `true`, or its sender is gone; never without one.
+async fn closed(closing: &mut Option<watch::Receiver<bool>>) {
+    match closing {
+        Some(closing) => {
+            let _ = closing.wait_for(|closing| *closing).await;
+        }
+        None => std::future::pending().await,
+    }
+}
+
+/// Every connection waiting in `listener`'s backlog now, taken without blocking; `listener` is
+/// closed once they are, so the kernel holds no other.
+fn backlog(listener: tokio::net::TcpListener) -> Vec<tokio::net::TcpStream> {
+    let Ok(listener) = listener.into_std() else {
+        return Vec::new();
+    };
+    let mut waiting = Vec::new();
+    // `into_std` leaves the socket non-blocking: the loop ends at the first accept that would wait.
+    while let Ok((stream, _)) = listener.accept() {
+        if stream.set_nonblocking(true).is_err() {
+            continue;
+        }
+        if let Ok(stream) = tokio::net::TcpStream::from_std(stream) {
+            waiting.push(stream);
+        }
+    }
+    waiting
 }
 
 /// A connection's socket whose writes fail once one has made no progress for `bound`
@@ -854,7 +905,7 @@ impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for Stalling<S> {
 }
 
 /// Serves HTTP/1.1 on `stream`, as [`connection`] says.
-async fn answering<S>(served: Arc<Served>, stream: S, mut closing: watch::Receiver<bool>)
+async fn answering<S>(served: Arc<Served>, stream: S, mut closing: Option<watch::Receiver<bool>>)
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
@@ -862,19 +913,19 @@ where
     let service = hyper::service::service_fn(move |request| handle(Arc::clone(&served), request));
     // hyper answers a head over either bound `431` and closes, before the service runs; its head
     // read time also runs while a kept-alive connection waits for its next head, so an idle one
-    // holds a place of the cap for at most that long.
+    // holds a place of the cap for at most that long. A connection taken once the listener closes
+    // is not kept alive past its one answer.
     let serving = hyper::server::conn::http1::Builder::new()
         .timer(TokioTimer::new())
         .header_read_timeout(limits.head_read)
         .max_header_size(limits.head_bytes)
         .max_headers(limits.headers)
+        .keep_alive(closing.is_some())
         .serve_connection(TokioIo::new(stream), service);
     tokio::pin!(serving);
     tokio::select! {
         _ = serving.as_mut() => {}
-        () = async {
-            let _ = closing.wait_for(|closing| *closing).await;
-        } => {
+        () = closed(&mut closing) => {
             serving.as_mut().graceful_shutdown();
             let _ = serving.await;
         }
@@ -1060,8 +1111,11 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         _ => None,
     };
     let path = request.uri().path().to_owned();
+    // The body read is bounded by the head read time too, where it is shorter, so a body that
+    // stalls holds a place of the cap no longer than an idle connection (adversary finding F4).
+    let body_read = BODY_READ.min(served.surface.limits().head_read);
     let read = tokio::time::timeout(
-        BODY_READ,
+        body_read,
         Limited::new(request.into_body(), BODY_LIMIT).collect(),
     )
     .await;
@@ -1076,7 +1130,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         Err(_) => {
             return refused(Answer::refusal(
                 408,
-                format!("the body did not arrive within {BODY_READ:?}"),
+                format!("the body did not arrive within {body_read:?}"),
             ));
         }
     };
@@ -1151,8 +1205,10 @@ fn once<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a HeaderValue> {
 /// way, `504`, the thread's later answer dropped.
 async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), Answer> {
     let time = served.surface.limits().request_time;
-    // A time past what the clock can name sets no deadline.
-    let deadline = tokio::time::Instant::now().checked_add(time);
+    // A time past what the clock can name sets no deadline. One instant, here and in the
+    // exchange, so the caller's thread and this future agree on when the time has passed.
+    let lapses = Instant::now().checked_add(time);
+    let deadline = lapses.map(tokio::time::Instant::from_std);
     let pending = match served.reader.get() {
         Some(reader) if pending.reads(reader) => {
             let reader = reader.clone();
@@ -1182,20 +1238,27 @@ async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), 
         pending,
         reply,
         claim: Arc::clone(&claim),
+        deadline: lapses,
     };
     if served.exchanges.send(exchange).is_err() {
         return Err(Answer::refusal(503, "the listener is stopping"));
     }
+    // Lapsed, whether here or by `Exchange::take` on the caller's thread: never handed.
+    let lapsed = || {
+        matches!(
+            claim.compare_exchange(QUEUED, LAPSED, Ordering::SeqCst, Ordering::SeqCst),
+            Ok(_) | Err(LAPSED)
+        )
+    };
     match within(deadline, replying).await {
-        Some(answered) => {
-            answered.map_err(|_| Answer::refusal(503, "the listener stopped before answering"))
-        }
-        None if claim
-            .compare_exchange(QUEUED, LAPSED, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok() =>
-        {
-            Err(unclaimed(time))
-        }
+        Some(Ok(answered)) => Ok(answered),
+        // `Listener::next` found its time passed and dropped it.
+        Some(Err(_)) if claim.load(Ordering::SeqCst) == LAPSED => Err(unclaimed(time)),
+        Some(Err(_)) => Err(Answer::refusal(
+            503,
+            "the listener stopped before answering",
+        )),
+        None if lapsed() => Err(unclaimed(time)),
         None => Err(late(time)),
     }
 }
