@@ -626,3 +626,323 @@ fn an_entity_whose_domain_moved_to_another_component_misfits_naming_it() {
     );
     assert_eq!(store.recorded().expect("the record reads"), Some(before));
 }
+
+// `story:entity-invariant-over-stored-rows`: every invariant the new model declares on an entity
+// is judged over every stored row of it, as a row at rest is judged; `Unknown` concludes nothing.
+
+const TITLED: &str = "'title.count <= 10'";
+const LIGHT: &str = "'weight <= 2'";
+const NOTED: &str = "'note.count <= 4'";
+const LAST_FIELD: &str = "      - {name: place, type: Optional<keep.shelf.Place>}\n";
+
+/// The model of [`BEFORE`] with `statements` declared as invariants of the book, the domain
+/// then edited by `edit`.
+fn invariant_model(statements: &[&str], edit: impl Fn(String) -> String) -> spindle_spec::EssIr {
+    let declared: String = statements
+        .iter()
+        .map(|statement| format!("      - {statement}\n"))
+        .collect();
+    let domain = BEFORE.replace(
+        LAST_FIELD,
+        &format!("{LAST_FIELD}    invariants:\n{declared}"),
+    );
+    assert_ne!(
+        domain, BEFORE,
+        "the book's last field is in the specification"
+    );
+    ir(&edit(domain))
+}
+
+fn guarded(statements: &[&str]) -> Shapes {
+    Shapes::of(&invariant_model(statements, |domain| domain))
+}
+
+fn statement(quoted: &str) -> String {
+    quoted.trim_matches('\'').to_owned()
+}
+
+fn broken(quoted: &str, rows: usize) -> Misfit {
+    Misfit::Invariant {
+        entity: BOOK.to_owned(),
+        invariant: statement(quoted),
+        rows,
+    }
+}
+
+#[test]
+fn an_entity_invariant_a_stored_row_breaks_misfits() {
+    let scratch = scratch();
+    let mut store = holding(
+        &scratch.path().join("state.sqlite"),
+        &[json!({}), json!({"title": "The Left Hand of Darkness"})],
+    );
+    let after = guarded(&[TITLED]);
+    let misfits = after
+        .misfits(&before(), &mut store)
+        .expect("the store is read");
+    assert_eq!(misfits, vec![broken(TITLED, 1)]);
+    let line = misfits[0].to_string();
+    assert!(
+        line.contains(BOOK) && line.contains(&statement(TITLED)) && line.ends_with(": 1"),
+        "the misfit names the entity, the statement and the row count: {line}"
+    );
+    assert_eq!(misfits[0].entity(), BOOK);
+    assert_eq!(misfits[0].field(), None);
+    assert_eq!(
+        store.fit(&after).expect("checked"),
+        Fit::Misfits(misfits),
+        "the store refuses the specification"
+    );
+    assert_eq!(
+        store.recorded().expect("the record reads"),
+        Some(before()),
+        "a misfit leaves the record as it was"
+    );
+}
+
+#[test]
+fn an_entity_invariant_every_stored_row_holds_fits() {
+    let scratch = scratch();
+    let mut store = holding(
+        &scratch.path().join("state.sqlite"),
+        &[json!({}), json!({"title": "Emma"})],
+    );
+    let after = guarded(&[TITLED]);
+    assert_eq!(
+        after
+            .misfits(&before(), &mut store)
+            .expect("the store is read"),
+        Vec::new()
+    );
+    fits(&mut store, &after);
+}
+
+/// A book without a note leaves `note.count <= 4` `Unknown`, as a row at rest leaves it
+/// ([`spindle_kernel::at_rest`]): it fits. A book whose note is too long breaks it.
+#[test]
+fn an_entity_invariant_a_stored_row_leaves_unknown_fits() {
+    let scratch = scratch();
+    let mut store = holding(&scratch.path().join("state.sqlite"), &[json!({})]);
+    let model = invariant_model(&[NOTED], |domain| domain);
+    let (identity, stored) = store
+        .scan(BOOK)
+        .expect("the books are read")
+        .into_iter()
+        .next()
+        .expect("one book");
+    assert!(
+        spindle_kernel::at_rest(&model, BOOK, &identity, &stored.row).is_ok(),
+        "a row at rest without a note breaks nothing"
+    );
+    let after = Shapes::of(&model);
+    assert_eq!(
+        after
+            .misfits(&before(), &mut store)
+            .expect("the store is read"),
+        Vec::new()
+    );
+    fits(&mut store, &after);
+    let scratch = self::scratch();
+    let mut store = holding(
+        &scratch.path().join("state.sqlite"),
+        &[json!({}), json!({"note": "a long note"})],
+    );
+    assert_eq!(
+        after
+            .misfits(&before(), &mut store)
+            .expect("the store is read"),
+        vec![broken(NOTED, 1)],
+        "the same invariant over a note it reads concludes"
+    );
+}
+
+/// D1 A: the record keeps no invariant, so one both specifications declare is judged again when
+/// the digest differs, over a row written under a third specification that lacked it.
+#[test]
+fn an_invariant_both_models_declare_is_judged_over_the_stored_rows() {
+    let scratch = scratch();
+    let mut store = holding(
+        &scratch.path().join("state.sqlite"),
+        &[json!({"title": "The Left Hand of Darkness"})],
+    );
+    let recorded = guarded(&[TITLED]);
+    store.record(&recorded).expect("the record is written");
+    let recorded = store
+        .recorded()
+        .expect("the record reads")
+        .expect("a record");
+    let after = Shapes::of(&invariant_model(&[TITLED], |domain| {
+        domain.replace(
+            "      - {name: note, type: Optional<String>}\n",
+            "      - {name: note, type: Optional<String>}\n      - {name: shelfmark, type: Optional<String>}\n",
+        )
+    }));
+    assert_ne!(after.digest, recorded.digest, "the digests differ");
+    assert_eq!(
+        after
+            .misfits(&recorded, &mut store)
+            .expect("the store is read"),
+        vec![broken(TITLED, 1)]
+    );
+    let shape = serde_json::to_value(&recorded.entities[BOOK]).expect("the shape serialises");
+    let keys: Vec<&str> = shape
+        .as_object()
+        .expect("an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        vec!["fields", "states"],
+        "the record format is unchanged"
+    );
+    assert_eq!(
+        serde_json::to_value(&recorded.entities).expect("the shapes serialise"),
+        serde_json::to_value(&before().entities).expect("the shapes serialise"),
+        "an invariant leaves no trace in the record"
+    );
+}
+
+/// D2 A: one misfit for each broken invariant, each one line.
+#[test]
+fn a_row_breaking_two_invariants_misfits_once_per_invariant() {
+    let scratch = scratch();
+    let mut store = holding(
+        &scratch.path().join("state.sqlite"),
+        &[json!({"title": "The Left Hand of Darkness", "weight": 3})],
+    );
+    let after = guarded(&[TITLED, LIGHT]);
+    let misfits = after
+        .misfits(&before(), &mut store)
+        .expect("the store is read");
+    assert_eq!(misfits, vec![broken(TITLED, 1), broken(LIGHT, 1)]);
+    let text: String = misfits.iter().map(|misfit| format!("{misfit}\n")).collect();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    for (line, quoted) in lines.iter().zip([TITLED, LIGHT]) {
+        assert!(
+            line.contains(BOOK) && line.contains(&statement(quoted)) && line.ends_with(": 1"),
+            "{line}"
+        );
+    }
+}
+
+/// Rounds 1 and 2 of the adversary, as a class: every text a misfit line names (an entity, a
+/// field, a state read from a stored row, a component, an invariant's statement) may hold any
+/// character, and each misfit stays one line with no control character but a tab, written so
+/// that two texts never print alike: a backslash `\\`, a line break `\n`, a carriage return `\r`,
+/// every other control character and U+2028 and U+2029 `\u{..}`, a tab as it is.
+/// The `match` names every variant, so a new one does not compile until it is listed here.
+#[test]
+fn every_misfit_is_one_line_whatever_text_it_names() {
+    let text = "a\nb\rc\\d\u{b}e\u{c}f\u{85}g\u{2028}h\u{2029}i\u{1b}j\u{7}k\u{8}l\u{0}m\u{9b}n\to";
+    let escaped = "a\\nb\\rc\\\\d\\u{b}e\\u{c}f\\u{85}g\\u{2028}h\\u{2029}i\\u{1b}j\\u{7}k\\u{8}l\\u{0}m\\u{9b}n\to";
+    let every = [
+        Misfit::Entity {
+            entity: text.to_owned(),
+            rows: 1,
+        },
+        Misfit::Moved {
+            entity: text.to_owned(),
+            component: text.to_owned(),
+            rows: 1,
+        },
+        Misfit::Removed {
+            entity: text.to_owned(),
+            field: text.to_owned(),
+            rows: 1,
+        },
+        Misfit::Retyped {
+            entity: text.to_owned(),
+            field: text.to_owned(),
+            rows: 1,
+        },
+        Misfit::Required {
+            entity: text.to_owned(),
+            field: text.to_owned(),
+            rows: 1,
+        },
+        Misfit::State {
+            entity: text.to_owned(),
+            state: text.to_owned(),
+            rows: 1,
+        },
+        Misfit::Invariant {
+            entity: text.to_owned(),
+            invariant: text.to_owned(),
+            rows: 1,
+        },
+    ];
+    for misfit in &every {
+        match misfit {
+            Misfit::Entity { .. }
+            | Misfit::Moved { .. }
+            | Misfit::Removed { .. }
+            | Misfit::Retyped { .. }
+            | Misfit::Required { .. }
+            | Misfit::State { .. }
+            | Misfit::Invariant { .. } => {}
+        }
+        let line = misfit.to_string();
+        assert!(
+            line.chars()
+                .all(|c| (!c.is_control() || c == '\t') && c != '\u{2028}' && c != '\u{2029}'),
+            "one line, no control character but a tab: {line:?}"
+        );
+        assert!(
+            line.contains(escaped) && line.ends_with(": 1"),
+            "the text is written escaped: {line:?}"
+        );
+    }
+    let apart = |text: &str| {
+        Misfit::Invariant {
+            entity: BOOK.to_owned(),
+            invariant: text.to_owned(),
+            rows: 1,
+        }
+        .to_string()
+    };
+    for (one, other) in [
+        ("a\nb", "a\\nb"),
+        ("a\rb", "a\\rb"),
+        ("a\u{1b}b", "a\\u{1b}b"),
+        ("a\\b", "a\\\\b"),
+    ] {
+        assert_ne!(
+            apart(one),
+            apart(other),
+            "{one:?} and {other:?} print apart"
+        );
+    }
+}
+
+/// A row resting in a state whose name holds a line break, the state removed: the misfit read from
+/// the store stays one line.
+#[test]
+fn a_removed_state_named_with_a_line_break_misfits_on_one_line() {
+    let scratch = scratch();
+    let mut store = holding(&scratch.path().join("state.sqlite"), &[]);
+    put(
+        &mut store,
+        BOOK,
+        "b1",
+        "Lent\nout",
+        json!({"title": "Dune", "weight": 3}),
+    );
+    let mut after = before();
+    after.digest = "another".to_owned();
+    let misfits = after
+        .misfits(&before(), &mut store)
+        .expect("the store is read");
+    assert_eq!(
+        misfits,
+        vec![Misfit::State {
+            entity: BOOK.to_owned(),
+            state: "Lent\nout".to_owned(),
+            rows: 1,
+        }]
+    );
+    let line = misfits[0].to_string();
+    assert_eq!(line.lines().count(), 1, "one line: {line:?}");
+    assert!(line.contains("Lent\\nout"), "{line:?}");
+}

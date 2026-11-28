@@ -235,5 +235,18 @@ makes, as ESS's served application makes them, are `{"refused": "<why>"}`:
 | `408` | a body that does not arrive in time |
 | `411` | a chunked body |
 | `413` | a body announced over 1 MiB |
+| `431` | a head over the listener's size (64 KiB, `run --max-head-bytes`) or over 100 headers, with no body; the connection closes, and nothing of the request is handed on or recorded |
+| `503` | a request no thread took within its request time (30 s from the end of its body read, `run --request-timeout`), with `"committed": false`: it never runs |
+| `504` | a request taken and not answered within its request time; its command still completes |
 
-A command the runtime cannot complete answers `501` with `{"refused", "committed"}`.
+A command the runtime cannot complete answers `501` with `{"refused", "committed"}`. A command
+whose PostgreSQL store did not answer within its deadline, as a write held behind a lock another
+database session holds, answers `503` with `{"refused", "committed": false}`: nothing was written,
+and the same request is safe to send again. A SQLite store reports no deadline: a command whose
+write it finds busy answers `501`. Outside a drain, a read held so is not answered `503`: a view
+answers `501` `{"refused"}`, and `GET /api/events` and `GET /api/history` answer `500`
+`{"refused"}`; during a drain after SIGINT or SIGTERM, an events or history read still waiting for
+the store is cut off and answered `503`
+([draining on SIGTERM](observe.md#draining-on-sigterm)). A
+`POST /api/reset` held so answers `500` and leaves the component's store lost until the run
+restarts (`story:reset-on-a-busy-store-keeps-the-store`).

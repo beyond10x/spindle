@@ -413,3 +413,85 @@ fn the_identities_of_an_entity_are_its_own_rows() {
     );
     assert!(host.identities("lending.loans.Shelf").is_err());
 }
+
+/// A [`Shared`] store that refuses every removal while `refusing` is set, as a store whose lease
+/// another process took refuses every write.
+#[derive(Clone, Default)]
+struct Fenced {
+    shared: Shared,
+    refusing: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Store for Fenced {
+    fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        self.shared.load(entity, identity)
+    }
+
+    fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
+        self.shared.commit(change)
+    }
+
+    fn remove(&mut self, removal: &Removal) -> Result<(), StoreError> {
+        if self.refusing.load(Ordering::SeqCst) {
+            return Err(StoreError::Backend("fenced".to_owned()));
+        }
+        self.shared.remove(removal)
+    }
+
+    fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
+        self.shared.scan(entity)
+    }
+}
+
+/// `story:seed-record-after-a-component-is-removed`, adversary round 4: a reset says whether it
+/// changed a store's rows. A world refused for its rows changes none, nor does a reset whose
+/// store refuses its first removal; a reset that loads a row, or removes one, does.
+#[test]
+fn a_reset_says_whether_it_changed_the_rows_of_a_store() {
+    let fenced = Fenced::default();
+    let ir = spindle_spec::load(&fixture())
+        .expect("the rows fixture compiles")
+        .ir;
+    let mut host = Host::supplied(
+        ir,
+        &environment("elsewhere"),
+        Arc::new(ManualClock::new()),
+        None,
+        Stores::from([(
+            "desk".to_owned(),
+            Box::new(fenced.clone()) as Box<dyn Store>,
+        )]),
+    )
+    .expect("the host opens");
+    let member = Seed {
+        entity: MEMBER.to_owned(),
+        identity: json!("member-1"),
+        row: Row {
+            state: "Active".to_owned(),
+            fields: [("name".to_owned(), json!("A. Reader"))].into(),
+        },
+    };
+    let world = |rows: Vec<Seed>| World {
+        rows,
+        answers: None,
+        mint: None,
+        clock: None,
+    };
+    assert!(!host.reset_changed_rows(), "no reset ran yet");
+    host.reset_to(world(vec![member.clone()]))
+        .expect("the world loads");
+    assert!(host.reset_changed_rows(), "a row was written");
+
+    host.reset_to(world(vec![member.clone(), member.clone()]))
+        .expect_err("two rows one instance are refused");
+    assert!(!host.reset_changed_rows(), "a refused world changes no row");
+    assert_eq!(fenced.shared.held(MEMBER), 1);
+
+    fenced.refusing.store(true, Ordering::SeqCst);
+    host.reset().expect_err("the store refuses the removal");
+    assert!(
+        !host.reset_changed_rows(),
+        "a store that refused its first removal holds its rows"
+    );
+    assert_eq!(fenced.shared.held(MEMBER), 1);
+}

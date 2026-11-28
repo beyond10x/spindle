@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use ess_compiler::EssIr;
 use ess_gen::http::{Binding, Flat, Shape};
@@ -1122,6 +1123,50 @@ impl fmt::Display for SurfaceError {
 
 impl std::error::Error for SurfaceError {}
 
+/// The bounds a listener serves a surface within ([`Surface::limited`],
+/// `story:listener-limits`); [`Limits::DEFAULT`] where none are given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    /// How many connections the listener holds at once; one over it waits in the kernel's
+    /// backlog until one of them closes. Read as at least 1.
+    pub connections: usize,
+    /// The most bytes a request's head may take, its start line and headers; a larger one is
+    /// answered `431` and its connection closed.
+    pub head_bytes: usize,
+    /// The most headers a request may carry; one with more is answered `431` and its connection
+    /// closed.
+    pub headers: usize,
+    /// How long a request waits for its answer, counted from the end of its body read: one no
+    /// thread has taken by then is answered `503` with `committed: false` and never handed, one
+    /// already taken `504`, its command still completing.
+    pub request_time: Duration,
+    /// How long a connection may take to send a request's head, the next one of a keep-alive
+    /// connection included, and to complete its TLS handshake; how long a request's body may
+    /// pause between two of its pieces, refused `408` past it, as is a body that takes over the
+    /// listener's `BODY_READ` (10 s) in all; and how long a write of its answer may make no
+    /// progress, as to a client that never reads. A connection slower in any of them is closed or
+    /// refused, so an idle or stalled connection holds a place of [`Limits::connections`] for at
+    /// most this long.
+    pub head_read: Duration,
+}
+
+impl Limits {
+    /// 512 connections, a head of 64 KiB and 100 headers, 30 s per request and 10 s per head.
+    pub const DEFAULT: Self = Self {
+        connections: 512,
+        head_bytes: 64 * 1024,
+        headers: 100,
+        request_time: Duration::from_secs(30),
+        head_read: Duration::from_secs(10),
+    };
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 /// Every route of the served components, component by component.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Surface {
@@ -1144,6 +1189,8 @@ pub struct Surface {
     /// The run's seed, which `GET /__spindle/seed` and `GET /__spindle/ready` read
     /// ([`Surface::with_seed`]); `None` for a run without one.
     seed: Option<SeedState>,
+    /// The bounds its listener serves it within ([`Surface::limited`]).
+    limits: Limits,
 }
 
 /// The proxy's secret: never written by `Debug`, so no surface printed for a diagnosis shows it.
@@ -1526,6 +1573,22 @@ impl Surface {
         self.secret_required
     }
 
+    /// This surface served within `limits` (`story:listener-limits`): its listener holds at most
+    /// [`Limits::connections`] connections, answers a head over [`Limits::head_bytes`] or
+    /// [`Limits::headers`] `431`, closes a connection that sends no head within
+    /// [`Limits::head_read`], and answers every request within [`Limits::request_time`] of the end
+    /// of its body read. Without it, [`Limits::DEFAULT`].
+    #[must_use]
+    pub fn limited(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// The bounds its listener serves it within ([`Surface::limited`]).
+    pub fn limits(&self) -> Limits {
+        self.limits
+    }
+
     fn routed(
         ir: &EssIr,
         components: &[String],
@@ -1593,6 +1656,7 @@ impl Surface {
             caller_token: None,
             served: None,
             seed: None,
+            limits: Limits::DEFAULT,
         })
     }
 

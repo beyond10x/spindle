@@ -26,6 +26,9 @@ mod postgres {
     /// on the lease waits at most 667 ms for a lock.
     const LEASE: &str = "2";
     const TOOK: &str = "took the lease of board";
+    /// The refusal of a request taken by a leader that lost a lease of its store
+    /// (`LEASE_LOST`, `crates/spindle-cli/src/serve.rs`).
+    const LEASE_LOST: &str = "the run lost the lease of its store to another process and exits";
     const STARTUP: Duration = Duration::from_secs(60);
     const ANSWER: Duration = Duration::from_secs(10);
     const OPENED: &str = "tasks.board.TaskOpened";
@@ -397,7 +400,18 @@ mod postgres {
             standby.printed()
         );
         standby.ready_by(paused + Duration::from_secs(15));
-        let (status, answer) = standby.open("t2");
+        // The paused leader may hold locks the new leader's write waits for, until its session
+        // ends at the store's idle timeout: the write then answers `503`, committing nothing, and
+        // is sent again; never `501` (`story:new-leader-write-while-old-paused`).
+        let retried = Instant::now() + Duration::from_secs(10);
+        let (status, answer) = loop {
+            let (status, answer) = standby.open("t2");
+            if status != 503 || Instant::now() >= retried {
+                break (status, answer);
+            }
+            assert_eq!(answer["committed"], false, "{answer}");
+            std::thread::sleep(Duration::from_millis(200));
+        };
         assert_eq!(status, 201, "{answer}");
         accepted(&webhook, 2);
 
@@ -1854,11 +1868,13 @@ mod postgres {
 
     /// Round 7, a leader blocked behind a foreign table lock, and the 503 mapping. A session
     /// outside spindle holds board's event table `ACCESS EXCLUSIVE` for 11 s, past the store's
-    /// 10 s deadline. The command sent meanwhile is answered within 11 s, not `201` and not
-    /// `503`: the write committed nothing, and the lease was never lost, so it is the store's
-    /// failure, not a lost lease. The standby takes nothing, and once the lock ends the leader
-    /// writes again (`201`); the failed command is not held. A lock of 12 s made the case wait a
-    /// second past the 11 s its answer is bounded by (`story:postgres-lane-margin`).
+    /// 10 s deadline. The command sent meanwhile is answered within 11 s `503` with
+    /// `committed: false`, a store that did not answer within its deadline
+    /// (`story:new-leader-write-while-old-paused`), and not with the lost lease's refusal: the
+    /// write committed nothing, and the lease was never lost, so it is the store's failure. The
+    /// standby takes nothing, and once the lock ends the leader writes again (`201`); the failed
+    /// command is not held. A lock of 12 s made the case wait a second past the 11 s its answer
+    /// is bounded by (`story:postgres-lane-margin`).
     #[test]
     #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
     fn a_write_behind_a_foreign_table_lock_fails_in_time_without_losing_the_lease() {
@@ -1887,7 +1903,13 @@ mod postgres {
         );
         eprintln!("{printed}");
         assert!(took < Duration::from_secs(11), "{printed}");
-        assert!(status != 201 && status != 503 && status != 0, "{printed}");
+        assert_eq!(status, 503, "{printed}");
+        assert_eq!(body["committed"], false, "{printed}");
+        let refused = body["refused"].as_str().unwrap_or_default();
+        assert!(
+            !refused.is_empty() && refused != LEASE_LOST,
+            "the store's refusal, not the lost lease's: {printed}"
+        );
         assert!(!standby.has_line(TOOK), "{printed}");
         assert!(leader.running(), "{printed}");
         leader.ready_by(Instant::now() + ANSWER);

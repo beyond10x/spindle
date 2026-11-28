@@ -295,3 +295,113 @@ fn a_stdin_run_refuses_a_misfit_state_file() {
     names_the_card_code(&Refused { status, stdout });
     unchanged(&file, &Shapes::of(&ir(BEFORE)));
 }
+
+// `story:entity-invariant-over-stored-rows`: `tests/fixtures/spec-change-invariant` is
+// `spec-change-before` with the invariant `title.count <= 10` on every book.
+
+const INVARIANT: &str = "crates/spindle-cli/tests/fixtures/spec-change-invariant";
+const BOOK: &str = "archive.shelf.Book";
+const STATEMENT: &str = "title.count <= 10";
+const LONG: &str = "The Left Hand of Darkness";
+
+/// The books of the store at `file`, each identity with its fields.
+fn books(file: &Path) -> Vec<(Value, Value)> {
+    let mut store = SqliteStore::open(file).expect("the store opens");
+    store
+        .scan(BOOK)
+        .expect("the books are read")
+        .into_iter()
+        .map(|(identity, stored)| (identity, json!(stored.row.fields)))
+        .collect()
+}
+
+/// Asserts `refused` is a misfit's exit 3 naming the book's invariant and one row on stdout, and
+/// that the store at `file` keeps `recorded` and the one book `b1` with the long title.
+fn names_the_book_invariant(refused: &Refused, file: &Path, recorded: &Shapes) {
+    assert_eq!(refused.status.code(), Some(3), "{refused:?}");
+    let line = refused
+        .stdout
+        .lines()
+        .find(|line| line.contains(STATEMENT))
+        .unwrap_or_else(|| panic!("stdout names the invariant: {:?}", refused.stdout));
+    assert!(
+        line.contains(BOOK) && line.trim_end().ends_with(": 1"),
+        "the line names the entity and one row: {line:?}"
+    );
+    assert!(
+        !refused.stdout.contains("listening") && !refused.stdout.contains("refused on"),
+        "nothing else is printed: {:?}",
+        refused.stdout
+    );
+    let store = SqliteStore::open(file).expect("the store opens");
+    assert_eq!(
+        store.recorded().expect("the record reads").as_ref(),
+        Some(recorded),
+        "the record is unchanged"
+    );
+    drop(store);
+    assert_eq!(books(file), vec![(json!("b1"), json!({"title": LONG}))]);
+}
+
+#[test]
+fn an_entity_invariant_a_stored_row_breaks_exits_before_listening() {
+    let scratch = scratch();
+    let state = scratch.path().join("state");
+    let first = listening(BEFORE, &state);
+    let (status, answer) = send(
+        &first,
+        BEFORE,
+        "archive.shelf.ShelveBook",
+        Some(&json!({"id": "b1", "title": LONG})),
+    );
+    assert!((200..300).contains(&status), "{status} {answer}");
+    drop(first);
+    let refused = match started(INVARIANT, &state) {
+        Ok(served) => panic!("run listened on {}", served.address),
+        Err(refused) => refused,
+    };
+    names_the_book_invariant(
+        &refused,
+        &state.join(format!("{COMPONENT}.sqlite")),
+        &Shapes::owned(&ir(BEFORE), COMPONENT),
+    );
+}
+
+#[test]
+fn an_entity_invariant_every_stored_row_holds_starts() {
+    let scratch = scratch();
+    let state = scratch.path().join("state");
+    let first = listening(BEFORE, &state);
+    let (status, answer) = send(
+        &first,
+        BEFORE,
+        "archive.shelf.ShelveBook",
+        Some(&json!({"id": "b1", "title": "Dune"})),
+    );
+    assert!((200..300).contains(&status), "{status} {answer}");
+    drop(first);
+    let second = listening(INVARIANT, &state);
+    let (status, answer) = send(&second, INVARIANT, "archive.shelf.ShelvedBooks", None);
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["rows"], json!([{"id": "b1", "title": "Dune"}]));
+}
+
+#[test]
+fn an_entity_invariant_a_stored_row_breaks_refuses_a_stdin_run() {
+    let scratch = scratch();
+    let file = scratch.path().join("state.sqlite");
+    let (status, stdout) = stdin_run(
+        BEFORE,
+        &file,
+        &format!(
+            "{{\"command\": \"archive.shelf.ShelveBook\", \"input\": {{\"id\": \"b1\", \"title\": \"{LONG}\"}}}}\n"
+        ),
+    );
+    assert!(status.success(), "{status}: {stdout}");
+    let (status, stdout) = stdin_run(
+        INVARIANT,
+        &file,
+        "{\"command\": \"archive.shelf.ShelveBook\", \"input\": {\"id\": \"b2\", \"title\": \"Emma\"}}\n",
+    );
+    names_the_book_invariant(&Refused { status, stdout }, &file, &Shapes::of(&ir(BEFORE)));
+}

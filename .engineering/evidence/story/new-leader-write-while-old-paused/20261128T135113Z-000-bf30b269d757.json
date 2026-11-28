@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-28T13:51:13Z",
+  "actor": "human:operator",
+  "artifact": "story:new-leader-write-while-old-paused",
+  "kind": "story",
+  "revision": 14,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "unit/w33-busy-store at 33a4829a: spindle-ingress 198 passed, 1 ignored (the reset case parked as story:reset-on-a-busy-store-keeps-the-store); the red 501 reproduced on the base and green 20 of 20 after; a Retry-After mutant killed by adversary_w33_u2 round 3. wave/33 at 46b237e3: task check exit 0, 2203 passed, nextest 69.9 s of 120 s; PostgreSQL lane pinned to 4 CPUs as on CI, 206 passed in 70.6 s of 100 s; lane script 38 cases, lane adversary 21 cases."
+  }
+}

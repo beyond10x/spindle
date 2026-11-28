@@ -66,6 +66,8 @@ mod adversary_w31_u5;
 mod adversary_w31_u8;
 mod adversary_w32_u3;
 mod adversary_w32_u4;
+#[cfg(feature = "sqlite")]
+mod adversary_w33_u4;
 mod affects_each;
 mod before_row;
 mod caller;

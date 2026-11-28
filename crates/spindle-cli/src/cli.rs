@@ -301,9 +301,13 @@ pub enum Command {
     /// otherwise it exits 3 before listening or reading stdin, writing nothing, and prints on
     /// stdout each entity and field (or state) whose stored rows the specification cannot read: a
     /// field removed or retyped while rows hold it, a non-optional field added that rows lack, a
-    /// state removed while rows rest in it, an entity removed while it holds rows. A store with
-    /// rows and no record, as an earlier release wrote it, records the specification unchecked and
-    /// logs one line saying so.
+    /// state removed while rows rest in it, an entity removed while it holds rows, and, one line
+    /// each, an invariant the specification declares on an entity that stored rows break (a row
+    /// the invariant leaves unknown fits). Each name, state and statement on such a line is printed
+    /// escaped, so a line stays one line: a backslash as `\\`, a line feed and a carriage return as
+    /// `\n` and `\r`, any other control character and U+2028 and U+2029 as `\u{..}`, a tab as it
+    /// is. A store with rows and no record, as an earlier release wrote it, records the
+    /// specification unchecked and logs one line saying so.
     Run {
         /// The specification directory.
         spec: PathBuf,
@@ -565,8 +569,12 @@ pub enum Command {
         /// table, so one kept before a component that sorts first was added is found, and the
         /// next write moves it to the first one's. Records alike in several tables, as a rollback
         /// across a release that changed the components may leave them, are used as one, and the
-        /// next write keeps one; records that differ exit 1 naming the tables, see
-        /// story:seed-record-after-a-component-is-removed. A
+        /// next write keeps one; records that differ exit 1 naming the tables. Where no current
+        /// component's table holds a record, the start looks once for lease tables of components
+        /// the specification no longer has, by their table name, reading those that hold a lease
+        /// row, so a record kept by a removed component is found; the next write moves it to the
+        /// first component's table under that table's own lease too, and leaves it where another
+        /// process holds that lease. One schema holds one leased deployment. A
         /// store with rows and no record (seeded by an earlier release, or filled by `state
         /// move`) is taken as seeded: the record is written with every entry done and none is
         /// sent. Otherwise nothing is recorded and every start sends the whole seed. `POST
@@ -578,8 +586,8 @@ pub enum Command {
         /// How many seconds a served run goes on answering, after SIGINT or SIGTERM, the requests
         /// already waiting for it, in arrival order, counted from when the request under way, if
         /// any, has finished; `0` answers none of them. From the signal on, `GET
-        /// /__spindle/ready` answers `503` and every request that arrives is answered `503` at
-        /// once; the request under way always finishes, and so does one taken within the bound,
+        /// /__spindle/ready` answers `503` and every request that arrives outside `/__spindle/` is
+        /// answered `503` at once, the probes there answering as always; the request under way always finishes, and so does one taken within the bound,
         /// but a `POST /api/reset`, answered `503` with nothing emptied. A bound too large for the
         /// clock sets none: the drain ends once no request is waiting. Each request still waiting
         /// once the bound has passed is answered `503`, then the run exits 130 or 143, within
@@ -592,6 +600,48 @@ pub enum Command {
             conflicts_with = "scenario"
         )]
         drain: u64,
+        /// The most connections a served run holds at once. A connection over it waits in the
+        /// kernel's backlog, neither accepted nor refused, until one of them closes; a
+        /// keep-alive connection that sends no request for 10 s is closed, and so is one whose
+        /// answer can be written no further for 10 s, as to a client that never reads, so an
+        /// idle or stalled one holds its place for at most that long. A body that pauses for
+        /// longer than 10 s, or takes over 10 s in all, is refused `408`. When the run stops,
+        /// each connection still waiting at the cap is taken and its request answered as during
+        /// the drain: `503` outside `/__spindle/`, the probes there as always. Only where `run`
+        /// serves HTTP.
+        #[arg(
+            long,
+            value_name = "COUNT",
+            default_value_t = 512,
+            value_parser = clap::value_parser!(u32).range(1..),
+            conflicts_with = "scenario"
+        )]
+        max_connections: u32,
+        /// The most bytes a request's head, its start line and headers, may take on a served
+        /// run. A larger head, or one of more than 100 headers, is answered `431` and its
+        /// connection closed, before anything of the request is handed on or recorded. Only
+        /// where `run` serves HTTP.
+        #[arg(
+            long,
+            value_name = "BYTES",
+            default_value_t = 65536,
+            value_parser = clap::value_parser!(u32).range(1..),
+            conflicts_with = "scenario"
+        )]
+        max_head_bytes: u32,
+        /// How many seconds a request to a served run waits for its answer, counted from the end
+        /// of its body read. A command or reset still waiting for the run's thread then is
+        /// answered `503` with `"committed": false` and never runs; one the thread took, or a
+        /// read under way, is answered `504`, and its command still completes. A bound too large
+        /// for the clock sets none. Only where `run` serves HTTP.
+        #[arg(
+            long,
+            value_name = "SECONDS",
+            default_value_t = 30,
+            value_parser = clap::value_parser!(u64).range(1..),
+            conflicts_with = "scenario"
+        )]
+        request_timeout: u64,
         /// Start the run on a manual clock standing at this RFC 3339 instant
         /// (`2026-02-01T00:00:00Z`, a fraction of a second and an offset read as given) instead of
         /// the system clock: every guard and view that reads `now`, and every generated

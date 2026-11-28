@@ -320,8 +320,21 @@ Records found alike in several tables are one record: a rollback to a release wi
 components, and a roll forward again, can leave the same record in two tables, and the next write
 keeps the one in the first component's table, in one statement under every lease involved. Records
 that differ stop the start with exit 1, naming the tables; keep the row `seed` of one of them and
-remove the others. `story:seed-record-after-a-component-is-removed` tracks the record of a
-component a later release removes. The rules above hold, with
+remove the others.
+
+A record kept by a component that a later release removed is found too. Where no current
+component's lease table holds a record, the start looks once, with one query of `pg_tables`, for
+lease tables of no current component: by their table name (`spindle_…_p_lease`), since a hashed
+prefix cannot be turned back into a component name, and read only where the table holds a `lease`
+row. A record found there is used as one found in a current table: records alike are one, records
+that differ stop the start with exit 1 naming the tables. The next write moves it to the first
+component's table in one statement under two leases: the first component's, and the old table's
+own, which the process takes for the move and releases after. While another process holds that
+table's lease, as a process of the old release still running does, the record is read and not
+moved: the next write goes to the first component's table, and from then on the record there wins,
+since the old tables are looked at only when no current table holds a record. So one schema holds
+one leased deployment: lease tables of another deployment in the same schema would be read as
+those of removed components. The rules above hold, with
 the store in place of the state:
 
 - With the same seed file and every entry done, `run` prints that the seed already ran on the
@@ -336,7 +349,27 @@ the store in place of the state:
   done. A store with no row and no record gets the whole seed.
 
 A reset writes the record as it writes `seed.json`, and one by a leased run without `--seed`
-removes the row. Any other store, in PostgreSQL without `database_lease` or in memory, records
+removes the row. A body that is not a world of the model, or a world clock the run cannot take, is
+refused first, `400` or `409`, and touches no record. From the lease tables of removed components
+it then removes the row, before it empties any store: it first takes each table's own lease,
+which it keeps until it answers, and then removes every row in one transaction. While another
+process holds one of those leases, as a process of the old release still running may, the reset
+is refused `409`, naming the table and that another process holds its lease, and no row is
+touched; where a row cannot be removed, it is refused `500` naming the table, and no row is
+removed. Either way it changes nothing: no store is emptied and every record stays, since a store
+emptied with the old record left would read as seeded at the next start. Once that process has
+ended, or the row `seed` of that table is removed, the reset can be sent again. A reset that then
+changes no store's rows puts the rows back, in one transaction, before it answers, whatever it
+answers: `400` for a row of its world, `503` where the lease was lost and the fence refused its
+first write, `500` where a store refused its first removal. A run that lost its lease while the
+reset ran keeps renewing the leases of the removed components' tables, not its own, until the
+reset has put the rows back, as long as the reset's store operations may still wait, then exits.
+A reset that removed no such row keeps its answer as it is. Its answer stands; where the put-back
+fails, the answer, at least `500`, also names the tables whose record was lost, and the next start
+with the seed may take the store as seeded, so reset the store before it. The run waits for the
+removal and the put-back as long as their statements may take, a statement's timeout for each.
+Where the removal of a current table's row fails after the reset, a line names that table. Any
+other store, in PostgreSQL without `database_lease` or in memory, records
 nothing: every start sends the whole seed, so a second start applies nothing new only where every
 entry is a create whose command declares `existing_instance:`.
 
@@ -631,8 +664,14 @@ naming the lease, and the rows stay as the new leader left them. A leader paused
 lease row, which the write locked, until the store's idle timeout of 10 s ends its transaction:
 the takeover comes at most one `database_lease` plus 10 s after the pause, and one ask of the
 standby. Until then the locks it holds may also hold up the new leader's writes, as where it was
-paused before it locked the row. A store's operations keep their own 10 s deadline whatever the
-lease. Before it runs a request, a
+paused before it locked the row, or inside a read of its published events, which holds the lock
+every write of the component's tables waits for. A command to the new leader held behind them
+answers `503` with `{"refused", "committed": false}` once it has waited out the store's lock wait
+(2 s), until the paused leader's session ends, at most 10 s after the pause: nothing was written,
+the same request is safe to send again, and the new leader keeps leading. A `POST /api/reset`
+held the same way answers `500` and leaves the component's store lost until the run restarts
+(`story:reset-on-a-busy-store-keeps-the-store`). A store's operations
+keep their own 10 s deadline whatever the lease. Before it runs a request, a
 leader whose last renewal began two thirds of the lease ago or longer, as after a pause, waits
 until it has renewed its leases or found one taken. A write the check refuses counts as a lease
 found taken, as when the session holding the lease ended and another process took it before the
@@ -684,18 +723,26 @@ row does not fit when:
   field is counted
 - a non-optional field is added, or a field is made required, that it lacks
 - the lifecycle state it rests in is removed
+- it breaks an invariant the new specification declares on its entity, judged as a row at rest is:
+  a row the invariant leaves unknown, such as one lacking a value the invariant reads, fits. Every
+  invariant of the entity is judged, also one the earlier specification declared, since the record
+  keeps none, so a row that broke an unchanged invariant refuses the next start under another
+  digest
 
 Otherwise `run` records the new specification and starts. Examples are an optional field added, a
 field made optional, or made required where every row holds it, an enum value added, a struct
-member added as optional, a newtype prefix, alphabet or invariant every stored value meets, a new
-entity or state, and any change to an entity that holds no row. A store with the same digest
-starts without a check. An invariant added to the entity itself is not checked against the rows.
+member added as optional, a newtype prefix, alphabet or invariant every stored value meets, an
+entity invariant every stored row holds, a new entity or state, and any change to an entity that
+holds no row. A store with the same digest starts without a check.
 
 Where a row does not fit, `run` exits 3 before listening, or before reading a stdin line, and
-prints on stdout the store and each entity and field (or state) that does not fit, with how many
-rows hold it. Nothing is written, so the rows and the record stay as they were, and every store of
-the run is checked before any records. No migration is offered: serve the earlier specification,
-or move the rows by hand.
+prints on stdout the store and each entity and field (or state, or invariant) that does not fit,
+with how many rows hold it, or break it: one line per broken invariant. Each name, state and
+statement on these lines is printed escaped, so a line stays one line and two texts never print
+alike: a backslash as `\\`, a line feed and a carriage return as `\n` and `\r`, any other control
+character and U+2028 and U+2029 as `\u{..}`, a tab as it is. Nothing is written, so
+the rows and the record stay as they were, and every store of the run is checked before any
+records. No migration is offered: serve the earlier specification, or move the rows by hand.
 
 ```text
 refused: the store of archive holds rows this specification cannot read

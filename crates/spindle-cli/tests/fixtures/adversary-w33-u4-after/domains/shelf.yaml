@@ -1,0 +1,32 @@
+domain: archive.shelf
+summary: Books shelved under a title, with an optional note, resting shelved.
+entities:
+  - name: archive.shelf.Book
+    identity: {name: id, type: String}
+    fields:
+      - {name: title, type: String}
+      - {name: note, type: Optional<String>}
+    invariants:
+      - 'title.count <= 10'
+      - 'note.count <= 4'
+      - "title != 'one\ntwo'"
+    lifecycle: {initial: Shelved, states: [Shelved], terminal: [Shelved]}
+commands:
+  - name: archive.shelf.ShelveBook
+    input:
+      - {name: id, type: String}
+      - {name: title, type: String}
+    outcomes:
+      - name: shelved
+        creates: archive.shelf.Book
+        instance: id
+        sets:
+          title: input.title
+        emits: [archive.shelf.BookShelved]
+        payload:
+          archive.shelf.BookShelved: {id: input.id}
+        summary: The book is shelved without a note.
+events:
+  - name: archive.shelf.BookShelved
+    fields:
+      - {name: id, type: String}

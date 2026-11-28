@@ -6,6 +6,90 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- A served `run` bounds its listener: `--max-connections` (512) connections at once, one over it
+  waiting in the kernel's backlog until one closes; `--max-head-bytes` (65536) bytes of a
+  request's head, and 100 headers, a larger head answered `431` and its connection closed before
+  anything is handed on or recorded; a connection closed that sends no head for 10 s (an idle
+  keep-alive one included) or whose answer makes no write progress for 10 s, as to a client that
+  never reads, over TLS as over plain TCP; a body that pauses for longer than 10 s, or takes over
+  10 s in all, refused `408`; and
+  `--request-timeout` (30) seconds per request from the end of its body read, a request no thread
+  took by then answered `503` with `"committed": false` and never run, its client still waiting
+  or gone, one taken `504`, its command still completing. When the listener closes, each
+  connection still waiting in the socket's backlog, at the cap or not yet accepted, is taken and
+  its one request answered as during the drain (outside `/__spindle/` `503` once the run stops
+  taking work, the probes there as always) rather than reset; none after them is accepted. `spindle_ingress` gains `Limits` and
+  `Surface::limited`. The proxy secret, the guarded listener's token and `spindle-control`'s token
+  are compared in time that depends only on their own length, where a presented value of another
+  length returned at once (`story:listener-limits`).
+- `run` under a specification with another digest than a durable store recorded judges every
+  stored row under each invariant the new specification declares on the row's entity, as a row at
+  rest is judged, and exits 3 before listening or reading stdin, printing one line per broken
+  invariant with the entity, the statement and how many stored rows break it
+  (`spindle_kernel::Misfit::Invariant`); a row the invariant leaves unknown fits. Every misfit
+  line, of any kind, prints each name, state and statement escaped so that it stays one line: a
+  backslash as `\\`, a line feed and a carriage return as `\n` and `\r`, any other control
+  character and U+2028 and U+2029 as `\u{..}`, a tab as it is. Before, only
+  the rows' fields and states were compared, so a run started over rows its specification does
+  not admit. The record is unchanged, so a row that already broke an unchanged invariant now
+  refuses the next start under another digest. On SQLite and PostgreSQL alike
+  (`story:entity-invariant-over-stored-rows`).
+
+### Fixed
+
+- A command whose PostgreSQL store did not answer within its deadline answers `503`
+  `{"refused", "committed": false}`, safe to send again, where it answered `501`, the status of a
+  command the runtime cannot complete; the request log records it `failed`, not `not-served`.
+  eventlog's `Deadline`, which it returns only before a commit begins, reaches the ingress as the
+  new `spindle_kernel::StoreError::Busy`, displayed `store: …` as before. Only the PostgreSQL store
+  returns it: eventlog-sqlite 0.10.0 never returns `Deadline` (a busy SQLite database is its
+  `Backend` error), so a command whose SQLite write is busy still answers `501`. The case seen: a
+  command to a new leader while the former leader, paused, still held a database session answered
+  `501` "event store deadline exceeded during database statement or lock"; the likely cause, read
+  and not proven, is the component's publication lock, which eventlog's feed read holds exclusive
+  until its transaction ends and every write waits for. Such a command now answers `503` until the
+  paused leader's session ends at the store's idle timeout, at most 10 s; the window is answered,
+  not closed. Reads held so are unchanged: outside a drain, a view answers `501` `{"refused"}`,
+  and `GET /api/events` and `GET /api/history` answer `500` `{"refused"}`; during a drain after
+  SIGINT or SIGTERM an events or history read still waiting for the store is cut off and answered
+  `503`, as before. A `POST /api/reset` held so answers `500` and leaves the component's store
+  lost until the run restarts, as before (`story:reset-on-a-busy-store-keeps-the-store`)
+  (`story:new-leader-write-while-old-paused`).
+- A leased `run` on PostgreSQL finds its seed record also when a later release removed the
+  component whose lease table held it: a part-done seed resumes after its count, and another seed
+  file exits 1 naming both digests. Before, the record was read only from the current components'
+  tables, so the store's rows with no record read as seeded and a complete record was written
+  over it. Where no current component's lease table holds a record, the start lists the schema's
+  lease tables of no current component by table name, with one `pg_tables` query, and reads those
+  that hold a `lease` row (`spindle_kernel::Lease::orphan_tables`, `orphan_seed_record`); records
+  alike are one, records that differ exit 1 naming the tables, and a record in a current table
+  wins. The next write moves the record to the first component's table in one statement under
+  that table's lease and the old table's own, which the run takes for it and releases after
+  (`take_orphan`, `gather_orphan_seed`, `release_orphan`); while another process holds the old
+  table's lease the record is read and not moved, and a line says so. A reset by a leased run
+  without a seed removes the record from those tables too, before it empties any store: it
+  refuses a body that is not a world, or a world clock it cannot take, before it touches a record;
+  then it takes every such table's lease, which it keeps until it answers (`renew_orphan`), and
+  removes every record in one transaction (`forget_orphan_seeds`). While another process holds
+  one lease the reset is refused `409` naming the table and no record is touched; where a record
+  cannot be removed it is refused `500` naming the table and none is removed. Either changes
+  nothing, since a store emptied with the old record left would read as seeded at the next start.
+  A reset that then changes no store's rows (`spindle_host::Host::reset_changed_rows`) puts the
+  records back in one transaction before it answers (`record_orphan_seeds`), whatever it answers:
+  `400` for a row of its world, `503` where the lease's fence refused its first write, `500` where
+  a store refused its first removal; a run that lost its lease puts them back before it exits,
+  renewing the leases of those tables, not its own, until the reset asks, at most two store
+  operations (`spindle_kernel::postgres_store_wait`) and the run's wait for its lease thread. The
+  answer stands, and where the put-back fails it also names the tables whose record was lost, at
+  least `500`; a reset whose claim took no lease, as on a schema with no removed component, keeps
+  its answer as it is. The run waits for the claim and the put-back a statement's timeout for each of
+  their statements, so a slow put-back is not answered as lost; a claim it stopped waiting for is
+  undone behind it: no lease is kept and no record is lost. A removal from a current table that
+  fails after the reset is printed naming that table.
+  One schema holds one leased deployment (`story:seed-record-after-a-component-is-removed`).
+
 ## [0.27.0] - 2026-11-28
 
 ### Added

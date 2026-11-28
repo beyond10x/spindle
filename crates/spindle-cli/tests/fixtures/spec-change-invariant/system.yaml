@@ -1,0 +1,21 @@
+format: ess/34
+system: archive
+version: v1
+summary: Books shelved and cards filed over the network, the specification of spec-change-before with an invariant on each book that its stored books are judged by.
+domains:
+  - archive.shelf
+components:
+  - component: archive
+    summary: Shelves books and files cards for callers outside the process.
+    owns:
+      domains:
+        - archive.shelf
+    accepts:
+      commands:
+        - archive.shelf.ShelveBook
+        - archive.shelf.FileCard
+    publishes:
+      events:
+        - archive.shelf.BookShelved
+        - archive.shelf.CardFiled
+    reached_by: network

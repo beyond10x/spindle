@@ -9,7 +9,7 @@
 use std::convert::Infallible;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -23,7 +23,7 @@ use hyper::header::{
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use serde_json::{Map, Value};
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{Semaphore, oneshot, watch};
 use tokio::task::JoinSet;
 
 use spindle_host::{Failed, Host, Reader};
@@ -33,26 +33,61 @@ use crate::console::{Console, Worlds};
 use crate::health::{LIVENESS, Probed, SeedState};
 use crate::observe::{Answered, By, Note, Reserved, Target};
 use crate::router::{Asked, BODY_LIMIT, Pending, Response as Reply};
-use crate::surface::{Caller, Route, Surface, Unverified};
+use crate::surface::{Caller, Limits, Route, Surface, Unverified};
 
-/// How long a connection may take to send a request's head; a slower one is closed.
-pub const HEADER_READ: Duration = Duration::from_secs(10);
+/// How long a connection may take to send a request's head, the next one of a keep-alive
+/// connection included; a slower one is closed. The default of [`Limits::head_read`].
+pub const HEADER_READ: Duration = Limits::DEFAULT.head_read;
 
-/// How long a request's body may take to arrive once its head has; a slower one is refused `408`.
+/// How long a request's whole body may take to arrive once its head has; a slower one is refused
+/// `408`, and so is one that pauses between two pieces for longer than the surface's
+/// [`Limits::head_read`].
 pub const BODY_READ: Duration = Duration::from_secs(10);
 
 /// How long the listener waits after accepting a connection failed, such as when the process is
 /// out of descriptors, before it accepts again.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
 
+/// An exchange no thread has taken yet ([`Exchange::claim`]).
+const QUEUED: u8 = 0;
+/// An exchange [`Listener::next`] handed to the caller's thread.
+const TAKEN: u8 = 1;
+/// An exchange its request time passed while queued, answered `503` and never handed.
+const LAPSED: u8 = 2;
+
 /// One request for a route, waiting for its answer.
 #[derive(Debug)]
 pub struct Exchange {
     pending: Pending,
     reply: oneshot::Sender<(Reply, Answered)>,
+    /// Who decides the exchange first ([`QUEUED`], [`TAKEN`], [`LAPSED`]): the caller's thread
+    /// taking it, or its request time passing (`story:listener-limits`, D3 A).
+    claim: Arc<AtomicU8>,
+    /// When its request time passes; `None` for a time past what the clock can name. Kept here
+    /// and not only in the connection's future, which hyper drops once the client leaves, so a
+    /// request whose client left is never handed past its time (adversary finding F1 of round 2).
+    deadline: Option<Instant>,
 }
 
 impl Exchange {
+    /// Claims the exchange for the caller's thread; `false` where its request time passed first,
+    /// and it is then never handed: claimed lapsed here if no one claimed it yet, and answered
+    /// `503` where its client still waits.
+    fn take(&self) -> bool {
+        let claimed = if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            LAPSED
+        } else {
+            TAKEN
+        };
+        self.claim
+            .compare_exchange(QUEUED, claimed, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+            && claimed == TAKEN
+    }
+
     /// The route the request is for; `None` for a console route, the metrics or the topology.
     pub fn route(&self) -> Option<&Route> {
         match &self.pending.asked {
@@ -299,14 +334,21 @@ fn loopback(port: u16) -> SocketAddr {
     SocketAddr::from((Ipv4Addr::LOCALHOST, port))
 }
 
-/// Compares two strings in time that depends only on their lengths.
-fn same(left: &str, right: &str) -> bool {
-    left.len() == right.len()
-        && left
-            .bytes()
-            .zip(right.bytes())
-            .fold(0u8, |differ, (a, b)| differ | (a ^ b))
-            == 0
+/// Whether `given` is `secret`, compared in time that depends only on the secret's length: every
+/// byte of `secret` is read against `given`'s byte at its place, or a zero past `given`'s end,
+/// whatever `given`'s length, so the time tells a caller neither where they differ nor how long
+/// the secret is (`story:listener-limits`).
+fn same(given: &str, secret: &str) -> bool {
+    let given = given.as_bytes();
+    let differ = secret.bytes().enumerate().fold(
+        u8::from(given.len() != secret.len()),
+        |differ, (index, expected)| {
+            #[cfg(test)]
+            tests::COMPARED.with(|compared| compared.set(compared.get() + 1));
+            differ | (given.get(index).copied().unwrap_or(0) ^ expected)
+        },
+    );
+    differ == 0
 }
 
 /// An HTTP/1.1 listener serving one [`Surface`], on 127.0.0.1 unless bound with
@@ -349,10 +391,12 @@ impl Listener {
     /// route has `404`; a served path under another method `405` with `Allow`, the method
     /// compared exactly; a path variable that does not decode `400`; a body sent with
     /// `Transfer-Encoding` `411`, since only one announced by `Content-Length` is read; a body
-    /// announced over [`BODY_LIMIT`] `413` before it is read; one that does not arrive within
-    /// [`BODY_READ`] `408`, and one that breaks off `400`. A head not sent within
+    /// announced over [`BODY_LIMIT`] `413` before it is read; one that does not arrive whole within
+    /// [`BODY_READ`], or pauses between two of its pieces for longer than the surface's
+    /// [`Limits::head_read`], `408`, and one that breaks off `400`. A head not sent within
     /// [`HEADER_READ`] closes the connection. A failed accept is retried, and the listener goes
-    /// on.
+    /// on. The surface's [`Limits`] bound the connections it holds, each head and each request's
+    /// time ([`Surface::limited`]).
     ///
     /// On a surface made [`Surface::proving_callers`] each request for a command or view is
     /// handed on with the caller its header proves where it also carries the proxy's secret, both
@@ -541,6 +585,14 @@ impl Listener {
         let (sender, exchanges) = mpsc::channel();
         let (shutdown, mut stopped) = oneshot::channel::<Stop>();
         let health = Arc::new(Health::new());
+        // One place per connection held: at the cap the loop accepts no connection until one
+        // closes, and the kernel's backlog holds the rest (`story:listener-limits`, D2 A).
+        let places = Arc::new(Semaphore::new(
+            surface
+                .limits()
+                .connections
+                .clamp(1, Semaphore::MAX_PERMITS),
+        ));
         // Its reads of the events are cut off where they wait once the run stops taking work, so a
         // read waiting for a store's feed does not hold the listener's close
         // (`story:leader-exits-promptly-on-sigterm`).
@@ -570,22 +622,32 @@ impl Listener {
                                 Ok(Stop::Draining(grace)) => break grace,
                                 Ok(Stop::Now) | Err(_) => return Ok::<(), io::Error>(()),
                             },
-                            accepted = listener.accept() => match accepted {
-                                Ok((stream, _)) => {
-                                    connections.spawn(connection(
-                                        Arc::clone(&served),
-                                        stream,
-                                        closed.clone(),
-                                    ));
+                            accepted = async {
+                                let place = Arc::clone(&places).acquire_owned().await;
+                                (place, listener.accept().await)
+                            } => match accepted {
+                                (Ok(place), Ok((stream, _))) => {
+                                    let (served, closed) = (Arc::clone(&served), closed.clone());
+                                    connections.spawn(async move {
+                                        connection(served, stream, Some(closed)).await;
+                                        drop(place);
+                                    });
                                 }
-                                Err(_) => tokio::time::sleep(ACCEPT_BACKOFF).await,
+                                // The places are never closed.
+                                (Err(_), Ok(_)) => {}
+                                (_, Err(_)) => tokio::time::sleep(ACCEPT_BACKOFF).await,
                             },
                             Some(_) = connections.join_next(), if !connections.is_empty() => {}
                         }
                     };
-                    // No connection is accepted from here on; each one open writes the answer it
-                    // holds, then closes.
-                    drop(listener);
+                    // Each connection already waiting in the backlog, at the cap or not yet
+                    // accepted, is taken without a place and answers its one request, `503` as
+                    // every request after the close does, rather than being reset with the socket
+                    // (adversary finding F2 of round 2); none is accepted after these. Each one
+                    // open writes the answer it holds, then closes.
+                    for stream in backlog(listener) {
+                        connections.spawn(connection(Arc::clone(&served), stream, None));
+                    }
                     let _ = closing.send(true);
                     let _ = tokio::time::timeout(grace, async {
                         while connections.join_next().await.is_some() {}
@@ -612,11 +674,23 @@ impl Listener {
     /// The next request for a route, waiting at most `timeout`; `None` when none arrived. Each
     /// call counts as the caller's thread answering for `GET /__spindle/live`, as it starts and as
     /// it returns; from a request it hands until the next call, the caller holds that request and
-    /// reads live however long it takes to answer it.
+    /// reads live however long it takes to answer it. A request whose request time passed while
+    /// it was queued was answered `503` and is never handed ([`Surface::limited`]).
     pub fn next(&self, timeout: Duration) -> Option<Exchange> {
         self.health.holding.store(false, Ordering::SeqCst);
         self.health.beat();
-        let next = self.exchanges.as_ref()?.recv_timeout(timeout).ok();
+        let exchanges = self.exchanges.as_ref()?;
+        let until = Instant::now().checked_add(timeout);
+        let next = loop {
+            let left = until.map_or(timeout, |until| {
+                until.saturating_duration_since(Instant::now())
+            });
+            match exchanges.recv_timeout(left) {
+                Ok(exchange) if exchange.take() => break Some(exchange),
+                Ok(_) => {}
+                Err(_) => break None,
+            }
+        };
         self.health.beat();
         self.health.holding.store(next.is_some(), Ordering::SeqCst);
         next
@@ -646,9 +720,10 @@ impl Listener {
 
     /// Stops the listener so that no client reads a closed connection where an answer was due:
     /// each request handed over and not yet taken with [`Listener::next`] is answered `503`, and
-    /// so is each one that reaches the listener from now on; no connection is accepted; every
-    /// answer already given to an [`Exchange`] is written, and each connection closed once its
-    /// answer is. Returns once the server thread has ended, waiting at most `grace` for the
+    /// so is each one that reaches the listener from now on; each connection waiting in the
+    /// socket's backlog then, at the connection cap or not yet accepted, is taken and its one
+    /// request answered, and no connection after them is accepted; every answer already given to
+    /// an [`Exchange`] is written, and each connection closed once its answer is. Returns once the server thread has ended, waiting at most `grace` for the
     /// connections; one still open then, such as a client still sending its body, is dropped.
     pub fn close(mut self, grace: Duration) {
         if let Some(exchanges) = self.exchanges.take() {
@@ -674,46 +749,185 @@ impl Drop for Listener {
     }
 }
 
-/// Serves one connection, HTTP/1.1, its heads bounded by [`HEADER_READ`]; over TLS where the
-/// listener serves it, once the handshake has completed within [`HEADER_READ`]. A handshake that
-/// fails or does not complete in time, or is under way once `closing` reads `true`, closes the
-/// connection with no HTTP read or written. Once `closing` reads `true`, the connection writes the
-/// answer it holds, if any, and closes.
+/// Serves one connection, HTTP/1.1, each head bounded by the surface's [`Limits::head_read`]
+/// ([`HEADER_READ`] by default), [`Limits::head_bytes`] and [`Limits::headers`]; over TLS where
+/// the listener serves it, once the handshake has completed within [`Limits::head_read`]. A
+/// handshake that fails or does not complete in time, or is under way once `closing` reads `true`,
+/// closes the connection with no HTTP read or written. Once `closing` reads `true`, the connection
+/// writes the answer it holds, if any, and closes. A write that makes no progress within
+/// [`Limits::head_read`], as to a client that never reads its answers, closes the connection, over
+/// TLS as over plain TCP ([`Stalling`]). Without `closing`, for a connection taken from the
+/// backlog once the listener closes, it answers its one request and closes.
 async fn connection(
     served: Arc<Served>,
     stream: tokio::net::TcpStream,
-    mut closing: watch::Receiver<bool>,
+    mut closing: Option<watch::Receiver<bool>>,
 ) {
+    let stream = Stalling::new(stream, served.surface.limits().head_read);
     let Some(tls) = served.tls.clone() else {
         return answering(served, stream, closing).await;
     };
-    let handshake = tokio::time::timeout(HEADER_READ, tls.accept(stream));
+    let handshake = tokio::time::timeout(served.surface.limits().head_read, tls.accept(stream));
     let stream = tokio::select! {
         shaken = handshake => match shaken {
             Ok(Ok(stream)) => stream,
             Ok(Err(_)) | Err(_) => return,
         },
-        _ = closing.wait_for(|closing| *closing) => return,
+        () = closed(&mut closing) => return,
     };
     answering(served, stream, closing).await;
 }
 
+/// Returns once `closing` reads `true`, or its sender is gone; never without one.
+async fn closed(closing: &mut Option<watch::Receiver<bool>>) {
+    match closing {
+        Some(closing) => {
+            let _ = closing.wait_for(|closing| *closing).await;
+        }
+        None => std::future::pending().await,
+    }
+}
+
+/// Every connection waiting in `listener`'s backlog now, taken without blocking; `listener` is
+/// closed once they are, so the kernel holds no other.
+fn backlog(listener: tokio::net::TcpListener) -> Vec<tokio::net::TcpStream> {
+    let Ok(listener) = listener.into_std() else {
+        return Vec::new();
+    };
+    let mut waiting = Vec::new();
+    // `into_std` leaves the socket non-blocking: the loop ends at the first accept that would wait.
+    while let Ok((stream, _)) = listener.accept() {
+        if stream.set_nonblocking(true).is_err() {
+            continue;
+        }
+        if let Ok(stream) = tokio::net::TcpStream::from_std(stream) {
+            waiting.push(stream);
+        }
+    }
+    waiting
+}
+
+/// A connection's socket whose writes fail once one has made no progress for `bound`
+/// (`story:listener-limits`, adversary finding F1). hyper reads no further head while an answer
+/// waits to be written, so its head read time does not run then, and without this bound a client
+/// that pipelines requests and never reads the answers held its place of the cap for as long as
+/// it stayed open. The bound is [`Limits::head_read`]: the time a connection may take to give the
+/// listener anything it waits for, a head or room for an answer. It sits below TLS, so it holds
+/// for the handshake's writes and every record over TLS too.
+struct Stalling<S> {
+    inner: S,
+    bound: Duration,
+    /// Running from the first write that could not proceed, reset by every write that did.
+    stalled: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+}
+
+impl<S> Stalling<S> {
+    fn new(inner: S, bound: Duration) -> Self {
+        Self {
+            inner,
+            bound,
+            stalled: None,
+        }
+    }
+
+    /// `polled`, a write's outcome, as this stream answers it: a write still pending once it has
+    /// made no progress for the bound fails `TimedOut`.
+    fn progress<T>(
+        &mut self,
+        context: &mut std::task::Context<'_>,
+        polled: std::task::Poll<io::Result<T>>,
+    ) -> std::task::Poll<io::Result<T>> {
+        use std::task::Poll;
+        if polled.is_ready() {
+            self.stalled = None;
+            return polled;
+        }
+        let bound = self.bound;
+        let stalled = self
+            .stalled
+            .get_or_insert_with(|| Box::pin(tokio::time::sleep(bound)));
+        if stalled.as_mut().poll(context).is_ready() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("no answer could be written to the client within {bound:?}"),
+            )));
+        }
+        Poll::Pending
+    }
+}
+
+impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for Stalling<S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        buffer: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_read(context, buffer)
+    }
+}
+
+impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for Stalling<S> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        buffer: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        let polled = std::pin::Pin::new(&mut self.inner).poll_write(context, buffer);
+        self.progress(context, polled)
+    }
+
+    fn poll_write_vectored(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        buffers: &[io::IoSlice<'_>],
+    ) -> std::task::Poll<io::Result<usize>> {
+        let polled = std::pin::Pin::new(&mut self.inner).poll_write_vectored(context, buffers);
+        self.progress(context, polled)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let polled = std::pin::Pin::new(&mut self.inner).poll_flush(context);
+        self.progress(context, polled)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let polled = std::pin::Pin::new(&mut self.inner).poll_shutdown(context);
+        self.progress(context, polled)
+    }
+}
+
 /// Serves HTTP/1.1 on `stream`, as [`connection`] says.
-async fn answering<S>(served: Arc<Served>, stream: S, mut closing: watch::Receiver<bool>)
+async fn answering<S>(served: Arc<Served>, stream: S, mut closing: Option<watch::Receiver<bool>>)
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
+    let limits = served.surface.limits();
     let service = hyper::service::service_fn(move |request| handle(Arc::clone(&served), request));
+    // hyper answers a head over either bound `431` and closes, before the service runs; its head
+    // read time also runs while a kept-alive connection waits for its next head, so an idle one
+    // holds a place of the cap for at most that long. A connection taken once the listener closes
+    // is not kept alive past its one answer.
     let serving = hyper::server::conn::http1::Builder::new()
         .timer(TokioTimer::new())
-        .header_read_timeout(HEADER_READ)
+        .header_read_timeout(limits.head_read)
+        .max_header_size(limits.head_bytes)
+        .max_headers(limits.headers)
+        .keep_alive(closing.is_some())
         .serve_connection(TokioIo::new(stream), service);
     tokio::pin!(serving);
     tokio::select! {
         _ = serving.as_mut() => {}
-        () = async {
-            let _ = closing.wait_for(|closing| *closing).await;
-        } => {
+        () = closed(&mut closing) => {
             serving.as_mut().graceful_shutdown();
             let _ = serving.await;
         }
@@ -899,20 +1113,33 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         _ => None,
     };
     let path = request.uri().path().to_owned();
-    let read = tokio::time::timeout(
+    // Two bounds on the body read: the whole body within `BODY_READ`, and no pause between two of
+    // its pieces longer than the head read time, so a body that stalls holds a place of the cap
+    // no longer than an idle connection (adversary findings F4 of round 2 and of round 3) while
+    // one arriving steadily is read. A pause that would run past the whole body's deadline is
+    // refused as late, so the text does not depend on which timer fires first.
+    let pause = served.surface.limits().head_read;
+    let read = paced(
+        Limited::new(request.into_body(), BODY_LIMIT),
+        pause,
         BODY_READ,
-        Limited::new(request.into_body(), BODY_LIMIT).collect(),
     )
     .await;
     let body = match read {
-        Ok(Ok(collected)) => collected.to_bytes().to_vec(),
-        Ok(Err(error)) => {
+        Ok(body) => body,
+        Err(Unread::Broken(error)) => {
             return refused(Answer::refusal(
                 400,
                 format!("the body could not be read: {error}"),
             ));
         }
-        Err(_) => {
+        Err(Unread::Paused) => {
+            return refused(Answer::refusal(
+                408,
+                format!("the body paused for longer than {pause:?}"),
+            ));
+        }
+        Err(Unread::Late) => {
             return refused(Answer::refusal(
                 408,
                 format!("the body did not arrive within {BODY_READ:?}"),
@@ -943,10 +1170,52 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
     }
 }
 
+/// Why a body was not read whole ([`paced`]).
+enum Unread {
+    /// No piece of it arrived for longer than the pause allowed.
+    Paused,
+    /// It did not arrive whole within the time allowed for the whole body.
+    Late,
+    /// It broke off or ran over its limit, as the error says.
+    Broken(String),
+}
+
+/// Every byte of `body`, each piece arriving within `pause` of the one before (of the head, for
+/// the first), and the whole within `whole`. A pause that would run past the whole body's
+/// deadline waits only to that deadline and is [`Unread::Late`], so which bound refused a body
+/// does not depend on which of two timers fires first.
+async fn paced<B>(mut body: B, pause: Duration, whole: Duration) -> Result<Vec<u8>, Unread>
+where
+    B: hyper::body::Body<Data = Bytes> + Unpin,
+    B::Error: std::fmt::Display,
+{
+    let deadline = tokio::time::Instant::now().checked_add(whole);
+    let mut read = Vec::new();
+    loop {
+        let now = tokio::time::Instant::now();
+        let paused = now.checked_add(pause);
+        let (until, missed) = match (paused, deadline) {
+            (Some(paused), Some(deadline)) if paused < deadline => (Some(paused), Unread::Paused),
+            (Some(paused), None) => (Some(paused), Unread::Paused),
+            (_, deadline) => (deadline, Unread::Late),
+        };
+        match within(until, body.frame()).await {
+            None => return Err(missed),
+            Some(None) => return Ok(read),
+            Some(Some(Err(error))) => return Err(Unread::Broken(error.to_string())),
+            Some(Some(Ok(frame))) => {
+                if let Ok(data) = frame.into_data() {
+                    read.extend_from_slice(&data);
+                }
+            }
+        }
+    }
+}
+
 /// The caller `headers` prove in `header` ([`Caller::proven`]), where they also carry `secret` in
-/// [`Surface::SECRET_HEADER`], compared in time that depends only on the lengths ([`same`]);
-/// `None` where either header is absent or given more than once, or the secret is another. No
-/// value is printed.
+/// [`Surface::SECRET_HEADER`], compared in time that depends only on the secret's length
+/// ([`same`]); `None` where either header is absent or given more than once, or the secret is
+/// another. No value is printed.
 fn proven(headers: &HeaderMap, header: &str, secret: &str) -> Option<Caller> {
     if !presents(headers, secret) {
         return None;
@@ -955,7 +1224,7 @@ fn proven(headers: &HeaderMap, header: &str, secret: &str) -> Option<Caller> {
 }
 
 /// Whether `headers` carry `secret` once in [`Surface::SECRET_HEADER`], compared in time that
-/// depends only on the lengths ([`same`]).
+/// depends only on the secret's length ([`same`]).
 fn presents(headers: &HeaderMap, secret: &str) -> bool {
     once(headers, Surface::SECRET_HEADER)
         .and_then(|presented| presented.to_str().ok())
@@ -983,14 +1252,28 @@ fn once<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a HeaderValue> {
 /// blocking thread of its own, beside the host's thread and every other read; anything else
 /// handed to the host's thread as an [`Exchange`]. The `503` refusal where the listener is
 /// stopping or stopped before answering, and `500` where a read stopped without an answer.
+///
+/// Answered within the surface's [`Limits::request_time`] of now, the end of the request's body
+/// read (`story:listener-limits`, D3 A, D4 A): a request no thread has taken by then is answered
+/// `503` with `committed: false` and [`Listener::next`] never hands it; one taken, or a read under
+/// way, `504`, the thread's later answer dropped.
 async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), Answer> {
+    let time = served.surface.limits().request_time;
+    // A time past what the clock can name sets no deadline. One instant, here and in the
+    // exchange, so the caller's thread and this future agree on when the time has passed.
+    let lapses = Instant::now().checked_add(time);
+    let deadline = lapses.map(tokio::time::Instant::from_std);
     let pending = match served.reader.get() {
         Some(reader) if pending.reads(reader) => {
             let reader = reader.clone();
-            match tokio::task::spawn_blocking(move || pending.read(&reader)).await {
-                Ok(Ok(read)) => return Ok(read),
-                Ok(Err(pending)) => *pending,
-                Err(_) => return Err(Answer::refusal(500, "the read stopped before answering")),
+            let read = tokio::task::spawn_blocking(move || pending.read(&reader));
+            match within(deadline, read).await {
+                Some(Ok(Ok(read))) => return Ok(read),
+                Some(Ok(Err(pending))) => *pending,
+                Some(Err(_)) => {
+                    return Err(Answer::refusal(500, "the read stopped before answering"));
+                }
+                None => return Err(late(time)),
             }
         }
         _ => pending,
@@ -1004,12 +1287,64 @@ async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), 
         return Err(standing_by());
     }
     let (reply, replying) = oneshot::channel();
-    if served.exchanges.send(Exchange { pending, reply }).is_err() {
+    let claim = Arc::new(AtomicU8::new(QUEUED));
+    let exchange = Exchange {
+        pending,
+        reply,
+        claim: Arc::clone(&claim),
+        deadline: lapses,
+    };
+    if served.exchanges.send(exchange).is_err() {
         return Err(Answer::refusal(503, "the listener is stopping"));
     }
-    replying
-        .await
-        .map_err(|_| Answer::refusal(503, "the listener stopped before answering"))
+    // Lapsed, whether here or by `Exchange::take` on the caller's thread: never handed.
+    let lapsed = || {
+        matches!(
+            claim.compare_exchange(QUEUED, LAPSED, Ordering::SeqCst, Ordering::SeqCst),
+            Ok(_) | Err(LAPSED)
+        )
+    };
+    match within(deadline, replying).await {
+        Some(Ok(answered)) => Ok(answered),
+        // `Listener::next` found its time passed and dropped it.
+        Some(Err(_)) if claim.load(Ordering::SeqCst) == LAPSED => Err(unclaimed(time)),
+        Some(Err(_)) => Err(Answer::refusal(
+            503,
+            "the listener stopped before answering",
+        )),
+        None if lapsed() => Err(unclaimed(time)),
+        None => Err(late(time)),
+    }
+}
+
+/// `future`'s output, or `None` once `deadline` has passed first; no deadline waits for it.
+async fn within<F: Future>(deadline: Option<tokio::time::Instant>, future: F) -> Option<F::Output> {
+    match deadline {
+        Some(deadline) => tokio::time::timeout_at(deadline, future).await.ok(),
+        None => Some(future.await),
+    }
+}
+
+/// The answer to a request no thread took within its request `time`, which is never handed:
+/// `503` with `committed: false`.
+fn unclaimed(time: Duration) -> Answer {
+    let mut answer = Answer::refusal(
+        503,
+        format!("no thread took the request within its request time of {time:?}"),
+    );
+    if let Some(Value::Object(body)) = &mut answer.body {
+        body.insert("committed".to_owned(), Value::Bool(false));
+    }
+    answer
+}
+
+/// The answer to a request taken and not answered within its request `time`, whose command
+/// still completes.
+fn late(time: Duration) -> Answer {
+    Answer::refusal(
+        504,
+        format!("the request was not answered within its request time of {time:?}"),
+    )
 }
 
 /// The refusal of a request that arrives once the run stops taking work.
@@ -1115,7 +1450,44 @@ fn replied(reply: Reply) -> Response<Full<Bytes>> {
 
 #[cfg(test)]
 mod tests {
-    use super::Guard;
+    use std::cell::Cell;
+
+    use super::{Guard, same};
+
+    thread_local! {
+        /// How many byte pairs [`same`] compared on this thread.
+        pub(super) static COMPARED: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// How many byte pairs `same(given, secret)` compares, and its answer.
+    fn compared(given: &str, secret: &str) -> (usize, bool) {
+        COMPARED.with(|compared| compared.set(0));
+        let answer = same(given, secret);
+        (COMPARED.with(Cell::get), answer)
+    }
+
+    #[test]
+    fn the_secret_compare_takes_the_same_time_for_any_length() {
+        let secret = "s3cret-of-the-proxy";
+        let (equal, matched) = compared(secret, secret);
+        assert!(matched, "the secret matches itself");
+        assert_eq!(equal, secret.len(), "the whole secret is read");
+        for given in [
+            "",
+            "s",
+            "s3cret-of-the-prox",
+            "s3cret-of-the-proxZ",
+            "s3cret-of-the-proxy!",
+            "s3cret-of-the-proxy-and-much-more-than-it",
+        ] {
+            let (read, matched) = compared(given, secret);
+            assert!(!matched, "{given:?} is not the secret");
+            assert_eq!(
+                read, equal,
+                "{given:?} reads as many bytes as the secret's own length"
+            );
+        }
+    }
 
     #[test]
     fn the_token_pair_is_not_query_input() {

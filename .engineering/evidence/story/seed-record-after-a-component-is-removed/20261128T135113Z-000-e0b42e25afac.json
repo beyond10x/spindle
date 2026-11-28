@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-28T13:51:13Z",
+  "actor": "human:operator",
+  "artifact": "story:seed-record-after-a-component-is-removed",
+  "kind": "story",
+  "revision": 18,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "unit/w33-orphan-seed at 602e877a (main merged): PostgreSQL lane 202 passed in 77.1 s of 100 s; spindle-kernel 528, spindle-host 263, spindle-cli 746 passed; the closing-renewal mutant killed by adversary_w33_u3 round 6, the renew-loop mutant by round 3. wave/33 at 46b237e3: task check exit 0, 2203 passed, nextest 69.9 s of 120 s; PostgreSQL lane pinned to 4 CPUs as on CI, 206 passed in 70.6 s of 100 s; lane script 38 cases, lane adversary 21 cases."
+  }
+}

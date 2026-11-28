@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-28T13:51:13Z",
+  "actor": "human:operator",
+  "artifact": "story:listener-limits",
+  "kind": "story",
+  "revision": 15,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "unit/w33-listener-limits at 83f6a05f: spindle-ingress 216 passed (executed 209 -> 239 with adversary_w33_u1's four rounds), spindle-control 24, spindle-cli 747 (3 ui/dist cases red on the node's base, built in CI); slowest new case 10.1 s (the 10 s whole-body bound); merged spindle-ingress at 3d8908b9: 227 passed. wave/33 at 46b237e3: task check exit 0, 2203 passed, nextest 69.9 s of 120 s; PostgreSQL lane pinned to 4 CPUs as on CI, 206 passed in 70.6 s of 100 s; lane script 38 cases, lane adversary 21 cases."
+  }
+}

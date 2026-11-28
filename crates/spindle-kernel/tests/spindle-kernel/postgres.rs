@@ -1132,3 +1132,407 @@ fn a_release_under_a_long_lease_waits_at_most_one_second() {
         "a release that waited out its lock answers an error: {released:?}"
     );
 }
+
+/// `story:new-leader-write-while-old-paused`, D1 A: a commit held behind the component's
+/// publication lock, which a session outside spindle holds exclusive as eventlog's feed read
+/// takes it (`publication_gate`: `pg_advisory_xact_lock` on eventlog's `ADVISORY_KEY` for the
+/// coordinate `["<prefix>","publication"]`, in a session whose `search_path` is the store's
+/// schema), waits out the store's lock wait and returns [`spindle_kernel::StoreError::Busy`],
+/// displayed `store: …` as every store error; it appends nothing.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_commit_behind_the_publication_lock_is_busy() {
+    let database = database();
+    let component = fresh("busy");
+    let mut store = open(&database, &component);
+    let set = format!("SET search_path TO {}", database.schema);
+    let coordinate = serde_json::to_string(&[postgres_prefix(&component).as_str(), "publication"])
+        .expect("the coordinate");
+    let url = database.url.clone();
+    let (locked, held) = std::sync::mpsc::channel();
+    let (answered, end) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        let (mut client, connection) = runtime
+            .block_on(tokio_postgres::connect(&url, tokio_postgres::NoTls))
+            .expect("a second connection");
+        let driver = runtime.spawn(connection);
+        runtime
+            .block_on(client.batch_execute(&set))
+            .expect("the schema is set");
+        let transaction = runtime
+            .block_on(client.transaction())
+            .expect("a transaction");
+        runtime
+            .block_on(transaction.query_one(
+                "SELECT pg_advisory_xact_lock(hashtextextended(current_database() || ':' || \
+                 current_schema() || $1,0))::text",
+                &[&coordinate],
+            ))
+            .expect("the publication lock is taken");
+        locked.send(()).expect("the test waits");
+        let _ = end.recv_timeout(Duration::from_secs(10));
+        runtime
+            .block_on(transaction.commit())
+            .expect("the lock is let go");
+        drop(client);
+        let _ = runtime.block_on(driver);
+    });
+    held.recv().expect("the publication lock is held");
+    let started = Instant::now();
+    let committed = store.commit(&created("west"));
+    let took = started.elapsed();
+    let _ = answered.send(());
+    holder.join().expect("the other session ends");
+    let error = committed.expect_err("a commit behind the publication lock fails");
+    assert!(
+        matches!(error, spindle_kernel::StoreError::Busy(_)),
+        "{error:?}"
+    );
+    assert!(error.to_string().starts_with("store: "), "{error}");
+    assert!(took < Duration::from_secs(5), "the commit waited {took:?}");
+    assert_eq!(
+        store
+            .load("apart.match.Match", &json!("one"))
+            .expect("the store reads"),
+        None,
+        "the failed commit wrote no row"
+    );
+    let scan = store.scan("apart.match.Match").expect("the store scans");
+    assert_eq!(scan.version, 0, "the failed commit appended nothing");
+}
+
+// `story:seed-record-after-a-component-is-removed`: the seed record kept in the lease table of a
+// component a later release removed is found by the table's name, read only where that table
+// holds a lease row, and moved out of it only under that table's own lease (D1 A, D2 A). The
+// schema is shared with every other case: a scan's answer is checked for what it includes.
+
+/// The lease table of `component` in `database`'s schema, `<schema>.<prefix>_p_lease`.
+fn lease_table(database: &Database, component: &str) -> String {
+    format!("{}.{}_p_lease", database.schema, postgres_prefix(component))
+}
+
+/// The record an earlier release kept in `component`'s lease table: written by a process that
+/// took its lease, which then released it, as a release that was stopped leaves it.
+fn left_by_an_earlier_release(database: &Database, component: &str, record: &Value) {
+    let mut old = Lease::connect(database, Duration::from_secs(1)).expect("the old run connects");
+    let token = old
+        .take(component)
+        .expect("the lease is read")
+        .expect("no process holds the lease");
+    old.record_seed(component, token, record)
+        .expect("the old run records the seed");
+    old.release(component, token)
+        .expect("the old run releases its lease");
+}
+
+/// The scan finds the lease table of a component the current specification does not name, by its
+/// table name, also one whose name does not fit a readable prefix (a hashed one), and not the
+/// table of a current component.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn an_orphan_lease_table_is_found_by_its_table_name() {
+    let database = database();
+    let removed = fresh("removed");
+    let long = fresh("a-removed-component-with-a-long-name");
+    let current = fresh("current");
+    assert!(
+        long.len() > 31 && postgres_prefix(&long).len() == 32,
+        "{long} has a hashed prefix: {}",
+        postgres_prefix(&long)
+    );
+    let mut old = Lease::connect(&database, Duration::from_secs(1)).expect("a run connects");
+    for component in [&removed, &long, &current] {
+        old.take(component)
+            .expect("the lease is read")
+            .expect("no process holds the lease");
+    }
+    let mut lease = Lease::connect(&database, Duration::from_secs(1)).expect("a run connects");
+    let found = lease
+        .orphan_tables(&[current.as_str()])
+        .expect("the schema's lease tables are listed");
+    for component in [&removed, &long] {
+        assert!(
+            found.contains(&lease_table(&database, component)),
+            "the lease table of {component} is found: {found:?}"
+        );
+    }
+    assert!(
+        !found.contains(&lease_table(&database, &current)),
+        "the lease table of a current component is not an orphan: {found:?}"
+    );
+}
+
+/// A table whose name matches the pattern of a lease table and that holds a `seed` row and no
+/// `lease` row is not read: in a `LIKE` pattern `_` matches any one character, so a name alone
+/// admits more than lease tables.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_table_matching_the_pattern_without_a_lease_row_is_not_read() {
+    let database = database();
+    let component = fresh("leaseless");
+    let record = json!({"digest": "sha256:dd", "done": 1, "rejected": []});
+    left_by_an_earlier_release(&database, &component, &record);
+    let table = lease_table(&database, &component);
+    sql(&format!("DELETE FROM {table} WHERE row_key = 'lease'"));
+    let mut lease = Lease::connect(&database, Duration::from_secs(1)).expect("a run connects");
+    assert_eq!(
+        lease.orphan_seed_record(&table).expect("the table is read"),
+        None,
+        "a table with no lease row holds no record a run reads"
+    );
+    let kept = fresh("kept");
+    left_by_an_earlier_release(&database, &kept, &record);
+    assert_eq!(
+        lease
+            .orphan_seed_record(&lease_table(&database, &kept))
+            .expect("the table is read"),
+        Some(record),
+        "the control: the same record beside a lease row is read"
+    );
+    // A table named as a lease table and of another shape is not listed, so no start stops on
+    // a column it lacks.
+    let other = lease_table(&database, &fresh("shaped"));
+    sql(&format!("CREATE TABLE {other} (note text)"));
+    let listed = lease.orphan_tables(&[]).expect("the tables are listed");
+    assert!(
+        listed.contains(&table) && !listed.contains(&other),
+        "{table} is listed and {other} is not: {listed:?}"
+    );
+}
+
+/// D1 A: handle A holds the first component's lease and the orphan table's; once handle B took
+/// the first component's lease at the next token, A's move of the record out of the orphan table
+/// is refused by name, and both tables are as they were.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_deposed_process_cannot_move_the_seed_record_out_of_a_removed_components_table() {
+    let database = database();
+    let first = fresh("first");
+    let removed = fresh("removed");
+    let recorded = json!({"digest": "sha256:ee", "done": 1, "rejected": []});
+    left_by_an_earlier_release(&database, &removed, &recorded);
+    let orphan = lease_table(&database, &removed);
+    let term = Duration::from_secs(1);
+    let mut mover = Lease::connect(&database, term).expect("A connects for the leases");
+    let first_token = mover
+        .take(&first)
+        .expect("the lease is read")
+        .expect("A takes the first component's lease");
+    let orphan_token = mover
+        .take_orphan(&orphan)
+        .expect("the lease is read")
+        .expect("A takes the orphan table's lease");
+    let moved = json!({"digest": "sha256:ee", "done": 2, "rejected": []});
+    mover
+        .gather_orphan_seed(&[(&orphan, orphan_token)], (&first, first_token), &moved)
+        .expect("A moves the record under both leases");
+    assert_eq!(mover.orphan_seed_record(&orphan).expect("read"), None);
+    assert_eq!(
+        mover.seed_record(&first).expect("read"),
+        Some(moved.clone())
+    );
+
+    sql(&format!(
+        "INSERT INTO {orphan} (tenant_id, row_key, body) SELECT tenant_id, 'seed', \
+         '{recorded}'::jsonb FROM {orphan} WHERE row_key = 'lease'"
+    ));
+    let mut second = Lease::connect(&database, term).expect("B connects for the lease");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let taken = loop {
+        if let Some(taken) = second.take(&first).expect("the lease is read") {
+            break taken;
+        }
+        assert!(Instant::now() < deadline, "B never took the lease");
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(
+        taken,
+        first_token + 1,
+        "B takes the lease at the next token"
+    );
+    let refused = mover
+        .gather_orphan_seed(
+            &[(&orphan, orphan_token)],
+            (&first, first_token),
+            &json!({"digest": "sha256:ee", "done": 3, "rejected": []}),
+        )
+        .expect_err("A's move is refused once B holds the first component's lease")
+        .to_string();
+    assert!(
+        refused.contains("lease") && refused.contains(&first),
+        "the refusal names the lease taken: {refused}"
+    );
+    assert_eq!(
+        second.orphan_seed_record(&orphan).expect("read"),
+        Some(recorded),
+        "the orphan row is as it was"
+    );
+    assert_eq!(
+        second.seed_record(&first).expect("read"),
+        Some(moved),
+        "the first component's row is as it was"
+    );
+}
+
+/// D1 A: while another handle holds the orphan table's lease, as a process of the old release
+/// would, the take of that lease fails, the record still reads, and neither table changes.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn an_orphan_record_under_another_holders_lease_is_read_not_moved() {
+    let database = database();
+    let first = fresh("first");
+    let removed = fresh("removed");
+    let recorded = json!({"digest": "sha256:ff", "done": 1, "rejected": []});
+    let mut old = Lease::connect(&database, Duration::from_secs(60)).expect("the old run connects");
+    let old_token = old
+        .take(&removed)
+        .expect("the lease is read")
+        .expect("the old run takes its lease");
+    old.record_seed(&removed, old_token, &recorded)
+        .expect("the old run records the seed");
+    let orphan = lease_table(&database, &removed);
+
+    let mut lease = Lease::connect(&database, Duration::from_secs(1)).expect("a run connects");
+    lease
+        .take(&first)
+        .expect("the lease is read")
+        .expect("the run takes the first component's lease");
+    assert_eq!(
+        lease.take_orphan(&orphan).expect("the lease is read"),
+        None,
+        "the old run holds the orphan table's lease"
+    );
+    assert_eq!(
+        lease.orphan_seed_record(&orphan).expect("read"),
+        Some(recorded.clone()),
+        "the record is read"
+    );
+    assert_eq!(lease.seed_record(&first).expect("read"), None);
+    assert!(
+        old.renew(&removed, old_token).expect("the lease is read"),
+        "the old run still holds its lease"
+    );
+    assert_eq!(
+        lease.orphan_seed_record(&orphan).expect("read"),
+        Some(recorded)
+    );
+}
+
+/// D1 A: handle A holds the first component's lease and handle B the orphan table's, as a process
+/// of the old release would. A's move of the orphan table's record into the first component's
+/// table, given B's token, is refused naming the orphan table's lease, and both tables are as they
+/// were. With the first component's lease alone as the guard (D1 B) the move would land.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_move_out_of_an_orphan_table_whose_lease_another_holds_is_refused() {
+    let database = database();
+    let first = fresh("first");
+    let removed = fresh("removed");
+    let recorded = json!({"digest": "sha256:ab", "done": 1, "rejected": []});
+    left_by_an_earlier_release(&database, &removed, &recorded);
+    let orphan = lease_table(&database, &removed);
+    let mut holder =
+        Lease::connect(&database, Duration::from_secs(60)).expect("B connects for the lease");
+    let held = holder
+        .take_orphan(&orphan)
+        .expect("the lease is read")
+        .expect("B takes the orphan table's lease");
+    let mut mover =
+        Lease::connect(&database, Duration::from_secs(1)).expect("A connects for the lease");
+    let first_token = mover
+        .take(&first)
+        .expect("the lease is read")
+        .expect("A takes the first component's lease");
+    let refused = mover
+        .gather_orphan_seed(
+            &[(&orphan, held)],
+            (&first, first_token),
+            &json!({"digest": "sha256:ab", "done": 2, "rejected": []}),
+        )
+        .expect_err("A's move is refused while B holds the orphan table's lease")
+        .to_string();
+    assert!(
+        refused.contains("lease") && refused.contains(&orphan),
+        "the refusal names the orphan table's lease: {refused}"
+    );
+    assert_eq!(
+        mover.orphan_seed_record(&orphan).expect("read"),
+        Some(recorded)
+    );
+    assert_eq!(mover.seed_record(&first).expect("read"), None);
+}
+
+/// Adversary round 3: the records of two orphan tables are removed, and put back, in one
+/// transaction under both tables' leases. Given a token the second table's lease row does not
+/// name, each is refused naming that table's lease, and neither table changes: the first table's
+/// row is not removed, or written, alone.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn orphan_seed_records_are_removed_and_put_back_all_or_none() {
+    let database = database();
+    let recorded = json!({"digest": "sha256:ac", "done": 1, "rejected": []});
+    let tables: Vec<String> = ["removed", "retired"]
+        .into_iter()
+        .map(|component| {
+            let component = fresh(component);
+            left_by_an_earlier_release(&database, &component, &recorded);
+            lease_table(&database, &component)
+        })
+        .collect();
+    let mut lease = Lease::connect(&database, Duration::from_secs(1)).expect("a run connects");
+    let tokens: Vec<u64> = tables
+        .iter()
+        .map(|table| {
+            lease
+                .take_orphan(table)
+                .expect("the lease is read")
+                .expect("no process holds the lease")
+        })
+        .collect();
+    let records = |lease: &mut Lease| -> Vec<Option<Value>> {
+        tables
+            .iter()
+            .map(|table| lease.orphan_seed_record(table).expect("read"))
+            .collect()
+    };
+    let wrong = [
+        (tables[0].as_str(), tokens[0]),
+        (tables[1].as_str(), tokens[1] + 1),
+    ];
+    let refused = lease
+        .forget_orphan_seeds(&wrong)
+        .expect_err("a removal under a token the lease row does not name is refused")
+        .to_string();
+    assert!(refused.contains(&tables[1]), "{refused}");
+    assert_eq!(records(&mut lease), vec![Some(recorded.clone()); 2]);
+
+    let held = [
+        (tables[0].as_str(), tokens[0]),
+        (tables[1].as_str(), tokens[1]),
+    ];
+    lease
+        .forget_orphan_seeds(&held)
+        .expect("both records are removed");
+    assert_eq!(records(&mut lease), vec![None; 2]);
+
+    let refused = lease
+        .record_orphan_seeds(&[
+            (tables[0].as_str(), tokens[0], &recorded),
+            (tables[1].as_str(), tokens[1] + 1, &recorded),
+        ])
+        .expect_err("a put-back under a token the lease row does not name is refused")
+        .to_string();
+    assert!(refused.contains(&tables[1]), "{refused}");
+    assert_eq!(records(&mut lease), vec![None; 2]);
+    lease
+        .record_orphan_seeds(&[
+            (tables[0].as_str(), tokens[0], &recorded),
+            (tables[1].as_str(), tokens[1], &recorded),
+        ])
+        .expect("both records are put back");
+    assert_eq!(records(&mut lease), vec![Some(recorded); 2]);
+}

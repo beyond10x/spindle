@@ -974,6 +974,8 @@ pub struct Host {
     /// Every refused command whose dead letter its store could not keep since the last
     /// [`Host::take_unkept`], at most [`ESCALATIONS_KEPT`], the oldest forgotten first.
     unkept: Vec<RefusedCommand>,
+    /// Whether the last reset changed a store's rows ([`Host::reset_changed_rows`]).
+    reset_rows: bool,
 }
 
 impl std::fmt::Debug for Host {
@@ -1394,6 +1396,7 @@ impl Host {
             escalations: Vec::new(),
             unrecorded: files.map(|files| files.unrecorded).unwrap_or_default(),
             unkept: Vec::new(),
+            reset_rows: false,
         };
         if seeded { host.seeded(0) } else { Ok(host) }
     }
@@ -1872,6 +1875,7 @@ impl Host {
     /// [`Host::reset`], and as [`Host::establish`] for a row a store did not take, the rows
     /// before it written and the answers, mint and clock of the last world kept.
     pub fn reset_to(&mut self, world: World) -> Result<Vec<String>, HostError> {
+        self.reset_rows = false;
         if let Some(at) = world.clock {
             let stands = self.clock_at()?;
             if at < stands {
@@ -1939,6 +1943,7 @@ impl Host {
                 events: Vec::new(),
                 scanned: Vec::new(),
             })?;
+            self.reset_rows = true;
         }
         Ok(emptied)
     }
@@ -1947,12 +1952,13 @@ impl Host {
         let mut emptied = Vec::new();
         for (name, component) in &mut self.components {
             if matches!(component.kept, Kept::Supplied) {
-                let forgotten = removed_all(&self.ir, &mut component.store).and_then(|()| {
-                    component
-                        .store
-                        .forget_events()
-                        .map_err(|error| format!("forgetting its events: {error}"))
-                });
+                let forgotten = removed_all(&self.ir, &mut component.store, &mut self.reset_rows)
+                    .and_then(|()| {
+                        component
+                            .store
+                            .forget_events()
+                            .map_err(|error| format!("forgetting its events: {error}"))
+                    });
                 if let Err(error) = forgotten {
                     component.store.replace(Box::new(Lost(format!(
                         "{name}'s store was lost in a reset: {error}"
@@ -1975,6 +1981,7 @@ impl Host {
                     Ok(store) => {
                         component.store.replace(store);
                         component.lost = false;
+                        self.reset_rows = true;
                     }
                     Err(error) => {
                         let restored = match opened(Some(&file), &component.sink) {
@@ -1990,6 +1997,7 @@ impl Host {
                                     file.display()
                                 ))));
                                 component.lost = true;
+                                self.reset_rows = true;
                                 false
                             }
                         };
@@ -2012,6 +2020,7 @@ impl Host {
                     })?;
                 component.store.replace(store);
                 component.lost = false;
+                self.reset_rows = true;
             }
             emptied.push(name.clone());
         }
@@ -2021,6 +2030,17 @@ impl Host {
     /// What admission bound for each component.
     pub fn placements(&self) -> &Placements {
         &self.placements
+    }
+
+    /// Whether the last [`Host::reset_to`] changed the rows of any store: removed or wrote a row,
+    /// or emptied or lost a store kept in a file or in memory. `false` after a reset refused
+    /// before it emptied anything, as for its world or its clock, and after one whose stores
+    /// refused its first removal, as a store whose lease another process took refuses every write;
+    /// forgetting a store's events alone changes no row. Where it is `false`, a caller that
+    /// removed something beside the stores for the reset puts it back
+    /// (`story:seed-record-after-a-component-is-removed`).
+    pub fn reset_changed_rows(&self) -> bool {
+        self.reset_rows
     }
 
     /// The components whose SQLite store held rows and recorded no specification when the host
@@ -2991,8 +3011,9 @@ pub(crate) fn merged(committed: Vec<(String, Vec<Committed>)>) -> Vec<Published>
 }
 
 /// Removes every instance `store` holds of every entity `ir` declares, each at the version it
-/// holds, so that the store answers as an empty one does; the reason otherwise.
-fn removed_all(ir: &EssIr, store: &mut dyn Store) -> Result<(), String> {
+/// holds, so that the store answers as an empty one does; the reason otherwise. Sets `removed`
+/// once a removal landed.
+fn removed_all(ir: &EssIr, store: &mut dyn Store, removed: &mut bool) -> Result<(), String> {
     for entity in ir.entities().keys() {
         let entity = entity.to_string();
         let held = store
@@ -3008,6 +3029,7 @@ fn removed_all(ir: &EssIr, store: &mut dyn Store) -> Result<(), String> {
                     scanned: Vec::new(),
                 })
                 .map_err(|error| format!("removing {entity} {identity}: {error}"))?;
+            *removed = true;
         }
     }
     Ok(())
