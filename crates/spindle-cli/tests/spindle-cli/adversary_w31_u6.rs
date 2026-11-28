@@ -904,8 +904,12 @@ mod postgres {
         assert_eq!(first.exit_within(ANSWER), Some(143), "{}", first.printed());
         let mut second = Replica::start(seeded());
         second.ready_by(Instant::now() + ANSWER);
+        // The run may answer ready before it prints why the seed is skipped
+        // (`story:postgres-lane-margin`: read once at ready, the line was missing in one lane run
+        // and printed right after).
         assert!(
-            second.has_line("is not submitted") && second.has_line("at token 2"),
+            second.line_by("is not submitted", Instant::now() + ANSWER)
+                && second.has_line("at token 2"),
             "{}",
             second.printed()
         );

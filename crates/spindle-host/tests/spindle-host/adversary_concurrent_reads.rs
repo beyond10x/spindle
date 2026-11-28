@@ -178,12 +178,12 @@ pub(crate) fn reset_counted_whole(mut host: Host, rounds: usize, after: usize) {
 #[test]
 fn adversary_a_reader_counts_a_set_removal_whole() {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state");
-    purge_counted_whole(host("memory", state.path()), 60);
+    purge_counted_whole(host("memory", state.path()), 60, 100);
 }
 
-/// [`adversary_a_reader_counts_a_set_removal_whole`] on `host`, up to `rounds_at_most` purges.
-pub(crate) fn purge_counted_whole(mut host: Host, rounds_at_most: usize) {
-    const LENT: usize = 100;
+/// [`adversary_a_reader_counts_a_set_removal_whole`] on `host`, up to `rounds_at_most` purges of
+/// `lent` loans each.
+pub(crate) fn purge_counted_whole(mut host: Host, rounds_at_most: usize, lent: usize) {
     let reader = host.reader();
     let phase = Arc::new(AtomicU8::new(IDLE));
     let stop = Arc::new(AtomicBool::new(false));
@@ -195,7 +195,7 @@ pub(crate) fn purge_counted_whole(mut host: Host, rounds_at_most: usize) {
     let started = Instant::now();
     while rounds < rounds_at_most && started.elapsed() < Duration::from_secs(60) {
         rounds += 1;
-        for index in 0..LENT {
+        for index in 0..lent {
             let loan = format!("loan-{rounds}-{index}");
             submit(
                 &mut host,
@@ -220,11 +220,11 @@ pub(crate) fn purge_counted_whole(mut host: Host, rounds_at_most: usize) {
     );
     let between = kept
         .iter()
-        .filter(|count| **count != LENT && **count != 0)
+        .filter(|count| **count != lent && **count != 0)
         .collect::<Vec<_>>();
     assert!(
         between.is_empty(),
-        "{} of {} counts read while a purge removed {LENT} loans in one write were part of it: \
+        "{} of {} counts read while a purge removed {lent} loans in one write were part of it: \
          {:?}",
         between.len(),
         kept.len(),

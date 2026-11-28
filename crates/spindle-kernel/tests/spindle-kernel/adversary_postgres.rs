@@ -314,6 +314,23 @@ fn noise(component: &str, from: usize, count: usize) {
     );
 }
 
+/// The shortest of [`SCANS`] scans of `ENTITY` in `store`, each answering its one row.
+fn quickest_scan(store: &mut PostgresStore) -> Duration {
+    (0..SCANS)
+        .map(|_| {
+            let started = Instant::now();
+            assert_eq!(store.scan(ENTITY).expect("the scan").rows.len(), 1);
+            started.elapsed()
+        })
+        .min()
+        .unwrap_or_default()
+}
+
+/// Scans timed at each log size in [`adv_a_scan_costs_in_proportion_to_the_log`], the shortest
+/// counted: one scan of a few milliseconds, timed once beside the rest of the lane, took 8 ms at
+/// 40,000 events and 45 ms at 80,000 (`story:postgres-lane-margin`).
+const SCANS: usize = 5;
+
 /// A scan reads the component's whole log; it costs in proportion to the log, as the SQLite
 /// store's does: twice the log, at most three times the time.
 #[test]
@@ -325,13 +342,9 @@ fn adv_a_scan_costs_in_proportion_to_the_log() {
     store.commit(&created("one")).expect("the match is created");
     let size = 40_000;
     noise(&component, 0, size);
-    let started = Instant::now();
-    assert_eq!(store.scan(ENTITY).expect("the scan").rows.len(), 1);
-    let once = started.elapsed();
+    let once = quickest_scan(&mut store);
     noise(&component, size, size);
-    let started = Instant::now();
-    assert_eq!(store.scan(ENTITY).expect("the scan").rows.len(), 1);
-    let twice = started.elapsed();
+    let twice = quickest_scan(&mut store);
     eprintln!(
         "scan over {size} events: {once:?}; over {}: {twice:?}",
         2 * size

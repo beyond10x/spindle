@@ -1,4 +1,5 @@
 [profile.default]
+test-threads = 8
 slow-timeout = { period = "30s", terminate-after = 2 }
 final-status-level = "slow"
 fail-fast = false
@@ -10,7 +11,12 @@ path = "junit.xml"
 postgres-heavy = { max-threads = 3 }
 
 [profile.postgres]
-test-threads = 12
+test-threads = 8
+
+[[profile.postgres.overrides]]
+filter = "binary_id(=spindle-kernel::spindle-kernel) and (test(=adversary_postgres_named::adv3_drawn_command_sequences_scan_as_sqlite_does) or test(=adversary_postgres_named::adv3_one_group_of_many_writes_lands_as_on_sqlite))"
+priority = 30
+test-group = "postgres-heavy"
 
 [[profile.postgres.overrides]]
 filter = "binary_id(=spindle-kernel::spindle-kernel) and (test(~adversary_w31_u1::) or test(~adversary_postgres_scan::) or test(~adversary_postgres_named::) or test(~adversary_state_move::a_moved_log) or test(=postgres::a_long_scan_lets_another_process_commit))"
@@ -18,8 +24,12 @@ priority = 20
 test-group = "postgres-heavy"
 
 [[profile.postgres.overrides]]
-filter = "binary_id(=spindle-host::spindle-host) or (binary_id(=spindle-cli::spindle-cli) and (test(~adversary_state_move::) or test(~a_leader_paused_inside_a_write)))"
+filter = "binary_id(=spindle-host::spindle-host) or (binary_id(=spindle-cli::spindle-cli) and (test(~adversary_state_move::) or test(~a_leader_paused_inside_a_write) or test(~foreign)))"
 priority = 10
+
+[[profile.postgres.overrides]]
+filter = "(binary_id(=spindle-cli::spindle-cli) and (test(~adversary_w31_u6::) or test(~adversary_w31_u7::) or test(~replicas::))) or (binary_id(=spindle-kernel::spindle-kernel) and test(=postgres::the_postgres_store_passes_the_contract))"
+priority = -10
 
 [profile.postgres.junit]
 path = "junit.xml"

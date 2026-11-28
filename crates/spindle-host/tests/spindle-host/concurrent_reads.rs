@@ -22,7 +22,7 @@ use spindle_kernel::Row;
 const LOAN: &str = "lending.loans.Loan";
 /// The view that lists every loan, with its state, borrower and due time.
 const VIEW: &str = "lending.loans.LoanCard";
-/// How many sequences each store runs, and how many steps each takes.
+/// How many sequences the memory and the SQLite store each run, and how many steps each takes.
 const SEQUENCES: u64 = 4;
 const STEPS: usize = 60;
 
@@ -164,7 +164,7 @@ fn reading(reader: &Reader, stop: &AtomicBool) -> Vec<Vec<Map<String, Value>>> {
 fn every_read_beside_the_host_is_the_state_after_a_prefix_of_the_commands() {
     let mut between = 0;
     for store in ["memory", "sqlite"] {
-        between += prefixes_read(store, &|state: &Path| {
+        between += prefixes_read(store, SEQUENCES, &|state: &Path| {
             Host::new(
                 rows_fixture(),
                 &environment(store),
@@ -188,12 +188,12 @@ pub(crate) fn rows_fixture() -> ess_compiler::EssIr {
         .ir
 }
 
-/// Runs [`SEQUENCES`] drawn sequences on hosts `open` opens on a state directory, a reader
+/// Runs `sequences` drawn sequences on hosts `open` opens on a state directory, a reader
 /// thread reading beside each, and holds every read to the state after a prefix of its
 /// sequence; answers how many reads landed between the first and the last step.
-pub(crate) fn prefixes_read(store: &str, open: &dyn Fn(&Path) -> Host) -> usize {
+pub(crate) fn prefixes_read(store: &str, sequences: u64, open: &dyn Fn(&Path) -> Host) -> usize {
     let mut between = 0;
-    for seed in 0..SEQUENCES {
+    for seed in 0..sequences {
         let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state");
         let mut host = open(state.path());
         let reader = host.reader();

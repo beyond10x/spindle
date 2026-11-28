@@ -68,10 +68,15 @@ fn host_on(pool: usize, component: &str) -> Host {
     .unwrap_or_else(|error| panic!("the postgres host opens: {error}"))
 }
 
+/// Two drawn sequences of 60 steps each, where the memory and the SQLite store run four: the
+/// reader reads PostgreSQL back to back through each, so four took 14 to 32 s of a 4-CPU runner
+/// beside the lane (`story:postgres-lane-margin`).
+const SEQUENCES: u64 = 2;
+
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn every_read_beside_the_host_is_the_state_after_a_prefix_of_the_commands() {
-    let between = prefixes_read("postgres", &|_: &Path| host(4));
+    let between = prefixes_read("postgres", SEQUENCES, &|_: &Path| host(4));
     assert!(
         between > 0,
         "no read landed between the first and the last step: the reads did not run beside the \
@@ -83,31 +88,40 @@ fn every_read_beside_the_host_is_the_state_after_a_prefix_of_the_commands() {
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn every_read_beside_the_host_is_the_state_after_a_prefix_of_the_commands_on_one_connection() {
-    prefixes_read("postgres", &|_: &Path| host(1));
+    prefixes_read("postgres", SEQUENCES, &|_: &Path| host(1));
 }
 
-/// 10 resets from 5 loans to 50, where the memory store's case makes 20 to 300: on PostgreSQL a
+/// 4 resets from 5 loans to 50, where the memory store's case makes 20 to 300: on PostgreSQL a
 /// reset writes each loan of its world in a commit of its own and empties each one the last
 /// world left, about 3.3 ms a loan, so 20 resets each way over 300 loans took 27 of the case's
-/// 29 s. A count handed to the readers before the reset ends is one of the 1 to 49 loans written
-/// so far, or the 0 of the emptied store, which a reset of 50 shows as surely as one of 300:
-/// the sampler reads several hundred thousand counts a second.
+/// 29 s, and 10 over 50 loans 20 to 40 s of a 4-CPU runner beside the lane
+/// (`story:postgres-lane-margin`). A count handed to the readers before the reset ends is one of
+/// the 1 to 49 loans written so far, or the 0 of the emptied store, which a reset of 50 shows as
+/// surely as one of 300: the sampler reads many counts during each of the 4 resets.
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn a_reader_counts_the_rows_before_a_reset_or_after_it_never_between() {
-    reset_counted_whole(host(4), 10, 50);
+    reset_counted_whole(host(4), 4, 50);
 }
 
+/// 3 purges of 30 loans, where the memory store's case makes up to 60 of 100: each round lends
+/// and returns every loan, two commands a loan, so 10 rounds of 100 loans (2,000 commands) ran
+/// into the 60 s kill on a 4-CPU runner (`story:postgres-lane-margin`). A purge of 30 removals
+/// counted part way is a count from 1 to 29, which the sampler reads while each purge lands.
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn a_reader_counts_a_set_removal_whole() {
-    purge_counted_whole(host(4), 10);
+    purge_counted_whole(host(4), 3, 30);
 }
 
+/// 500 loans held, where the memory store's case holds 20,000: a reset writes each loan in a
+/// commit of its own, so 2,000 took most of the case's 33 to 58 s on a 4-CPU runner
+/// (`story:postgres-lane-margin`). A read of the members that read or copied every loan would
+/// still cost a write several times its own time.
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn reading_a_small_view_does_not_make_the_writer_pay() {
-    small_view_not_paid_for(host(4), 2_000);
+    small_view_not_paid_for(host(4), 500);
 }
 
 #[test]
