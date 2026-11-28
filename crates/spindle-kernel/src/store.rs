@@ -365,6 +365,9 @@ pub trait Store {
     /// [`StoreError::Conflict`] when the instance is not at `change.expected`, or an entity of
     /// `change.scanned` is not at the version it names, and [`StoreError::Backend`] when the
     /// store cannot be written.
+    /// [`StoreError::Busy`] answers a write the store refused before it began to commit, and
+    /// [`StoreError::Unknown`] a write whose commit was sent but whose outcome is unknown: it may
+    /// have landed.
     fn commit(&mut self, change: &Change) -> Result<(), StoreError>;
 
     /// Removes the instance `removal` names and records its events, atomically: once it returns,
@@ -375,6 +378,9 @@ pub trait Store {
     /// [`StoreError::Conflict`] when the instance is absent or not at `removal.expected`, or an
     /// entity of `removal.scanned` is not at the version it names, and [`StoreError::Backend`]
     /// when the store cannot be written.
+    /// [`StoreError::Busy`] answers a write the store refused before it began to commit, and
+    /// [`StoreError::Unknown`] a write whose commit was sent but whose outcome is unknown: it may
+    /// have landed.
     fn remove(&mut self, removal: &Removal) -> Result<(), StoreError>;
 
     /// Records every write of `writes`, in order, each with its events, atomically: all of them,
@@ -395,6 +401,9 @@ pub trait Store {
     /// [`StoreError::Conflict`] when an instance is not at the version its write names, or a
     /// scanned entity is not at the version a write names for it, and [`StoreError::Backend`]
     /// when the store cannot be written.
+    /// [`StoreError::Busy`] answers a write the store refused before it began to commit, and
+    /// [`StoreError::Unknown`] a write whose commit was sent but whose outcome is unknown: it may
+    /// have landed.
     fn commit_all(&mut self, writes: &[Write]) -> Result<(), StoreError> {
         one_at_a_time(self, writes)
     }
@@ -462,6 +471,9 @@ pub trait Store {
     /// # Errors
     /// [`StoreError::Conflict`] when an entity of `scanned` is not at the version it names, and
     /// [`StoreError::Backend`] when the store cannot be written.
+    /// [`StoreError::Busy`] answers a write the store refused before it began to commit, and
+    /// [`StoreError::Unknown`] a write whose commit was sent but whose outcome is unknown: it may
+    /// have landed.
     fn commit_events(&mut self, events: &[Event], scanned: &[Scanned]) -> Result<(), StoreError> {
         if events.is_empty() {
             return Ok(());
