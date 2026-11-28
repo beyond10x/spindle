@@ -1853,11 +1853,12 @@ mod postgres {
     }
 
     /// Round 7, a leader blocked behind a foreign table lock, and the 503 mapping. A session
-    /// outside spindle holds board's event table `ACCESS EXCLUSIVE` for 12 s, past the store's
+    /// outside spindle holds board's event table `ACCESS EXCLUSIVE` for 11 s, past the store's
     /// 10 s deadline. The command sent meanwhile is answered within 11 s, not `201` and not
     /// `503`: the write committed nothing, and the lease was never lost, so it is the store's
     /// failure, not a lost lease. The standby takes nothing, and once the lock ends the leader
-    /// writes again (`201`); the failed command is not held.
+    /// writes again (`201`); the failed command is not held. A lock of 12 s made the case wait a
+    /// second past the 11 s its answer is bounded by (`story:postgres-lane-margin`).
     #[test]
     #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
     fn a_write_behind_a_foreign_table_lock_fails_in_time_without_losing_the_lease() {
@@ -1873,7 +1874,7 @@ mod postgres {
         let lock = locked(
             format!("{schema}.spindle_board_events"),
             "ACCESS EXCLUSIVE",
-            12.0,
+            11.0,
         );
         let sent = Instant::now();
         let (status, body) = leader.open("t2");

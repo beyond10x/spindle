@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use spindle_kernel::{Change, Database, PostgresStore, Row, SqliteStore, Store, Write};
 
+use crate::postgres_reads;
+
 const SCHEMA: &str = "adv2_w19";
 const ENTITY: &str = "adv.match.Match";
 /// The log sizes a scan is measured at, in events.
@@ -48,6 +50,20 @@ fn sql(url: &str, statement: &str) {
         drop(client);
         let _ = driver.await;
     });
+}
+
+/// [`database`], every session opened through it carrying the application name `tag` in
+/// `pg_stat_activity`.
+fn tagged(tag: &str) -> Database {
+    let mut database = database();
+    database.url = postgres_reads::tagged(&url(), tag);
+    database
+}
+
+/// The rows read from `component`'s event table so far, once every session of [`tagged`] `tag`
+/// has ended ([`postgres_reads::events_read`]).
+fn events_read(component: &str, tag: &str) -> u64 {
+    postgres_reads::events_read(&url(), SCHEMA, component, tag)
 }
 
 /// The PostgreSQL advisory lock a case holds while it runs `GRANT … ON DATABASE`, the one
@@ -179,10 +195,20 @@ fn peak_mib() -> u64 {
         .map_or(0, |kib| kib / 1024)
 }
 
+/// The log sizes [`adv2_a_scan_answers_over_a_long_log_as_sqlite_does`] scans at, in events.
+const POSTGRES_SIZES: [usize; 2] = [50_000, 100_000];
+
 /// Story: "The store passes the kernel's store contract exactly as the SQLite store does." A
 /// SQLite store scans a log of 500,000 events (`adv2_sqlite_scans_the_same_long_logs`); the
-/// PostgreSQL store scans the same logs, rather than fail once the log outgrows the time one
+/// PostgreSQL store scans long logs too, rather than fail once the log outgrows the time one
 /// store transaction is allowed.
+///
+/// The scan reads the entity's own stream however long the log, which
+/// [`adv2_a_scan_reads_none_of_the_other_streams_of_a_long_log`] counts in rows read; a store
+/// whose scan reads the whole log took 5 s at 500,000 events, inside eventlog's 10 s, and
+/// passed here at the sizes this case scanned, 100,000, 200,000 and 500,000, whose appending
+/// made it 5 s of PostgreSQL's CPU in the lane. With its store transaction allowed 0.3 s, a
+/// scratch build reading the whole log fails at [`POSTGRES_SIZES`] (`story:postgres-lane-margin`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv2_a_scan_answers_over_a_long_log_as_sqlite_does() {
@@ -192,7 +218,7 @@ fn adv2_a_scan_answers_over_a_long_log_as_sqlite_does() {
     store.commit(&created("one")).expect("the match is created");
     let mut failures = Vec::new();
     let mut from = 0;
-    for size in SIZES {
+    for size in POSTGRES_SIZES {
         noise(&component, from, size);
         from = size;
         let started = Instant::now();
@@ -214,37 +240,59 @@ fn adv2_a_scan_answers_over_a_long_log_as_sqlite_does() {
     );
 }
 
+/// The events of other streams in the log
+/// [`adv2_a_scan_reads_none_of_the_other_streams_of_a_long_log`] scans.
+const OTHERS: usize = 100_000;
+
 /// A log of a million events: the SQLite store scans it page by page; the PostgreSQL store's scan
-/// is one store transaction, which eventlog bounds at ten seconds. The scan answers, as
-/// SQLite's does, rather than fail every list view, reset and set-deciding command from then on.
+/// is one store transaction, which eventlog bounds at ten seconds, so a scan that read the whole
+/// log failed from about a million events, and with it every list view, reset and set-deciding
+/// command from then on. The scan reads the entity's own stream and its instances' rows: over a
+/// log of [`OTHERS`] events of other streams, the scan and a commit after it read fewer than a
+/// hundredth of them from the event table, where a scan of the whole log reads every one.
+///
+/// The case scanned a log of a million events: appending them took 11.5 s of its 15 to 21 s, and
+/// a scan of the whole log answered within the ten seconds on the lane's machine (9.5 s), so the
+/// case failed only on a slower one. Counting the rows read fails on every machine
+/// (`story:postgres-lane-margin`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
-fn adv2_a_scan_answers_over_a_million_events() {
-    let database = database();
-    let component = fresh("million");
+fn adv2_a_scan_reads_none_of_the_other_streams_of_a_long_log() {
+    let component = fresh("others");
+    let database = tagged(&component);
     let mut store = open(&database, &component);
     store.commit(&created("one")).expect("the match is created");
-    noise(&component, 0, 500_000);
-    noise(&component, 500_000, 1_000_000);
+    noise(&component, 0, OTHERS);
+    drop(store);
+    let before = events_read(&component, &component);
+    let mut store = open(&database, &component);
     let started = Instant::now();
     let scanned = store.scan(ENTITY);
     let took = started.elapsed();
-    eprintln!(
-        "postgres scan over 1000000 events: {took:?}, peak {} MiB, {:?}",
-        peak_mib(),
-        scanned.as_ref().map(|scan| scan.rows.len())
-    );
     let scan = scanned.unwrap_or_else(|error| panic!("the scan fails after {took:?}: {error}"));
     assert_eq!(scan.rows.len(), 1);
     let started = Instant::now();
     store.commit(&created("two")).unwrap_or_else(|error| {
         panic!("a commit after the scan, {:?}: {error}", started.elapsed())
     });
+    drop(store);
+    let read = events_read(&component, &component) - before;
+    eprintln!("a scan over {OTHERS} events of other streams: {took:?}, {read} rows read");
+    assert!(
+        read < (OTHERS / 100) as u64,
+        "a scan and a commit read {read} rows of a log of {OTHERS} events of other streams"
+    );
 }
 
 /// A scan holds what it reads one page at a time, as SQLite's does (18 MiB peak at 500,000
 /// events, 2 MiB more than at 100,000): the memory a scan takes does not grow with the log, so
 /// a container's memory limit is not a limit on how long the log may grow.
+///
+/// A scan that held the whole log took about 2.1 KiB an event (229 MiB at 100,000 events, 1,080
+/// at 500,000), so the 80,000 events between the two scans here are about 170 MiB of it, well
+/// over the 64 MiB the case allows (60 MiB after the scan of 20,000, 231 after the one of
+/// 100,000). The case scanned at 100,000 and 500,000 events, whose appending took most of its 9
+/// to 14 s (`story:postgres-lane-margin`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv2_a_scans_memory_does_not_grow_with_the_log() {
@@ -252,16 +300,16 @@ fn adv2_a_scans_memory_does_not_grow_with_the_log() {
     let component = fresh("memory");
     let mut store = open(&database, &component);
     store.commit(&created("one")).expect("the match is created");
-    noise(&component, 0, 100_000);
-    store.scan(ENTITY).expect("the scan over 100,000 events");
+    noise(&component, 0, 20_000);
+    store.scan(ENTITY).expect("the scan over 20,000 events");
     let small = peak_mib();
-    noise(&component, 100_000, 500_000);
-    store.scan(ENTITY).expect("the scan over 500,000 events");
+    noise(&component, 20_000, 100_000);
+    store.scan(ENTITY).expect("the scan over 100,000 events");
     let large = peak_mib();
-    eprintln!("peak after a scan of 100,000 events {small} MiB, of 500,000 {large} MiB");
+    eprintln!("peak after a scan of 20,000 events {small} MiB, of 100,000 {large} MiB");
     assert!(
         large.saturating_sub(small) < 64,
-        "the scan of 400,000 more events took {} MiB more",
+        "the scan of 80,000 more events took {} MiB more",
         large.saturating_sub(small)
     );
 }
@@ -324,8 +372,12 @@ fn grown(store: &mut PostgresStore, component: &str, at_least: Duration, cap: us
 /// The longest log [`grown`] appends for the two-process cases. A scan that read the whole log
 /// took about 13.5 µs an event, so 3 s from about 220,000 events: such a scan is long at 300,000.
 /// The store's scan reads the entity's own stream and never takes 3 s, so the cases grew to
-/// 500,000 events every run, 9 to 10 s of CPU each (`story:postgres-lane-margin`).
-const GROWN_CAP: usize = 300_000;
+/// 500,000 events every run, 9 to 10 s of CPU each, and at 300,000 still 3 to 5 s of the case
+/// alone for a scan of 2 ms, as at 50,000 (`story:postgres-lane-margin`). A scan that reads the
+/// whole log fails [`adv2_a_scan_reads_none_of_the_other_streams_of_a_long_log`] and
+/// [`adv2_a_scans_memory_does_not_grow_with_the_log`] at any length; at 300,000 events these
+/// cases passed with it (2 s scans, every commit landing).
+const GROWN_CAP: usize = 50_000;
 
 /// Two processes on one component's tables (a rolling deploy, or two replicas), one scanning
 /// back to back as a metrics scrape does, the other taking commands: every command lands, as it

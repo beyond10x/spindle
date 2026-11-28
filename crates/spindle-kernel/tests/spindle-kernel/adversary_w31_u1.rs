@@ -10,10 +10,15 @@
 //! side by side and race again.
 //!
 //! The case here runs cases of those three modules as nextest does: each one a process of this
-//! test binary, started side by side on a database created for the round. Its name holds
-//! `on_postgres`, so the lane's filter selects it.
+//! test binary, started side by side on a database created for the case, while a sibling holds
+//! the three schemas created and not yet committed. Its name holds `on_postgres`, so the lane's
+//! filter selects it.
 
 use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+
+use crate::postgres_reads::sql_value;
 
 /// One case of each module that creates its schema behind a `Once`, each short. The case of
 /// `adversary_postgres_named` was `adv3_a_scan_beside_removals_and_recreations_holds_the_state_at_its_version`,
@@ -26,11 +31,47 @@ const CASES: [&str; 3] = [
     "adversary_postgres_named::adv3_each_escaped_identity_scans_as_on_sqlite",
 ];
 
-/// Processes of each case started side by side in one round.
-const SIDE_BY_SIDE: usize = 6;
+/// The schemas of the three modules, which the sibling holds created.
+const SCHEMAS: [&str; 3] = ["adv1_w19", "adv2_w19", "adv3_w19"];
 
-/// Rounds, each on a database of its own.
-const ROUNDS: usize = 4;
+/// The advisory lock each module takes around its `CREATE SCHEMA IF NOT EXISTS`.
+const SCHEMA_LOCK: i64 = 5_312_021_918;
+
+/// Processes of each case started side by side.
+const SIDE_BY_SIDE: usize = 2;
+
+/// Holds `statement`'s transaction open on `url` until the returned sender is sent to, then
+/// commits it; the join handle answers once it has committed.
+fn held(url: String, statement: String) -> (mpsc::Sender<()>, std::thread::JoinHandle<()>) {
+    let (opened, ready) = mpsc::channel();
+    let (commit, committed) = mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        runtime.block_on(async {
+            let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
+                .await
+                .expect("the test database accepts its owner");
+            let driver = tokio::spawn(connection);
+            client
+                .batch_execute(&statement)
+                .await
+                .unwrap_or_else(|error| panic!("{statement}: {error}"));
+            opened.send(()).expect("the case waits for the holder");
+            let _ = committed.recv_timeout(Duration::from_secs(60));
+            client
+                .batch_execute("COMMIT")
+                .await
+                .expect("the sibling commits");
+            drop(client);
+            let _ = driver.await;
+        });
+    });
+    ready.recv().expect("the holder opened its transaction");
+    (commit, holder)
+}
 
 fn url() -> String {
     std::env::var("SPINDLE_TEST_DATABASE_URL")
@@ -93,59 +134,91 @@ fn why(output: &Output) -> String {
 
 /// Each case of the three `Once` modules passes as one process among its module's siblings on a
 /// fresh database, which is how the lane runs it since this unit.
+///
+/// A sibling holds the three schemas created under the modules' lock, uncommitted, until every
+/// case process waits on the server, then commits. A case that takes the lock waits for it and
+/// finds its schema; one that does not passes `IF NOT EXISTS`, waits on the sibling's row and
+/// fails with a unique violation once the sibling commits. The case started 4 rounds of 6
+/// processes of each case on fresh databases instead, 72 processes in 11 to 33 s of the lane;
+/// against modules without the lock all 72 passed, and 2 rounds of 4 failed 0, 3 and 1 of 24 in
+/// three runs. With the sibling, all 6 processes fail at their `CREATE SCHEMA` on those modules
+/// (`story:postgres-lane-margin`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv_w31_the_once_modules_pass_one_process_per_case_on_postgres() {
     let owner = url();
     let binary = std::env::current_exe().expect("this test binary");
-    let mut failed = Vec::new();
-    for round in 0..ROUNDS {
-        let name = fresh_name();
-        sql(
-            &on_database(&owner, "postgres"),
-            &format!("CREATE DATABASE {name}"),
-        );
-        let database = on_database(&owner, &name);
-        let children: Vec<(&str, std::process::Child)> = CASES
-            .iter()
-            .flat_map(|case| std::iter::repeat_n(*case, SIDE_BY_SIDE))
-            .map(|case| {
-                let child = Command::new(&binary)
-                    .args(["--exact", "--include-ignored", "--test-threads", "1", case])
-                    .env("SPINDLE_TEST_DATABASE_URL", &database)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                    .expect("a case starts as a process of this binary");
-                (case, child)
-            })
-            .collect();
-        for (case, child) in children {
-            let output = child.wait_with_output().expect("the case ends");
-            if !output.status.success() {
-                failed.push(format!(
-                    "round {round}: {case}: {}\n      {}",
-                    output.status,
-                    why(&output)
-                ));
-            } else if !String::from_utf8_lossy(&output.stdout).contains("1 passed") {
-                failed.push(format!(
-                    "round {round}: {case}: the filter selected no case"
-                ));
-            }
+    let name = fresh_name();
+    sql(
+        &on_database(&owner, "postgres"),
+        &format!("CREATE DATABASE {name}"),
+    );
+    let database = on_database(&owner, &name);
+    let creations: String = SCHEMAS
+        .iter()
+        .map(|schema| format!("CREATE SCHEMA {schema}; "))
+        .collect();
+    let (commit, holder) = held(
+        database.clone(),
+        format!("BEGIN; SELECT pg_advisory_xact_lock({SCHEMA_LOCK}); {creations}"),
+    );
+    let children: Vec<(&str, std::process::Child)> = CASES
+        .iter()
+        .flat_map(|case| std::iter::repeat_n(*case, SIDE_BY_SIDE))
+        .map(|case| {
+            let child = Command::new(&binary)
+                .args(["--exact", "--include-ignored", "--test-threads", "1", case])
+                .env("SPINDLE_TEST_DATABASE_URL", &database)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("a case starts as a process of this binary");
+            (case, child)
+        })
+        .collect();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let waiting = loop {
+        let waiting: usize = sql_value(
+            &owner,
+            &format!(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = '{name}' \
+                 AND wait_event_type = 'Lock'"
+            ),
+        )
+        .parse()
+        .expect("a count");
+        if waiting >= children.len() || Instant::now() >= deadline {
+            break waiting;
         }
-        sql(
-            &on_database(&owner, "postgres"),
-            &format!("DROP DATABASE {name} WITH (FORCE)"),
-        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    commit.send(()).expect("the sibling holds its transaction");
+    holder.join().expect("the sibling committed");
+    let mut failed = Vec::new();
+    for (case, child) in children {
+        let output = child.wait_with_output().expect("the case ends");
+        if !output.status.success() {
+            failed.push(format!("{case}: {}\n      {}", output.status, why(&output)));
+        } else if !String::from_utf8_lossy(&output.stdout).contains("1 passed") {
+            failed.push(format!("{case}: the filter selected no case"));
+        }
     }
+    sql(
+        &on_database(&owner, "postgres"),
+        &format!("DROP DATABASE {name} WITH (FORCE)"),
+    );
+    assert_eq!(
+        waiting,
+        CASES.len() * SIDE_BY_SIDE,
+        "case processes waiting on the sibling's schemas within 20 s"
+    );
     assert!(
         failed.is_empty(),
-        "{} of {} case processes failed on a fresh database, each a process of its own as under \
-         nextest:\n{}",
+        "{} of {} case processes failed on a fresh database whose schemas a sibling was \
+         creating, each a process of its own as under nextest:\n{}",
         failed.len(),
-        ROUNDS * CASES.len() * SIDE_BY_SIDE,
+        CASES.len() * SIDE_BY_SIDE,
         failed.join("\n")
     );
 }
