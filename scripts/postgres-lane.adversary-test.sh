@@ -249,8 +249,8 @@ lane_cases() {
         fi
     done
     pg_isready=$(real_bin pg_isready)
-    if ! env --default-signal=INT true 2>/dev/null || ! command -v setsid >/dev/null; then
-        echo "postgres-lane-adversary: the signal cases need env --default-signal and setsid" >&2
+    if ! env --default-signal=INT true 2>/dev/null || ! setsid --fork --wait true 2>/dev/null; then
+        echo "postgres-lane-adversary: the signal cases need env --default-signal and setsid --fork --wait (util-linux)" >&2
         exit 1
     fi
 
@@ -295,13 +295,20 @@ lane_cases() {
     gone sigterm "$(ready_field cluster "$work/sigterm.out")" "$(ready_field postmaster "$work/sigterm.out")"
 
     # 4. Ctrl-C through lane: SIGINT to the whole process group, as a terminal sends it.
+    # setsid forks when its caller already leads a process group, so $! need not be the new
+    # group's leader: setsid always forks here and waits with the lane's status, and the forked
+    # leader writes its own PID before it becomes the lane. The group is signalled in the POSIX
+    # form, `kill -s INT -- -<pgid>`: dash's kill refuses `kill -INT -- -<pgid>` (exit 2).
     mkdir -p "$work/ctrl-c"
+    rm -f "$work/ctrl-c.pid"
     start=$(date +%s)
-    (cd "$work/ctrl-c" && exec setsid env --default-signal=INT sh "$lane" lane -- sleep 30) >"$work/ctrl-c.out" 2>&1 &
+    (cd "$work/ctrl-c" && exec setsid --fork --wait sh -c 'echo "$$" >"$1"; shift; exec env --default-signal=INT sh "$@"' \
+        sh "$work/ctrl-c.pid" "$lane" lane -- sleep 30) >"$work/ctrl-c.out" 2>&1 &
     script=$!
     cases=$((cases + 1))
     wait_ready "$work/ctrl-c.out" "$script" >/dev/null || fail "ctrl-c: the cluster never answered: $(cat "$work/ctrl-c.out")"
-    kill -INT -- "-$script" 2>/dev/null || fail "ctrl-c: the lane is not the leader of its own process group"
+    group=$(cat "$work/ctrl-c.pid" 2>/dev/null || true)
+    [ -n "$group" ] && kill -s INT -- "-$group" 2>/dev/null || fail "ctrl-c: the lane ('$group') is not the leader of its own process group"
     status=0
     wait "$script" || status=$?
     took=$(($(date +%s) - start))
