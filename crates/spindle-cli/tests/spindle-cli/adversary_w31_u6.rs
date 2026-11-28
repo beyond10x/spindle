@@ -1161,34 +1161,51 @@ mod postgres {
     /// lease is known held. With a lease of 1 s and of 10 s, each of five tasks opened 300 ms
     /// apart is posted promptly: no read of the store is refused (`cannot read the store`) by the
     /// check of the lease. Each post is awaited 30 s, the lag a feed read may have behind older
-    /// transactions of other tests of the lane; the time is printed.
+    /// transactions of other tests of the lane; the time is printed. The two leases run side by
+    /// side, each its own run, webhook and schema: one after the other took 10 s in the lane and
+    /// 13 s on CI's runner, most of it each run's start and its posts' wait for the feed
+    /// (`story:postgres-lane-margin-ci`).
     #[test]
     #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
     fn a_healthy_leader_posts_promptly_on_a_short_and_a_long_lease() {
-        for lease in ["1", "10"] {
-            let webhook = Webhook::start(200);
-            let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-            let environment =
-                crate::egress::environment(directory.path(), "postgres", &webhook.url(), &[OPENED]);
-            let schema = schema();
-            let leader = Replica::start(run(&environment, &schema, lease));
-            leader.ready_by(Instant::now() + ANSWER);
-            let mut slowest = Duration::ZERO;
-            for index in 0..5 {
-                let before = webhook.accepted().len();
-                let (status, answer) = leader.open(&format!("t{index}"));
-                let answered = Instant::now();
-                assert_eq!(status, 201, "{answer}");
-                slowest = slowest.max(posted_after(&webhook, before, answered));
-                std::thread::sleep(Duration::from_millis(300));
+        std::thread::scope(|scope| {
+            let leases: Vec<_> = ["1", "10"]
+                .into_iter()
+                .map(|lease| scope.spawn(move || posts_promptly(lease)))
+                .collect();
+            for lease in leases {
+                if let Err(panic) = lease.join() {
+                    std::panic::resume_unwind(panic);
+                }
             }
-            eprintln!("lease {lease} s: the slowest post {slowest:?} after its answer");
-            assert!(
-                !leader.has_line("cannot read the store"),
-                "lease {lease} s: the egress of a healthy leader was held back: {}",
-                leader.printed()
-            );
+        });
+    }
+
+    /// [`a_healthy_leader_posts_promptly_on_a_short_and_a_long_lease`] on a lease of `lease`
+    /// seconds.
+    fn posts_promptly(lease: &str) {
+        let webhook = Webhook::start(200);
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment =
+            crate::egress::environment(directory.path(), "postgres", &webhook.url(), &[OPENED]);
+        let schema = schema();
+        let leader = Replica::start(run(&environment, &schema, lease));
+        leader.ready_by(Instant::now() + ANSWER);
+        let mut slowest = Duration::ZERO;
+        for index in 0..5 {
+            let before = webhook.accepted().len();
+            let (status, answer) = leader.open(&format!("t{index}"));
+            let answered = Instant::now();
+            assert_eq!(status, 201, "{answer}");
+            slowest = slowest.max(posted_after(&webhook, before, answered));
+            std::thread::sleep(Duration::from_millis(300));
         }
+        eprintln!("lease {lease} s: the slowest post {slowest:?} after its answer");
+        assert!(
+            !leader.has_line("cannot read the store"),
+            "lease {lease} s: the egress of a healthy leader was held back: {}",
+            leader.printed()
+        );
     }
 
     /// The standby's lease connection: the backend whose last statement was a take of board's

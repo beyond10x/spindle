@@ -9,8 +9,10 @@
 //! measuring cases are meant for a release build (`cargo test --release`), one at a time.
 
 use std::collections::BTreeMap;
+use std::io::{Read as _, Write as _};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 
@@ -284,11 +286,11 @@ fn scans(store: &mut dyn Store) -> Vec<Result<Scan, String>> {
 }
 
 /// The groups [`adv3_drawn_command_sequences_scan_as_sqlite_does`] draws.
-const DRAWN_GROUPS: usize = 400;
+const DRAWN_GROUPS: usize = 200;
 
 /// The writes of [`SEED`] that bring `ALPHA`'s version near the end of its stream's first page
 /// before the drawn groups start.
-const SEEDED: usize = 800;
+const SEEDED: usize = 900;
 
 /// The identity of `ALPHA` the [`SEEDED`] writes update one after another, none of the drawn
 /// identities.
@@ -326,10 +328,10 @@ fn seeded_by_sql(component: &str, count: usize) {
 /// PostgreSQL store: both land or both are refused, after every group. Both scan `ALPHA` and
 /// `BETA` alike (rows, versions, the entity's version) before the first group, after every
 /// twentieth, after every group that leaves `ALPHA`'s version within [`PAGE_EDGE`] of a
-/// multiple of [`PAGE`], and after the last; a PostgreSQL store opened anew every 200 groups
+/// multiple of [`PAGE`], and after the last; a PostgreSQL store opened anew every 100 groups
 /// scans them alike too. `ALPHA`'s stream outgrows one page: [`SEEDED`] writes of [`SEED`]
 /// stand in it before the first group, committed to SQLite and appended to PostgreSQL's table
-/// as its writes append them, and the drawn groups take it from 800 across the page edge.
+/// as its writes append them, and the drawn groups take it from 900 across the page edge.
 ///
 /// A scan of the PostgreSQL store reads `ALPHA`'s whole stream, so a scan after every one of
 /// 2,400 groups made the case quadratic in that stream: 46 of its 61 s. A stored state that
@@ -340,7 +342,9 @@ fn seeded_by_sql(component: &str, count: usize) {
 ///
 /// The case drew 1,350 groups to take `ALPHA` across the page edge by drawn groups alone: 12 s
 /// alone on 4 CPUs of 2 cores and 15 to 33 s in the lane, most of it a commit of every group to
-/// both stores (`story:postgres-lane-margin`).
+/// both stores (`story:postgres-lane-margin`). From 800, 400 groups took 3 s alone and 10 to
+/// 18 s in the lane, most of it again a commit of every group to both stores; from 900, 200
+/// groups cross the same edge (`story:postgres-lane-margin-ci`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv3_drawn_command_sequences_scan_as_sqlite_does() {
@@ -416,7 +420,7 @@ fn adv3_drawn_command_sequences_scan_as_sqlite_does() {
                 break;
             }
         }
-        if step % 200 == 199 {
+        if step % 100 == 99 {
             let reopened = scans(&mut open(&database, &component));
             if reopened != expected {
                 diverged.push(format!("step {step}, reopened: {reopened:?}"));
@@ -429,7 +433,7 @@ fn adv3_drawn_command_sequences_scan_as_sqlite_does() {
         versions.get(ALPHA)
     );
     assert!(diverged.is_empty(), "{}", diverged.join("\n"));
-    assert!(landed > 300, "only {landed} groups landed");
+    assert!(landed > 150, "only {landed} groups landed");
     assert!(versions[ALPHA] > PAGE, "ALPHA's stream stays in one page");
 }
 
@@ -469,7 +473,9 @@ fn adv3_each_escaped_identity_scans_as_on_sqlite() {
 /// A scan while another process commits a fixed script of groups (creations, updates,
 /// removals, re-creations, instances of both entities in one group, one instance twice in a
 /// group): every scan of `ALPHA` answers exactly what SQLite answered, after the same script, at
-/// the version the scan names.
+/// the version the scan names. The script is the first 200 groups of its seed: 400 took 2 s alone
+/// and 7 to 13 s in the lane, the scans running back to back for as long as the writer
+/// (`story:postgres-lane-margin-ci`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv3_a_scan_beside_removals_and_recreations_holds_the_state_at_its_version() {
@@ -481,7 +487,7 @@ fn adv3_a_scan_beside_removals_and_recreations_holds_the_state_at_its_version() 
     let mut script = Vec::new();
     let mut at = BTreeMap::<u64, Scan>::new();
     at.insert(0, reference.scan(ALPHA).expect("scans"));
-    for step in 0..400 {
+    for step in 0..200 {
         let (writes, after) = group(&mut rng, step, &pool, &model, &versions);
         if reference.commit_all(&writes).is_err() {
             continue;
@@ -625,18 +631,127 @@ fn adv3_one_write_of_many_instances_and_one_instance_written_many_times() {
     assert!(on_postgres == on_sqlite, "the stores scan the same");
 }
 
+/// A relay on 127.0.0.1 in front of the test database that counts the statements its clients
+/// send: each simple query (`Q`) and each execution of a prepared statement (`E`) of the
+/// PostgreSQL frontend protocol. An isolated store connects without TLS
+/// (`SslMode::Disable`), so its messages pass the relay in the clear.
+struct Counted {
+    address: SocketAddr,
+    statements: Arc<AtomicU64>,
+}
+
+impl Counted {
+    /// A relay to the server [`url`] names, its host given as an IP address and a port.
+    fn start() -> Self {
+        let url = url();
+        let host = url
+            .rsplit_once('@')
+            .map_or(url.as_str(), |(_, host)| host)
+            .split(['/', '?'])
+            .next()
+            .unwrap_or_default();
+        let upstream: SocketAddr = host
+            .parse()
+            .unwrap_or_else(|error| panic!("the test database's host {host}: {error}"));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("the relay binds");
+        let address = listener.local_addr().expect("the relay's address");
+        let statements = Arc::new(AtomicU64::new(0));
+        let counted = Arc::clone(&statements);
+        std::thread::spawn(move || {
+            for client in listener.incoming() {
+                let Ok(client) = client else { return };
+                let Ok(server) = TcpStream::connect(upstream) else {
+                    return;
+                };
+                let _ = client.set_nodelay(true);
+                let _ = server.set_nodelay(true);
+                let (Ok(mut answers), Ok(mut to_client)) = (server.try_clone(), client.try_clone())
+                else {
+                    return;
+                };
+                std::thread::spawn(move || std::io::copy(&mut answers, &mut to_client));
+                let counted = Arc::clone(&counted);
+                std::thread::spawn(move || relay_counting(client, server, &counted));
+            }
+        });
+        Self {
+            address,
+            statements,
+        }
+    }
+
+    /// The test database, reached through the relay.
+    fn database(&self) -> Database {
+        let mut database = database();
+        let (user, rest) = database.url.rsplit_once('@').expect("a user in the URL");
+        let path = rest.find(['/', '?']).map_or("", |at| &rest[at..]);
+        database.url = format!("{user}@{}{path}", self.address);
+        database
+    }
+
+    fn statements(&self) -> u64 {
+        self.statements.load(Ordering::SeqCst)
+    }
+}
+
+/// Copies `client`'s messages to `server`, each in one write: the untyped startup messages (a
+/// request for TLS or GSS encryption, which the server answers with one byte, comes before the
+/// startup message), then each typed message, counting those that run a statement.
+fn relay_counting(client: TcpStream, mut server: TcpStream, counted: &AtomicU64) {
+    /// The codes of the untyped requests a startup message follows: TLS and GSS encryption.
+    const ENCRYPTION_REQUESTS: [u32; 2] = [80_877_103, 80_877_104];
+    let mut client = std::io::BufReader::new(client);
+    let mut untyped = true;
+    loop {
+        let head = if untyped { 4 } else { 5 };
+        let mut message = vec![0_u8; head];
+        if client.read_exact(&mut message).is_err() {
+            break;
+        }
+        let length: [u8; 4] = message[head - 4..].try_into().expect("four bytes");
+        let size = usize::try_from(u32::from_be_bytes(length)).unwrap_or(0);
+        message.resize(head - 4 + size.max(4), 0);
+        if client.read_exact(&mut message[head..]).is_err() {
+            break;
+        }
+        if untyped {
+            let code = message
+                .get(4..8)
+                .and_then(|code| <[u8; 4]>::try_from(code).ok())
+                .map(u32::from_be_bytes);
+            untyped = code.is_some_and(|code| ENCRYPTION_REQUESTS.contains(&code));
+        } else if matches!(message[0], b'Q' | b'E') {
+            counted.fetch_add(1, Ordering::SeqCst);
+        }
+        if server.write_all(&message).is_err() {
+            break;
+        }
+    }
+    let _ = server.shutdown(std::net::Shutdown::Both);
+}
+
+/// The writes in [`adv3_one_group_of_many_writes_lands_as_on_sqlite`]'s group: five of the
+/// 1,000-row statements eventlog appends a group in.
+const GROUP: usize = 5_000;
+
 /// A command whose set outcome writes every instance of an entity commits them as one group
-/// (`execute/set.rs`, no bound on its members). One group of 20,000 writes lands on SQLite; it
-/// lands on PostgreSQL too, rather than outlast the 10 s eventlog allows one store transaction.
-/// Groups of 1,000 and 5,000 writes, which the case wrote first, are within the time 20,000
-/// take, and added a quarter of its cost; the two stores are written at once
-/// (`story:postgres-lane-margin`).
+/// (`execute/set.rs`, no bound on its members). One group of [`GROUP`] writes lands on SQLite; it
+/// lands on PostgreSQL too, rather than outlast the 10 s eventlog allows one store transaction,
+/// in statements counted through a relay: the one version read of each new instance a
+/// PostgreSQL store takes before the group (`LogStore::standing` in `src/sqlite.rs`), and at
+/// most one more for every [`STATEMENTS_PER`] writes. A second statement per write is over the
+/// count.
+///
+/// The case wrote 20,000 and was judged by landing at all: 7 s alone, 12 s in the lane and 28 s
+/// on CI's runner, where the 60 s a test may run nears. A count judges the statements a group
+/// takes at any size and on any machine; 5,000 writes take 1.9 s alone
+/// (`story:postgres-lane-margin-ci`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv3_one_group_of_many_writes_lands_as_on_sqlite() {
-    const COUNT: usize = 20_000;
-    let database = database();
-    let mut postgres = open(&database, &fresh("group"));
+    const COUNT: usize = GROUP;
+    let relay = Counted::start();
+    let mut postgres = open(&relay.database(), &fresh("group"));
     let (_directory, mut reference) = sqlite();
     let writes: Vec<Write> = (0..COUNT)
         .map(|index| {
@@ -656,17 +771,30 @@ fn adv3_one_group_of_many_writes_lands_as_on_sqlite() {
         let outcome = store.commit_all(&writes).map_err(|error| error.to_string());
         (outcome, started.elapsed())
     };
+    let before = relay.statements();
     let ((on_sqlite, local), (on_postgres, remote)) = std::thread::scope(|scope| {
         let on_sqlite = scope.spawn(|| timed_commit(&mut reference));
         let on_postgres = timed_commit(&mut postgres);
         (on_sqlite.join().expect("the SQLite commit"), on_postgres)
     });
+    let statements = relay.statements() - before;
     eprintln!(
-        "{COUNT} writes: SQLite {local:?} {on_sqlite:?}, PostgreSQL {remote:?} {on_postgres:?}"
+        "{COUNT} writes: SQLite {local:?} {on_sqlite:?}, PostgreSQL {remote:?} {on_postgres:?} \
+         in {statements} statements"
     );
     assert_eq!(on_sqlite, Ok(()));
     assert_eq!(on_postgres, Ok(()), "{COUNT} writes after {remote:?}");
+    assert!(
+        statements <= (COUNT + COUNT / STATEMENTS_PER) as u64,
+        "the group of {COUNT} writes took {statements} statements, over one version read for \
+         each and one more for every {STATEMENTS_PER} writes"
+    );
 }
+
+/// The writes of one group each statement of its commit beyond the version reads stands for, at
+/// least: eventlog appends a group in statements of up to 1,000 rows. 5,000 writes took 31
+/// statements beyond their 5,000 reads.
+const STATEMENTS_PER: usize = 20;
 
 /// Appends `count` creations of `entity` in `component`'s log as one write each would, each
 /// write's schema-2 `spindle.written` naming its instance: a log of `2 x count` events.
