@@ -1,0 +1,27 @@
+type: ess-scenario/1
+domain: lamps.hall
+scenario: the-provider-is-out-for-the-free-crew
+summary: The provider is out when the system sends the one free crew, passing over a busy one.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: lamps.hall.AddCrew
+    actor: lamps.hall.Caller
+    input: {crew_id: busy-crew, free: false}
+    outcome: added
+  - at: 2026-01-05T09:00:01Z
+    command: lamps.hall.AddCrew
+    actor: lamps.hall.Caller
+    input: {crew_id: free-crew, free: true}
+    outcome: added
+  - at: 2026-01-05T09:00:02Z
+    command: lamps.hall.Install
+    actor: lamps.hall.Caller
+    input: {lamp_id: lamp-1}
+    outcome: installed
+  - at: 2026-01-05T09:00:03Z
+    command: lamps.hall.Dispatch
+    input: {lamp_id: lamp-1}
+    outcome: outage
+assert:
+  - view: lamps.hall.Lamps
+    contains: {lamp_id: lamp-1, state: Dark}

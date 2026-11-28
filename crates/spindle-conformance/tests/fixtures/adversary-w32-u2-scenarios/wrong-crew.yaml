@@ -1,0 +1,30 @@
+type: ess-scenario/1
+domain: lamps.hall
+scenario: the-system-is-claimed-to-send-the-busy-crew
+summary: A claim that the system sent the busy crew, which it never does.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: lamps.hall.AddCrew
+    actor: lamps.hall.Caller
+    input: {crew_id: busy-crew, free: false}
+    outcome: added
+  - at: 2026-01-05T09:00:01Z
+    command: lamps.hall.AddCrew
+    actor: lamps.hall.Caller
+    input: {crew_id: free-crew, free: true}
+    outcome: added
+  - at: 2026-01-05T09:00:02Z
+    command: lamps.hall.Install
+    actor: lamps.hall.Caller
+    input: {lamp_id: lamp-1}
+    outcome: installed
+  - at: 2026-01-05T09:00:03Z
+    command: lamps.hall.Dispatch
+    input: {lamp_id: lamp-1}
+    outcome: served
+    events:
+      - event: lamps.hall.Dispatched
+        payload: {lamp_id: lamp-1, crew: busy-crew}
+assert:
+  - view: lamps.hall.Lamps
+    contains: {lamp_id: lamp-1, crew: free-crew, state: Served}

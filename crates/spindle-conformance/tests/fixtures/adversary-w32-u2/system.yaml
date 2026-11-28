@@ -1,0 +1,25 @@
+format: ess/34
+system: lamps
+version: v1
+summary: Lamps a caller installs, which the system lights itself, or sends a crew to.
+domains:
+  - lamps.hall
+components:
+  - component: hall
+    summary: Installs lamps and crews, and lights lamps and dispatches crews to them.
+    owns:
+      domains:
+        - lamps.hall
+    accepts:
+      commands:
+        - lamps.hall.Install
+        - lamps.hall.AddCrew
+        - lamps.hall.Switch
+        - lamps.hall.Dispatch
+    publishes:
+      events:
+        - lamps.hall.Installed
+        - lamps.hall.CrewAdded
+        - lamps.hall.Lit
+        - lamps.hall.Dispatched
+    reached_by: in_process

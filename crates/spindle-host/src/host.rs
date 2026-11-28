@@ -1497,6 +1497,24 @@ impl Host {
         Ok(())
     }
 
+    /// The identity of every instance of `entity` (its qualified name) the store of the component
+    /// that owns it holds, in the order the store scans them ([`spindle_kernel::Scan`]: by the
+    /// identity's canonical JSON text).
+    ///
+    /// # Errors
+    /// [`HostError::NoEntity`] where the model declares no `entity`,
+    /// [`HostError::Unsupported`] where no running component owns it, and [`HostError::Store`]
+    /// where the store cannot be read.
+    pub fn identities(&mut self, entity: &str) -> Result<Vec<Value>, HostError> {
+        let owner = holding(&self.ir, entity)?;
+        Ok(store_of(&mut self.components, &owner)?
+            .scan(entity)?
+            .rows
+            .into_iter()
+            .map(|(identity, _)| identity)
+            .collect())
+    }
+
     /// The running component whose store `row` of `entity` rests in, once the row is checked
     /// against the entity's invariants; the errors of [`Host::establish`] before it writes.
     fn resting(&self, entity: &str, identity: &Value, row: &Row) -> Result<String, HostError> {

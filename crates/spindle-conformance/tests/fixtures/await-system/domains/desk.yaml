@@ -1,0 +1,220 @@
+domain: dispatch.desk
+summary: A caller adds agents and opens tickets; the system routes each ticket to a free agent on a lane, unless a note holds it, and later closes it.
+types:
+  - name: dispatch.desk.AgentId
+    kind: newtype
+    of: String
+  - name: dispatch.desk.TicketId
+    kind: newtype
+    of: String
+entities:
+  - name: dispatch.desk.Agent
+    identity:
+      name: agent_id
+      type: dispatch.desk.AgentId
+    fields:
+      - name: free
+        type: Boolean
+    lifecycle:
+      initial: Ready
+      states: [Ready]
+      terminal: [Ready]
+  - name: dispatch.desk.Ticket
+    identity:
+      name: ticket_id
+      type: dispatch.desk.TicketId
+    fields:
+      - name: agent
+        type: Optional<dispatch.desk.AgentId>
+      - name: lane
+        type: Optional<String>
+    relations:
+      - name: agent
+        kind: references
+        target: dispatch.desk.Agent
+        cardinality: one
+        via: agent
+    lifecycle:
+      initial: Waiting
+      states: [Waiting, Routed, Rushed, Closed]
+      terminal: [Closed]
+      transitions:
+        - name: route
+          from: [Waiting]
+          to: Routed
+        - name: rush
+          from: [Waiting]
+          to: Rushed
+        - name: close
+          from: [Routed, Rushed]
+          to: Closed
+errors:
+  - name: dispatch.desk.NoAgent
+    summary: No agent carries the identity.
+    fields: []
+  - name: dispatch.desk.AgentBusy
+    summary: The agent is busy.
+    fields: []
+  - name: dispatch.desk.HeldByNote
+    summary: A note holds the ticket back.
+    fields: []
+  - name: dispatch.desk.UnknownLane
+    summary: The lane is neither standard nor express.
+    fields: []
+  - name: dispatch.desk.TicketStateConflict
+    summary: The ticket is not in a state the step leaves.
+    fields: []
+  - name: dispatch.desk.NoTicket
+    summary: No ticket carries the identity.
+    fields: []
+events:
+  - name: dispatch.desk.AgentAdded
+    fields:
+      - name: agent_id
+        type: dispatch.desk.AgentId
+  - name: dispatch.desk.Opened
+    fields:
+      - name: ticket_id
+        type: dispatch.desk.TicketId
+  - name: dispatch.desk.Routed
+    fields:
+      - name: ticket_id
+        type: dispatch.desk.TicketId
+      - name: agent
+        type: dispatch.desk.AgentId
+  - name: dispatch.desk.Rushed
+    fields:
+      - name: ticket_id
+        type: dispatch.desk.TicketId
+      - name: agent
+        type: dispatch.desk.AgentId
+  - name: dispatch.desk.Closed
+    fields:
+      - name: ticket_id
+        type: dispatch.desk.TicketId
+views:
+  - name: dispatch.desk.Tickets
+    source: dispatch.desk.Ticket
+    consistency: read_your_writes
+    fields:
+      - name: ticket_id
+        type: dispatch.desk.TicketId
+      - name: agent
+        type: Optional<dispatch.desk.AgentId>
+      - name: state
+        type: dispatch.desk.Ticket.State
+actors:
+  - name: dispatch.desk.Caller
+    may: [dispatch.desk.AddAgent, dispatch.desk.Open]
+  - name: dispatch.desk.Router
+    system: true
+    may: [dispatch.desk.Route]
+  - name: dispatch.desk.Closer
+    system: true
+    may: [dispatch.desk.Close]
+commands:
+  - name: dispatch.desk.AddAgent
+    input:
+      - name: agent_id
+        type: dispatch.desk.AgentId
+      - name: free
+        type: Boolean
+    outcomes:
+      - name: added
+        creates: dispatch.desk.Agent
+        instance: agent_id
+        sets:
+          free: input.free
+        emits: [dispatch.desk.AgentAdded]
+        payload:
+          dispatch.desk.AgentAdded: {agent_id: input.agent_id}
+        summary: The agent is added, free or busy.
+  - name: dispatch.desk.Open
+    input:
+      - name: ticket_id
+        type: dispatch.desk.TicketId
+    outcomes:
+      - name: opened
+        creates: dispatch.desk.Ticket
+        instance: ticket_id
+        emits: [dispatch.desk.Opened]
+        payload:
+          dispatch.desk.Opened: {ticket_id: input.ticket_id}
+        summary: The ticket waits to be routed.
+  - name: dispatch.desk.Route
+    await_within: PT5S
+    input:
+      - name: ticket_id
+        type: dispatch.desk.TicketId
+      - name: lane
+        type: String
+      - name: agent
+        type: dispatch.desk.AgentId
+      - name: note
+        type: Optional<String>
+    outcomes:
+      - name: held
+        when: {note: {exists: true}}
+        error: dispatch.desk.HeldByNote
+        summary: A note holds the ticket back.
+      - name: no-agent
+        when_related: {via: input.agent, exists: false}
+        error: dispatch.desk.NoAgent
+        summary: No agent carries the identity the system chose.
+      - name: busy
+        when_related: {via: input.agent, predicate: free == false}
+        error: dispatch.desk.AgentBusy
+        summary: The agent the system chose is busy.
+      - name: rushed
+        when: lane == express
+        moves: dispatch.desk.Ticket.rush
+        instance: ticket_id
+        sets:
+          agent: input.agent
+          lane: input.lane
+        emits: [dispatch.desk.Rushed]
+        payload:
+          dispatch.desk.Rushed: {ticket_id: input.ticket_id, agent: input.agent}
+        summary: The ticket is rushed to the agent on the express lane.
+      - name: routed
+        when: lane == standard
+        moves: dispatch.desk.Ticket.route
+        instance: ticket_id
+        sets:
+          agent: input.agent
+          lane: input.lane
+        emits: [dispatch.desk.Routed]
+        payload:
+          dispatch.desk.Routed: {ticket_id: input.ticket_id, agent: input.agent}
+        summary: The ticket is routed to the agent on the standard lane.
+      - name: unknown-lane
+        error: dispatch.desk.UnknownLane
+        summary: The lane is neither standard nor express.
+      - name: wrong-state
+        wrong_state: true
+        error: dispatch.desk.TicketStateConflict
+        summary: The ticket was routed already.
+      - name: no-ticket
+        unknown_instance: true
+        error: dispatch.desk.NoTicket
+        summary: No ticket carries the identity.
+  - name: dispatch.desk.Close
+    input:
+      - name: ticket_id
+        type: dispatch.desk.TicketId
+    outcomes:
+      - name: closed
+        moves: dispatch.desk.Ticket.close
+        instance: ticket_id
+        emits: [dispatch.desk.Closed]
+        payload:
+          dispatch.desk.Closed: {ticket_id: input.ticket_id}
+        summary: The ticket is closed.
+      - name: not-routed
+        wrong_state: true
+        error: dispatch.desk.TicketStateConflict
+        summary: The ticket was not routed yet.
+      - name: no-ticket
+        unknown_instance: true
+        error: dispatch.desk.NoTicket
+        summary: No ticket carries the identity.

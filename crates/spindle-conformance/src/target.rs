@@ -2,13 +2,19 @@
 //! drives it.
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use ess_compiler::EssIr;
-use ess_compiler::ir::{ResolvedFailure, ResolvedRefusalAction, ResolvedTypeRef, ResolvedView};
-use ess_compiler::refs::{ErrorRef, EventRef, OutcomeRef};
+use ess_compiler::ir::{
+    ResolvedCommand, ResolvedCondition, ResolvedFailure, ResolvedRefusalAction, ResolvedRelatedVia,
+    ResolvedTypeRef, ResolvedView,
+};
+use ess_compiler::refs::{ActorRef, ErrorRef, EventRef, OutcomeRef};
+use ess_conformance::interpret::values::mint as minted_value;
+use ess_conformance::system_issued::identity_input;
+use ess_conformance::target::{AwaitAnswer, AwaitRequest};
 use ess_conformance::{
     ConformanceTarget, DeclaredErrorValue, EventObservationRequest, ExternalOutcomeControl,
     ImplementationIdentity, InvocationObservationRequest, ObservedEvent, ObservedInvocation,
@@ -16,6 +22,7 @@ use ess_conformance::{
     SemanticViewRequest, SemanticViewResult, TargetError,
 };
 use ess_domain::command::OutcomeName;
+use ess_domain::name::QualifiedName;
 use ess_domain::types::Presence;
 use ess_primitives::consistency::ConsistencyToken;
 use ess_primitives::ids::CorrelationId;
@@ -58,6 +65,12 @@ type Forcing = Arc<Mutex<Option<(String, String)>>>;
 /// ([`Escalation::Unmet`]) is unsupported, since ESS's interpreter fills a placeholder there. Every
 /// attempt an event binding made of its command, with the input it sent, is observed as the
 /// binding's invocations ([`ConformanceTarget::observe_invocations`]).
+///
+/// A step the system takes itself, a command every grant of which is a `system: true` actor, is
+/// taken where the scenario awaits it ([`ConformanceTarget::await_outcome`]): issued into the
+/// scenario's host as that actor, with the inputs its system decides chosen in the order of ESS's
+/// interpreter. Nothing else in the host issues such a command, so the host holds its system until
+/// the await.
 pub struct HostTarget {
     ir: Arc<EssIr>,
     /// The admission of `ir` on the environment, made once and shared by every host opened.
@@ -132,6 +145,10 @@ struct Running {
     events: Vec<ObservedEvent>,
     /// Every attempt an event binding made of its command, in the order made.
     invocations: Vec<Invocation>,
+    /// How many values the awaits that reached a step minted for an input their system decides.
+    /// An await that reaches nothing leaves it where it was, as ESS's interpreter mints from a
+    /// copy of its store it keeps only when a step is reached, so asking again mints the same.
+    minted: u64,
 }
 
 /// One attempt an event binding made of its command, as [`Host::submit_as`] reported it, under
@@ -333,9 +350,82 @@ impl HostTarget {
         }
     }
 
+    /// Each declared input of the system-issued `command` with its candidates in order, `None`
+    /// for absent, as ESS's interpreter lists them (`choices`): the `identity` input the awaited
+    /// instance; a stated input its value alone; any other absent first where it is `Optional`,
+    /// then each held row's identity where a `when_related:` guard reads it, or else one minted
+    /// value; with the mint counter as it stands after them, which the scenario keeps only where
+    /// the await reaches a step.
+    fn choices(
+        &self,
+        command: &ResolvedCommand,
+        (identity, request): (&str, &AwaitRequest),
+        observation: &str,
+    ) -> Result<(Choices, u64), TargetError> {
+        let related = related_inputs(command);
+        let mut running = self.running.borrow_mut();
+        let running = running
+            .as_mut()
+            .ok_or_else(|| TargetError::unavailable(observation, "no scenario is open"))?;
+        let mut minted = running.minted;
+        let mut choices = Vec::with_capacity(command.input.len());
+        for field in &command.input {
+            let mut values = Vec::new();
+            if field.name == identity {
+                values.push(Some(request.instance.clone()));
+            } else if let Some(value) = request.compared.get(&field.name) {
+                values.push(Some(value.clone()));
+            } else {
+                if field.type_ref.is_optional() {
+                    values.push(None);
+                }
+                if let Some(entity) = related.get(field.name.as_str()) {
+                    let held = running
+                        .host
+                        .identities(&entity.to_string())
+                        .map_err(|error| {
+                            TargetError::unavailable(
+                                format!("reading the rows of `{entity}`"),
+                                error.to_string(),
+                            )
+                        })?
+                        .iter()
+                        .map(node)
+                        .collect::<Result<BTreeSet<_>, _>>()?;
+                    values.extend(held.into_iter().map(Some));
+                } else {
+                    minted += 1;
+                    let value = minted_value(&self.ir, field.type_ref.required(), minted)
+                        .map_err(|why| TargetError::unsupported(observation, why.to_string()))?
+                        .ok_or_else(|| {
+                            TargetError::unsupported(
+                                observation,
+                                format!("no value of `{}` to issue it with", field.type_ref),
+                            )
+                        })?;
+                    values.push(Some(value));
+                }
+            }
+            choices.push((field.name.clone(), values));
+        }
+        Ok((choices, minted))
+    }
+
     /// Sends `request` to the host of the scenario in progress: what
     /// [`ConformanceTarget::execute_command`] answers.
     fn send(&self, request: SemanticCommandRequest) -> Result<SemanticCommandResult, TargetError> {
+        self.submit(request, false)
+    }
+
+    /// [`HostTarget::send`]; where `awaited`, one candidate of an await
+    /// ([`ConformanceTarget::await_outcome`]): not counted among the commands sent
+    /// ([`HostTarget::commands`]), and what was forced for its command does not lapse, since a
+    /// candidate the model refuses is not the step the system takes.
+    fn submit(
+        &self,
+        request: SemanticCommandRequest,
+        awaited: bool,
+    ) -> Result<SemanticCommandResult, TargetError> {
         let command = request.command.to_string();
         let json = |fields: &BTreeMap<String, Node>| {
             fields
@@ -359,7 +449,9 @@ impl HostTarget {
         let running = running
             .as_mut()
             .ok_or_else(|| TargetError::unavailable(&command, "no scenario is open"))?;
-        self.commands.set(self.commands.get() + 1);
+        if !awaited {
+            self.commands.set(self.commands.get() + 1);
+        }
         running.writes += 1;
         let written = written(running.writes)?;
         let submitted = running
@@ -370,7 +462,7 @@ impl HostTarget {
             Err(HostError::Execute { error, .. })
                 if matches!(**error, ExecuteError::NotGranted { .. })
         );
-        if !not_granted {
+        if !not_granted && !awaited {
             self.lapse(&command);
         }
         if let Ok(report) = &submitted {
@@ -567,6 +659,7 @@ impl ConformanceTarget for HostTarget {
             writes: 0,
             events: Vec::new(),
             invocations: Vec::new(),
+            minted: 0,
         });
         Ok(())
     }
@@ -723,12 +816,195 @@ impl ConformanceTarget for HostTarget {
         ))
     }
 
+    /// The step the system takes itself (ess/27): the awaited command issued into the scenario's
+    /// host ([`Host::submit_as`]) as the `system: true` actor that grants it, the first by name,
+    /// with each input its system decides chosen in the order of ESS's interpreter
+    /// (`ess-conformance` `src/interpret/await_outcome.rs`, ESS 0.99.2). The identity input is
+    /// `instance`; a stated input is its `compared` value alone; any other is left absent first
+    /// where it is `Optional`, then each identity of the held rows a `when_related:` guard reads
+    /// through it, in their order as values, or else one value minted as the interpreter mints one
+    /// ([`ess_conformance::interpret::values::mint`]) at the next tick of a counter of the
+    /// scenario's, which an await that reaches nothing leaves where it was, so asking again
+    /// answers the same. That counter counts only the awaits' values: the interpreter's also
+    /// counts each value the scenario's commands generated, which the host mints from its own
+    /// seed, so a minted input can differ from the interpreter's
+    /// (`story:await-mints-count-generated-values`). The combinations are tried
+    /// first field slowest, and the first under which the model takes an accepting branch, or the
+    /// external one the scenario forced, is committed and answered, taken at once (`elapsed_ms`
+    /// 0); a refused combination commits nothing. Where several combinations would take different accepting
+    /// branches, the interpreter answers unsupported and this target takes the first.
+    ///
+    /// None reached: nothing else takes the step, since nothing in the host issues a system-issued
+    /// command unless asked, so nothing is issued, held for the whole bound where the command
+    /// declares one. A model with a periodic binding is unsupported there, as the interpreter
+    /// answers it. An await is not counted among the commands sent ([`HostTarget::commands`]) nor
+    /// answered beside an act ([`HostTarget::answered`]); the events it published are observed
+    /// under its correlation.
+    fn await_outcome(&self, request: AwaitRequest) -> Result<AwaitAnswer, TargetError> {
+        let observation = format!("awaiting `{}` on an instance", request.command);
+        let command = self
+            .ir
+            .commands()
+            .get(request.command.name())
+            .ok_or_else(|| TargetError::unavailable(&observation, "command is not declared"))?;
+        if !command.system_issued {
+            return Err(TargetError::unavailable(
+                &observation,
+                "a suite awaits only a command the system issues itself; this one is invoked by a \
+                 caller",
+            ));
+        }
+        let identity = identity_input(command)
+            .map_err(|why| TargetError::unsupported(&observation, why.to_string()))?;
+        let actor = self
+            .ir
+            .actors()
+            .values()
+            .filter(|actor| {
+                actor.system
+                    && actor
+                        .may
+                        .iter()
+                        .any(|granted| *granted.name() == command.name)
+            })
+            .map(|actor| actor.name.clone())
+            .min()
+            .ok_or_else(|| {
+                TargetError::unavailable(&observation, "no system actor is granted the command")
+            })?;
+        let forced = self
+            .forced
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .filter(|(forced, _)| *forced == command.name.to_string())
+            .map(|(_, outcome)| outcome.clone());
+
+        let (choices, minted) = self.choices(command, (identity, &request), &observation)?;
+        let combinations = combinations(&choices).ok_or_else(|| {
+            TargetError::unsupported(
+                &observation,
+                format!(
+                    "the system decides among more than {MOST_CANDIDATES} combinations of input, \
+                     which this target does not enumerate"
+                ),
+            )
+        })?;
+        for input in combinations {
+            let sent = self.submit(
+                SemanticCommandRequest {
+                    command: request.command.clone(),
+                    actor: Some(ActorRef::new(actor.clone())),
+                    caller: None,
+                    input: input.clone(),
+                    correlation: request.correlation.clone(),
+                },
+                true,
+            )?;
+            let Some(taken) = &sent.outcome else {
+                continue;
+            };
+            let reached = forced.as_deref() == Some(taken.outcome.as_str())
+                || command
+                    .outcomes
+                    .iter()
+                    .find(|declared| declared.name == taken.outcome)
+                    .is_some_and(|declared| declared.error.is_none());
+            if reached {
+                // The values minted for this ask are spent only where it reached a step.
+                if let Some(running) = self.running.borrow_mut().as_mut() {
+                    running.minted = minted;
+                }
+                self.lapse(&request.command.to_string());
+                return Ok(AwaitAnswer::Reached {
+                    result: sent,
+                    input,
+                    elapsed_ms: Some(0),
+                });
+            }
+        }
+
+        let Some(within) = request.within else {
+            return Ok(AwaitAnswer::NotIssued { elapsed_ms: None });
+        };
+        if self
+            .ir
+            .bindings()
+            .values()
+            .any(|binding| binding.cause.periodic().is_some())
+        {
+            return Err(TargetError::unsupported(
+                observation,
+                "the model has a periodic binding, and this target does not hold it for the \
+                 declared bound, so it cannot say that nothing was issued within it",
+            ));
+        }
+        Ok(AwaitAnswer::NotIssued {
+            elapsed_ms: Some(within.millis()),
+        })
+    }
+
     fn end_scenario(&self, _scenario: &ScenarioContext) -> Result<(), TargetError> {
         if let Some(mut running) = self.running.borrow_mut().take() {
             running.host.stop();
         }
         Ok(())
     }
+}
+
+/// The most combinations of decided inputs one await tries, as ESS's interpreter bounds them.
+const MOST_CANDIDATES: usize = 4_096;
+
+/// Each declared input of a system-issued command with its candidates in order: `None` for absent.
+type Choices = Vec<(String, Vec<Option<Node>>)>;
+
+/// Every combination of `choices`, the first field varying slowest, as ESS's interpreter
+/// enumerates them (`combinations`); `None` beyond [`MOST_CANDIDATES`]. A field with no candidate
+/// leaves no combination.
+fn combinations(choices: &Choices) -> Option<Vec<BTreeMap<String, Node>>> {
+    let mut total: usize = 1;
+    for (_, values) in choices {
+        total = total.checked_mul(values.len())?;
+        if total > MOST_CANDIDATES {
+            return None;
+        }
+    }
+    let mut out = Vec::with_capacity(total);
+    for mut index in 0..total {
+        let mut input = BTreeMap::new();
+        for (field, values) in choices.iter().rev() {
+            let value = &values[index % values.len()];
+            index /= values.len();
+            if let Some(value) = value {
+                input.insert(field.clone(), value.clone());
+            }
+        }
+        out.push(input);
+    }
+    Some(out)
+}
+
+/// Each input a `when_related:` guard of `command` reads through the input, with the entity whose
+/// identity it carries.
+fn related_inputs(command: &ResolvedCommand) -> BTreeMap<&str, &QualifiedName> {
+    command
+        .outcomes
+        .iter()
+        .flat_map(|outcome| match &outcome.condition {
+            ResolvedCondition::Related {
+                via, entity, also, ..
+            } => std::iter::once((via, entity))
+                .chain(also.iter().map(|row| (&row.via, &row.entity)))
+                .filter_map(|(via, entity)| match via {
+                    ResolvedRelatedVia::Input { field, .. } => {
+                        Some((field.as_str(), entity.name()))
+                    }
+                    ResolvedRelatedVia::Subject { .. } => None,
+                })
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .collect()
 }
 
 /// Every command one submission invoked: the one sent and each a binding invoked, run, refused or

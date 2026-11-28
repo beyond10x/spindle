@@ -8,6 +8,15 @@ are Spindle's releases.
 
 ### Added
 
+- `conform`, `run --scenario` and `spindle_conformance::HostTarget` run a scenario that awaits a
+  step its system takes itself, a command every grant of which is a `system: true` actor (ess/27):
+  the await issues the command into the scenario's host as that actor, the first by name, with the
+  inputs its system decides chosen in the order of ESS's interpreter (the instance, a stated
+  value, then absent for an `Optional`, the held rows a `when_related:` guard reads, or one minted
+  value), and answers the first that takes an accepting branch, or the forced external one; with
+  none, nothing is issued, held for the declared bound. Every such scenario was skipped before.
+  An await is not counted among a replay's commands, and its act's line names no outcome.
+  `spindle_host` gains `Host::identities` (`story:conform-awaits-system-steps`).
 - `task check:postgres` without `SPINDLE_TEST_DATABASE_URL` starts its own throwaway PostgreSQL
   cluster under `target/` with CI's server options (TLS from a CA it issues, which it exports as
   `SPINDLE_TEST_DATABASE_CA`, `max_locks_per_transaction=256`, `max_connections=300`), runs the

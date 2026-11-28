@@ -1,0 +1,49 @@
+format: ess/34
+system: lamps
+version: v1
+summary: Lamps a caller installs, which the system sends a crew to, beside a periodic tick.
+domains:
+  - lamps.hall
+components:
+  - component: hall
+    summary: Installs lamps and crews, and lights lamps and dispatches crews to them.
+    owns:
+      domains:
+        - lamps.hall
+    accepts:
+      commands:
+        - lamps.hall.Install
+        - lamps.hall.AddCrew
+        - lamps.hall.Switch
+        - lamps.hall.Dispatch
+        - lamps.hall.Tick
+    publishes:
+      events:
+        - lamps.hall.Installed
+        - lamps.hall.CrewAdded
+        - lamps.hall.Lit
+        - lamps.hall.Dispatched
+        - lamps.hall.Ticked
+    reached_by: in_process
+bindings:
+  - id: tick
+    when:
+      periodic:
+        every: PT2S
+        anchor: host_activation
+        first: after_period
+        cadence: fixed_rate
+        overlap: serial_per_instance
+        missed: one_pending_drop_excess
+        lifetime: host_instance
+        cancellation: stop_acknowledged
+        host:
+          owner: hall
+          authority: hall-clock
+          eligibility: host_boolean
+          context_fields: []
+          read_fields: []
+    invoke:
+      command: lamps.hall.Tick
+    delivery: at_most_once
+    on_failure: drop

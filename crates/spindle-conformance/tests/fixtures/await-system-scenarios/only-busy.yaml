@@ -1,0 +1,19 @@
+type: ess-scenario/1
+domain: dispatch.desk
+scenario: no-free-agent-to-rush-to
+summary: The only agent is busy, so the system rushes the waiting ticket to no one, and the act that claims it was rushed does not hold.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: dispatch.desk.AddAgent
+    actor: dispatch.desk.Caller
+    input: {agent_id: busy-agent, free: false}
+    outcome: added
+  - at: 2026-01-05T09:00:01Z
+    command: dispatch.desk.Open
+    actor: dispatch.desk.Caller
+    input: {ticket_id: t-1}
+    outcome: opened
+  - at: 2026-01-05T09:00:02Z
+    command: dispatch.desk.Route
+    input: {ticket_id: t-1, lane: express}
+    outcome: rushed

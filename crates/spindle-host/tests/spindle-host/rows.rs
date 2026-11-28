@@ -364,3 +364,52 @@ fn reading_the_rows_scans_no_store() {
     );
     assert_eq!(rows, vec![(LOAN.to_owned(), 3), (MEMBER.to_owned(), 1)]);
 }
+
+/// `Host::identities` (`story:conform-awaits-system-steps`): the identity of every row of one
+/// entity its owner's store holds, in the store's scan order, and of no other entity in that
+/// store; none before any row is written, and an entity the model does not declare is refused.
+#[test]
+fn the_identities_of_an_entity_are_its_own_rows() {
+    let mut host = Kept::Memory.open();
+    assert_eq!(
+        host.identities(LOAN).expect("the loans read"),
+        Vec::<Value>::new()
+    );
+    assert_eq!(
+        host.identities(MEMBER).expect("the members read"),
+        Vec::<Value>::new()
+    );
+    for (loan, borrower) in [("loan-b", "Ada"), ("loan-a", "Grace")] {
+        host.establish(
+            LOAN,
+            &json!(loan),
+            Row {
+                state: "Out".to_owned(),
+                fields: [
+                    ("borrower".to_owned(), json!(borrower)),
+                    ("due".to_owned(), json!("2026-01-05T00:00:00Z")),
+                ]
+                .into(),
+            },
+        )
+        .expect("the loan is established");
+    }
+    host.establish(
+        MEMBER,
+        &json!("member-1"),
+        Row {
+            state: "Active".to_owned(),
+            fields: [("name".to_owned(), json!("A. Reader"))].into(),
+        },
+    )
+    .expect("the member is established");
+    assert_eq!(
+        host.identities(LOAN).expect("the loans read"),
+        vec![json!("loan-a"), json!("loan-b")]
+    );
+    assert_eq!(
+        host.identities(MEMBER).expect("the members read"),
+        vec![json!("member-1")]
+    );
+    assert!(host.identities("lending.loans.Shelf").is_err());
+}
