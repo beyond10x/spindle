@@ -131,7 +131,7 @@ fn seeded_by_release_one(environment: &Path, schema: &str, seed: &Path) -> Value
 /// ended, a reset that fails on its body and then a plain one each give `audit`'s lease back
 /// before they answer; the plain one removes the record, and the next start of release 2 with the
 /// same seed sends the whole seed to the emptied store (`story:seed-under-a-lease`, D6 A).
-/// About 6 s on the lane.
+/// About 2 s on the lane.
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn a_reset_while_an_old_release_holds_the_removed_components_lease_is_refused_until_it_ends_then_the_seed_is_sent_again()
@@ -207,7 +207,7 @@ fn a_reset_while_an_old_release_holds_the_removed_components_lease_is_refused_un
 /// with `audit`'s record left, so the next start of release 2 with the same seed reads that
 /// record, takes the seed as already run and sends nothing, against D6 A of
 /// `story:seed-under-a-lease` ("a later start with a seed treats the store as one with no
-/// record"). About 5 s on the lane.
+/// record"). About 2 s on the lane.
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn a_removal_of_the_old_record_that_fails_after_the_reset_leaves_the_seed_to_be_sent_again() {
@@ -344,6 +344,7 @@ const WORLD_TASKS: usize = 1_500;
 /// standby of release 1 asking for it all along, and removes the record. Without the renewal the
 /// standby takes the lease once its term ran out, the removal is deposed, and the record stays
 /// beside the emptied store. Green on the unit's head: it pins a guard no other case reaches.
+/// About 5 s on the lane.
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn a_reset_that_outlasts_the_lease_keeps_the_removed_components_lease_and_removes_its_record() {
