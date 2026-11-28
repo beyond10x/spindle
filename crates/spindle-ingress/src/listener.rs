@@ -731,12 +731,15 @@ impl Drop for Listener {
 /// the listener serves it, once the handshake has completed within [`Limits::head_read`]. A
 /// handshake that fails or does not complete in time, or is under way once `closing` reads `true`,
 /// closes the connection with no HTTP read or written. Once `closing` reads `true`, the connection
-/// writes the answer it holds, if any, and closes.
+/// writes the answer it holds, if any, and closes. A write that makes no progress within
+/// [`Limits::head_read`], as to a client that never reads its answers, closes the connection, over
+/// TLS as over plain TCP ([`Stalling`]).
 async fn connection(
     served: Arc<Served>,
     stream: tokio::net::TcpStream,
     mut closing: watch::Receiver<bool>,
 ) {
+    let stream = Stalling::new(stream, served.surface.limits().head_read);
     let Some(tls) = served.tls.clone() else {
         return answering(served, stream, closing).await;
     };
@@ -749,6 +752,105 @@ async fn connection(
         _ = closing.wait_for(|closing| *closing) => return,
     };
     answering(served, stream, closing).await;
+}
+
+/// A connection's socket whose writes fail once one has made no progress for `bound`
+/// (`story:listener-limits`, adversary finding F1). hyper reads no further head while an answer
+/// waits to be written, so its head read time does not run then, and without this bound a client
+/// that pipelines requests and never reads the answers held its place of the cap for as long as
+/// it stayed open. The bound is [`Limits::head_read`]: the time a connection may take to give the
+/// listener anything it waits for, a head or room for an answer. It sits below TLS, so it holds
+/// for the handshake's writes and every record over TLS too.
+struct Stalling<S> {
+    inner: S,
+    bound: Duration,
+    /// Running from the first write that could not proceed, reset by every write that did.
+    stalled: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+}
+
+impl<S> Stalling<S> {
+    fn new(inner: S, bound: Duration) -> Self {
+        Self {
+            inner,
+            bound,
+            stalled: None,
+        }
+    }
+
+    /// `polled`, a write's outcome, as this stream answers it: a write still pending once it has
+    /// made no progress for the bound fails `TimedOut`.
+    fn progress<T>(
+        &mut self,
+        context: &mut std::task::Context<'_>,
+        polled: std::task::Poll<io::Result<T>>,
+    ) -> std::task::Poll<io::Result<T>> {
+        use std::task::Poll;
+        if polled.is_ready() {
+            self.stalled = None;
+            return polled;
+        }
+        let bound = self.bound;
+        let stalled = self
+            .stalled
+            .get_or_insert_with(|| Box::pin(tokio::time::sleep(bound)));
+        if stalled.as_mut().poll(context).is_ready() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("no answer could be written to the client within {bound:?}"),
+            )));
+        }
+        Poll::Pending
+    }
+}
+
+impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for Stalling<S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        buffer: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_read(context, buffer)
+    }
+}
+
+impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for Stalling<S> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        buffer: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        let polled = std::pin::Pin::new(&mut self.inner).poll_write(context, buffer);
+        self.progress(context, polled)
+    }
+
+    fn poll_write_vectored(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        buffers: &[io::IoSlice<'_>],
+    ) -> std::task::Poll<io::Result<usize>> {
+        let polled = std::pin::Pin::new(&mut self.inner).poll_write_vectored(context, buffers);
+        self.progress(context, polled)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let polled = std::pin::Pin::new(&mut self.inner).poll_flush(context);
+        self.progress(context, polled)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let polled = std::pin::Pin::new(&mut self.inner).poll_shutdown(context);
+        self.progress(context, polled)
+    }
 }
 
 /// Serves HTTP/1.1 on `stream`, as [`connection`] says.

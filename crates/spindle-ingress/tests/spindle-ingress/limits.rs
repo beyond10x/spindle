@@ -4,15 +4,20 @@
 //! once one did. Each case sets its bounds small through [`Limits`] and ends within 3 s.
 //!
 //! The fixture `tests/fixtures/desk` declares one component, `desk`; the test answers each
-//! command handed to it itself.
+//! command handed to it itself; over TLS it is served through a host of its own, on a certificate
+//! a CA made for the test issued.
 
 use std::io::{ErrorKind, Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName};
 use serde_json::{Value, json};
+use spindle_capability::Environment;
+use spindle_host::{Host, ManualClock};
 use spindle_ingress::{Answer, Limits, Listener, Surface};
 
 const COMPONENT: &str = "desk";
@@ -355,4 +360,170 @@ fn a_queued_request_past_its_time_answers_503_and_is_never_handed() {
         listener.next(Duration::from_millis(200)).is_none(),
         "a request answered 503 past its time is never handed"
     );
+}
+
+fn provider() -> Arc<rustls::crypto::CryptoProvider> {
+    Arc::new(rustls::crypto::ring::default_provider())
+}
+
+/// A CA made for the test, and a certificate for 127.0.0.1 it issued with its key.
+fn certificates() -> (
+    rustls::RootCertStore,
+    CertificateDer<'static>,
+    PrivatePkcs8KeyDer<'static>,
+) {
+    let key = rcgen::KeyPair::generate().expect("a CA key");
+    let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).expect("CA parameters");
+    params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    params.key_usages = vec![
+        rcgen::KeyUsagePurpose::KeyCertSign,
+        rcgen::KeyUsagePurpose::CrlSign,
+    ];
+    let issuer = rcgen::CertifiedIssuer::self_signed(params, key).expect("the CA signs itself");
+    let server_key = rcgen::KeyPair::generate().expect("a key");
+    let mut params = rcgen::CertificateParams::new(vec!["127.0.0.1".to_owned()])
+        .expect("certificate parameters");
+    params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
+    let certificate = params
+        .signed_by(&server_key, &*issuer)
+        .expect("the CA issues the certificate");
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(issuer.der().clone())
+        .expect("the CA certificate is a root");
+    (
+        roots,
+        certificate.der().clone(),
+        PrivatePkcs8KeyDer::from(server_key.serialize_der()),
+    )
+}
+
+fn in_memory() -> Environment {
+    Environment::parse(concat!(
+        "format = \"spindle-environment/1\"\n",
+        "name = \"limits\"\n",
+        "os = \"linux\"\n",
+        "arch = \"x86_64\"\n",
+        "\n",
+        "[provides]\n",
+        "\"store.durable\" = [\"memory\"]\n",
+        "\"store.ephemeral\" = [\"memory\"]\n",
+        "clock = [\"system\"]\n",
+        "timer = [\"tokio\"]\n",
+        "channel = [\"in-process\"]\n",
+        "projection = [\"in-process\"]\n",
+        "\"identity.mint\" = [\"uuid-v4\"]\n",
+        "\"ingress.network\" = [\"http-loopback\"]\n",
+    ))
+    .expect("the in-memory environment parses")
+}
+
+/// A TLS connection to `address` whose handshake has completed, its socket's reads and writes
+/// given up after `wait`.
+fn tls_connect(
+    address: SocketAddr,
+    client: &Arc<rustls::ClientConfig>,
+    wait: Duration,
+) -> rustls::StreamOwned<rustls::ClientConnection, TcpStream> {
+    let stream = connect(address);
+    stream.set_read_timeout(Some(wait)).expect("a read timeout");
+    stream
+        .set_write_timeout(Some(wait))
+        .expect("a write timeout");
+    let connection = rustls::ClientConnection::new(
+        Arc::clone(client),
+        ServerName::IpAddress(address.ip().into()),
+    )
+    .expect("a client connection");
+    let mut tls = rustls::StreamOwned::new(connection, stream);
+    while tls.conn.is_handshaking() {
+        tls.conn
+            .complete_io(&mut tls.sock)
+            .expect("the handshake completes");
+    }
+    tls
+}
+
+/// Over TLS, as over plain TCP, a client that pipelines requests and never reads an answer holds
+/// its place of the cap for the head read time at most once its answers stop being written: with
+/// a cap of 1 and a head read time of 1 s, a TLS client behind it is answered within 3 s
+/// (`story:listener-limits`, adversary finding F1).
+#[test]
+fn a_tls_client_that_never_reads_its_answers_does_not_hold_the_cap() {
+    let ir = spindle_spec::load(&fixtures().join("desk"))
+        .expect("the desk fixture compiles")
+        .ir;
+    let surface = Surface::new(&ir, &[COMPONENT.to_owned()], None)
+        .expect("the desk surface is served")
+        .limited(Limits {
+            connections: 1,
+            head_read: Duration::from_secs(1),
+            ..Limits::DEFAULT
+        });
+    let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state directory");
+    let host = Host::new(ir, &in_memory(), Arc::new(ManualClock::new()), state.path())
+        .unwrap_or_else(|error| panic!("the host admits the desk: {error}"));
+    let (roots, certificate, key) = certificates();
+    let server = rustls::ServerConfig::builder_with_provider(provider())
+        .with_safe_default_protocol_versions()
+        .expect("the default protocol versions")
+        .with_no_client_auth()
+        .with_single_cert(vec![certificate], PrivateKeyDer::Pkcs8(key))
+        .expect("the server certificate and key");
+    let client = Arc::new(
+        rustls::ClientConfig::builder_with_provider(provider())
+            .with_safe_default_protocol_versions()
+            .expect("the default protocol versions")
+            .with_root_certificates(roots)
+            .with_no_client_auth(),
+    );
+    let listener = Listener::bind_reading_on_tls(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        0,
+        surface,
+        host.reader(),
+        Arc::new(server),
+    )
+    .expect("the TLS listener binds");
+    let address = listener.local_addr();
+
+    let mut stuck = tls_connect(address, &client, Duration::from_millis(500));
+    let batch = get(address, LIVE).repeat(256);
+    let started = Instant::now();
+    let mut sent = 0usize;
+    while stuck
+        .write_all(batch.as_bytes())
+        .and_then(|()| stuck.flush())
+        .is_ok()
+    {
+        sent += batch.len();
+        assert!(
+            started.elapsed() < Duration::from_secs(20) && sent < 256 << 20,
+            "the listener kept reading: {sent} bytes in {:?}",
+            started.elapsed()
+        );
+    }
+
+    let mut waiting = tls_connect(address, &client, Duration::from_secs(3));
+    write!(
+        waiting,
+        "GET {LIVE} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n"
+    )
+    .expect("the request is written");
+    waiting.flush().expect("the request is flushed");
+    let mut read = Vec::new();
+    let mut chunk = [0u8; 4096];
+    while let Ok(count) = waiting.read(&mut chunk) {
+        if count == 0 {
+            break;
+        }
+        read.extend_from_slice(&chunk[..count]);
+    }
+    let answered = String::from_utf8_lossy(&read);
+    assert!(
+        answered.starts_with("HTTP/1.1 200"),
+        "a TLS client that never reads ({sent} bytes of requests sent) holds the only place of \
+         the cap: the client behind it read {answered:?}"
+    );
+    drop(stuck);
 }

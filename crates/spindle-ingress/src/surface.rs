@@ -1141,8 +1141,9 @@ pub struct Limits {
     /// already taken `504`, its command still completing.
     pub request_time: Duration,
     /// How long a connection may take to send a request's head, the next one of a keep-alive
-    /// connection included, and to complete its TLS handshake; one slower is closed, so an idle
-    /// connection holds a place of [`Limits::connections`] for at most this long.
+    /// connection included, and to complete its TLS handshake, and how long a write of its answer
+    /// may make no progress, as to a client that never reads; one slower is closed, so an idle or
+    /// stalled connection holds a place of [`Limits::connections`] for at most this long.
     pub head_read: Duration,
 }
 

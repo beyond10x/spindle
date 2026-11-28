@@ -21,7 +21,8 @@ are Spindle's releases.
   waiting in the kernel's backlog until one closes; `--max-head-bytes` (65536) bytes of a
   request's head, and 100 headers, a larger head answered `431` and its connection closed before
   anything is handed on or recorded; a keep-alive connection that sends no request for 10 s
-  closed; and `--request-timeout` (30) seconds per request from the end of its body read, a
+  closed, and one whose answer can make no write progress for 10 s, as to a client that never
+  reads, closed too, over TLS as over plain TCP; and `--request-timeout` (30) seconds per request from the end of its body read, a
   request no thread took by then answered `503` with `"committed": false` and never run, one
   taken `504`, its command still completing. `spindle_ingress` gains `Limits` and
   `Surface::limited`. The proxy secret, the guarded listener's token and `spindle-control`'s token
