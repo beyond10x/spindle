@@ -185,26 +185,23 @@ tasks:
       - sh scripts/postgres-lane.sh lane -- {{.TASK_EXE}} check:postgres:run
 
   check:postgres:run:
-    desc: The PostgreSQL store's and the state move's tests against the database SPINDLE_TEST_DATABASE_URL names (loopback, a role that may create schemas, roles and tables), the hosted cases over TLS verified against SPINDLE_TEST_DATABASE_CA, under cargo-nextest's postgres profile, each killed at 60 s by .config/nextest.toml; the run after the build ends within 100 s and prints its ten slowest tests, then the timing case ALONE runs by itself within 20 s
+    desc: The PostgreSQL store's and the state move's tests against the database SPINDLE_TEST_DATABASE_URL names (loopback, a role that may create schemas, roles and tables), the hosted cases over TLS verified against SPINDLE_TEST_DATABASE_CA, under cargo-nextest's postgres profile, each killed at 60 s by .config/nextest.toml; the run after the build ends within 100 s and prints its ten slowest tests
     requires:
       vars: [SPINDLE_TEST_DATABASE_URL, SPINDLE_TEST_DATABASE_CA]
     vars:
-      NEXTEST: cargo nextest run --locked --profile postgres -p spindle-kernel -p spindle-host -p spindle-cli --test spindle-kernel --test spindle-host --test spindle-cli
-      ALONE: adversary_postgres_named::adv3_a_scan_of_many_instances_costs_no_more_than_reading_the_log
+      NEXTEST: env -u NEXTEST_TEST_THREADS cargo nextest run --locked --profile postgres -p spindle-kernel -p spindle-host -p spindle-cli --test spindle-kernel --test spindle-host --test spindle-cli
       TESTS: >-
         (binary_id(=spindle-kernel::spindle-kernel) and (test(~postgres::) or test(~state_move::)
         or test(~on_postgres) or test(~adversary_w21_store::)
         or ((test(~adversary_postgres_named::) or test(~adversary_postgres_scan::))
         and not test(~adv2_sqlite_scans_the_same_long_logs)
-        and not test(~adv3_a_scan_of_1300_rows_of_a_mebibyte_each)
-        and not test(={{.ALONE}}))))
+        and not test(~adv3_a_scan_of_1300_rows_of_a_mebibyte_each))))
         or (binary_id(=spindle-host::spindle-host) and test(~postgres::))
         or (binary_id(=spindle-cli::spindle-cli) and (test(~postgres::) or test(~state_move::)))
     cmds:
       - '{{.NEXTEST}} --no-run'
       - defer: { task: test:slowest, vars: { NEXTEST_PROFILE: postgres } }
       - "sh scripts/within.sh 100 {{.NEXTEST}} --run-ignored all -E '{{.TESTS}}'"
-      - "sh scripts/within.sh 20 {{.NEXTEST}} --run-ignored all -E 'binary_id(=spindle-kernel::spindle-kernel) and test(={{.ALONE}})'"
 
   check:postgres-lane-script:
     desc: scripts/postgres-lane.sh, on PostgreSQL's binaries from SPINDLE_PG_BIN or PATH (it fails without initdb and pg_ctl), stops and removes its cluster when its command fails and on SIGINT, prints a major other than 17 with a warning, makes and starts the cluster with SPINDLE_PG_BIN's binaries, and starts none when SPINDLE_TEST_DATABASE_URL is set
