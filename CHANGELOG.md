@@ -21,14 +21,15 @@ are Spindle's releases.
   waiting in the kernel's backlog until one closes; `--max-head-bytes` (65536) bytes of a
   request's head, and 100 headers, a larger head answered `431` and its connection closed before
   anything is handed on or recorded; a connection closed that sends no head for 10 s (an idle
-  keep-alive one included), whose body stalls for 10 s (refused `408`), or whose answer makes no
-  write progress for 10 s, as to a client that never reads, over TLS as over plain TCP; and
+  keep-alive one included) or whose answer makes no write progress for 10 s, as to a client that
+  never reads, over TLS as over plain TCP; a body that pauses for longer than 10 s, or takes over
+  10 s in all, refused `408`; and
   `--request-timeout` (30) seconds per request from the end of its body read, a request no thread
   took by then answered `503` with `"committed": false` and never run, its client still waiting
   or gone, one taken `504`, its command still completing. When the listener closes, each
   connection still waiting in the socket's backlog, at the cap or not yet accepted, is taken and
-  its one request answered (`503` once the run stops taking work) rather than reset; none after
-  them is accepted. `spindle_ingress` gains `Limits` and
+  its one request answered as during the drain (outside `/__spindle/` `503` once the run stops
+  taking work, the probes there as always) rather than reset; none after them is accepted. `spindle_ingress` gains `Limits` and
   `Surface::limited`. The proxy secret, the guarded listener's token and `spindle-control`'s token
   are compared in time that depends only on their own length, where a presented value of another
   length returned at once (`story:listener-limits`).

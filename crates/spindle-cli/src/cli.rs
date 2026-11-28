@@ -578,8 +578,8 @@ pub enum Command {
         /// How many seconds a served run goes on answering, after SIGINT or SIGTERM, the requests
         /// already waiting for it, in arrival order, counted from when the request under way, if
         /// any, has finished; `0` answers none of them. From the signal on, `GET
-        /// /__spindle/ready` answers `503` and every request that arrives is answered `503` at
-        /// once; the request under way always finishes, and so does one taken within the bound,
+        /// /__spindle/ready` answers `503` and every request that arrives outside `/__spindle/` is
+        /// answered `503` at once, the probes there answering as always; the request under way always finishes, and so does one taken within the bound,
         /// but a `POST /api/reset`, answered `503` with nothing emptied. A bound too large for the
         /// clock sets none: the drain ends once no request is waiting. Each request still waiting
         /// once the bound has passed is answered `503`, then the run exits 130 or 143, within
@@ -595,10 +595,12 @@ pub enum Command {
         /// The most connections a served run holds at once. A connection over it waits in the
         /// kernel's backlog, neither accepted nor refused, until one of them closes; a
         /// keep-alive connection that sends no request for 10 s is closed, and so is one whose
-        /// body stalls for 10 s (refused `408`) or whose answer can be written no further for
-        /// 10 s, as to a client that never reads, so an idle or stalled one holds its place for
-        /// at most that long. When the run stops, each connection still waiting at the cap is
-        /// taken and answered `503`. Only where `run` serves HTTP.
+        /// answer can be written no further for 10 s, as to a client that never reads, so an
+        /// idle or stalled one holds its place for at most that long. A body that pauses for
+        /// longer than 10 s, or takes over 10 s in all, is refused `408`. When the run stops,
+        /// each connection still waiting at the cap is taken and its request answered as during
+        /// the drain: `503` outside `/__spindle/`, the probes there as always. Only where `run`
+        /// serves HTTP.
         #[arg(
             long,
             value_name = "COUNT",

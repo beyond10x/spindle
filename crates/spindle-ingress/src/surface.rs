@@ -1142,10 +1142,11 @@ pub struct Limits {
     pub request_time: Duration,
     /// How long a connection may take to send a request's head, the next one of a keep-alive
     /// connection included, and to complete its TLS handshake; how long a request's body may
-    /// stall (the listener's `BODY_READ`, 10 s, where that is shorter), refused `408`; and how long
-    /// a write of its answer may make no progress, as to a client that never reads. A connection
-    /// slower in any of them is closed, so an idle or stalled connection holds a place of
-    /// [`Limits::connections`] for at most this long.
+    /// pause between two of its pieces, refused `408` past it, as is a body that takes over the
+    /// listener's `BODY_READ` (10 s) in all; and how long a write of its answer may make no
+    /// progress, as to a client that never reads. A connection slower in any of them is closed or
+    /// refused, so an idle or stalled connection holds a place of [`Limits::connections`] for at
+    /// most this long.
     pub head_read: Duration,
 }
 

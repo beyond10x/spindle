@@ -39,8 +39,9 @@ use crate::surface::{Caller, Limits, Route, Surface, Unverified};
 /// connection included; a slower one is closed. The default of [`Limits::head_read`].
 pub const HEADER_READ: Duration = Limits::DEFAULT.head_read;
 
-/// How long a request's body may take to arrive once its head has, or the surface's
-/// [`Limits::head_read`] where that is shorter; a slower one is refused `408`.
+/// How long a request's whole body may take to arrive once its head has; a slower one is refused
+/// `408`, and so is one that pauses between two pieces for longer than the surface's
+/// [`Limits::head_read`].
 pub const BODY_READ: Duration = Duration::from_secs(10);
 
 /// How long the listener waits after accepting a connection failed, such as when the process is
@@ -1111,26 +1112,34 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         _ => None,
     };
     let path = request.uri().path().to_owned();
-    // The body read is bounded by the head read time too, where it is shorter, so a body that
-    // stalls holds a place of the cap no longer than an idle connection (adversary finding F4).
-    let body_read = BODY_READ.min(served.surface.limits().head_read);
+    // Two bounds on the body read: the whole body within `BODY_READ`, and no pause between two of
+    // its pieces longer than the head read time, so a body that stalls holds a place of the cap
+    // no longer than an idle connection (adversary findings F4 of round 2 and of round 3) while
+    // one arriving steadily is read.
+    let pause = served.surface.limits().head_read;
     let read = tokio::time::timeout(
-        body_read,
-        Limited::new(request.into_body(), BODY_LIMIT).collect(),
+        BODY_READ,
+        paced(Limited::new(request.into_body(), BODY_LIMIT), pause),
     )
     .await;
     let body = match read {
-        Ok(Ok(collected)) => collected.to_bytes().to_vec(),
-        Ok(Err(error)) => {
+        Ok(Ok(body)) => body,
+        Ok(Err(Unread::Broken(error))) => {
             return refused(Answer::refusal(
                 400,
                 format!("the body could not be read: {error}"),
             ));
         }
+        Ok(Err(Unread::Paused)) => {
+            return refused(Answer::refusal(
+                408,
+                format!("the body paused for longer than {pause:?}"),
+            ));
+        }
         Err(_) => {
             return refused(Answer::refusal(
                 408,
-                format!("the body did not arrive within {body_read:?}"),
+                format!("the body did not arrive within {BODY_READ:?}"),
             ));
         }
     };
@@ -1155,6 +1164,36 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
             }),
         ),
         Err(refusal) => (refusal.into(), Some(unanswered)),
+    }
+}
+
+/// Why a body was not read whole ([`paced`]).
+enum Unread {
+    /// No piece of it arrived for longer than the pause allowed.
+    Paused,
+    /// It broke off or ran over its limit, as the error says.
+    Broken(String),
+}
+
+/// Every byte of `body`, each piece arriving within `pause` of the one before (of the head, for
+/// the first).
+async fn paced<B>(mut body: B, pause: Duration) -> Result<Vec<u8>, Unread>
+where
+    B: hyper::body::Body<Data = Bytes> + Unpin,
+    B::Error: std::fmt::Display,
+{
+    let mut read = Vec::new();
+    loop {
+        match tokio::time::timeout(pause, body.frame()).await {
+            Err(_) => return Err(Unread::Paused),
+            Ok(None) => return Ok(read),
+            Ok(Some(Err(error))) => return Err(Unread::Broken(error.to_string())),
+            Ok(Some(Ok(frame))) => {
+                if let Ok(data) = frame.into_data() {
+                    read.extend_from_slice(&data);
+                }
+            }
+        }
     }
 }
 

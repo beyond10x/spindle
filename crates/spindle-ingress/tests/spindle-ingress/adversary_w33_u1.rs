@@ -810,8 +810,9 @@ fn a_client_still_sending_its_body_after_the_408_does_not_hold_the_cap() {
 /// `run --max-connections` says: "When the run stops, each connection still waiting at the cap is
 /// taken and answered `503`." A probe waiting at the cap, `GET /__spindle/live`, is taken once the
 /// run stops taking work and the listener closes, and answered `200`.
+// The coordinator set this contract in round 3: a probe answers as during the drain.
 #[test]
-fn a_probe_waiting_at_the_cap_when_the_run_stops_is_answered_503() {
+fn a_probe_waiting_at_the_cap_when_the_run_stops_is_answered_as_during_the_drain() {
     let limits = Limits {
         connections: 1,
         head_read: Duration::from_secs(5),
@@ -843,7 +844,7 @@ fn a_probe_waiting_at_the_cap_when_the_run_stops_is_answered_503() {
     drop(holder);
     assert_eq!(
         answered.as_ref().map(|(status, _)| *status),
-        Some(503),
+        Some(200),
         "a probe waiting at the cap when the run stopped: {answered:?}"
     );
 }
