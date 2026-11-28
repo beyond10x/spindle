@@ -1,0 +1,26 @@
+format: ess/34
+system: dispatch
+version: v1
+summary: Tickets a caller opens, which the system routes to an agent of its own choosing and later closes.
+domains:
+  - dispatch.desk
+components:
+  - component: desk
+    summary: Adds agents, opens tickets, and routes and closes them.
+    owns:
+      domains:
+        - dispatch.desk
+    accepts:
+      commands:
+        - dispatch.desk.AddAgent
+        - dispatch.desk.Open
+        - dispatch.desk.Route
+        - dispatch.desk.Close
+    publishes:
+      events:
+        - dispatch.desk.AgentAdded
+        - dispatch.desk.Opened
+        - dispatch.desk.Routed
+        - dispatch.desk.Rushed
+        - dispatch.desk.Closed
+    reached_by: in_process

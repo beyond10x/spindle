@@ -18,6 +18,7 @@ mod adversary_w29_u3;
 mod adversary_w30_u2;
 mod adversary_w30_u5;
 mod aggregates;
+mod await_system_steps;
 mod before_row_and_reference_lists;
 mod computed;
 mod conversions;

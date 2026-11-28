@@ -6,6 +6,18 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `conform`, `run --scenario` and `spindle_conformance::HostTarget` run a scenario that awaits a
+  step its system takes itself, a command every grant of which is a `system: true` actor (ess/27):
+  the await issues the command into the scenario's host as that actor, the first by name, with the
+  inputs its system decides chosen in the order of ESS's interpreter (the instance, a stated
+  value, then absent for an `Optional`, the held rows a `when_related:` guard reads, or one minted
+  value), and answers the first that takes an accepting branch, or the forced external one; with
+  none, nothing is issued, held for the declared bound. Every such scenario was skipped before.
+  An await is not counted among a replay's commands, and its act's line names no outcome.
+  `spindle_host` gains `Host::identities` (`story:conform-awaits-system-steps`).
+
 ## [0.26.0] - 2026-11-28
 
 ### Added

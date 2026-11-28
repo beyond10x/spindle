@@ -647,3 +647,32 @@ fn a_decisions_file_the_model_refuses_exits_one_before_any_step() {
         "the command named: {diagnostic}"
     );
 }
+
+/// An act naming a command only the system issues is awaited, never sent
+/// (`story:conform-awaits-system-steps`): the replay holds, and the await's line names no outcome
+/// beside it, since the runner sent no command for it (D4 A).
+#[test]
+fn a_replayed_scenario_runs_its_await() {
+    let output = Command::new(env!("CARGO_BIN_EXE_b10x-spindle"))
+        .current_dir(root())
+        .args([
+            "run",
+            "crates/spindle-conformance/tests/fixtures/await-system",
+            "--environment",
+            LAPTOP,
+            "--scenario",
+            "crates/spindle-conformance/tests/fixtures/await-system-scenarios/rushed.yaml",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .expect("b10x-spindle runs");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let printed = stdout(&output);
+    for line in [
+        "timeline[2] dispatch.desk.Open: holds, outcome opened\n",
+        "timeline[3] dispatch.desk.Route: holds\n",
+        "assert[0] dispatch.desk.Tickets: holds\n",
+    ] {
+        assert!(printed.contains(line), "{line:?} in {printed}");
+    }
+}
