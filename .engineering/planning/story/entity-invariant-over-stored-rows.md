@@ -33,7 +33,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 14
+revision: 15
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-28T09:24:52Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":7}}}
 - {from: "proposed", to: "active", at: "2026-11-28T09:24:52Z", actor: "human:operator", revision: 14, decided_on: {"recorded":{"review_outcome":7}}}
@@ -145,3 +145,13 @@ Derived 2026-11-28 by `story-scoper` on `plan/wave-33` (276298bb). Every line is
   description, from which `website/docs/reference/cli.md:123` is generated) — cited
 - **Revised after plan-critic round 1 (2026-11-28, read against fc19c7d9):** the stdin `run --state`
   test added (default taken over a `## Not covered` line) — cited
+
+## Delivered
+
+Wave 33, unit U4, merged into wave/33 at 5754e7c8; adversary rounds 1-3, round 3 refuted.
+
+Changed from the plan, by the coordinator during the wave:
+
+- Every misfit line prints its texts escaped (`\\` for a backslash, `\n`, `\r`, other control
+  characters and U+2028/U+2029 as `\u{..}`, tab raw), so a line stays one line and two texts never
+  print alike (rounds 1 and 2). This applies to every misfit kind.

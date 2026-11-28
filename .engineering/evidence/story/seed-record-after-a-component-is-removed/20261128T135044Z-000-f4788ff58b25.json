@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-28T13:50:44Z",
+  "actor": "human:operator",
+  "artifact": "story:seed-record-after-a-component-is-removed",
+  "kind": "story",
+  "revision": 17,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "review-result:wave33-adversary-U3-r6",
+    "review": "review-result:wave33-adversary-U3-r6",
+    "outcome": "no-op"
+  }
+}

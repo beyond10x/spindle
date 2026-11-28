@@ -37,7 +37,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 17
+revision: 18
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-28T09:24:51Z", actor: "human:operator", revision: 16, decided_on: {"recorded":{"review_outcome":8}}}
 - {from: "proposed", to: "active", at: "2026-11-28T09:24:52Z", actor: "human:operator", revision: 17, decided_on: {"recorded":{"review_outcome":8}}}
@@ -183,3 +183,20 @@ Derived 2026-11-28 by `story-scoper` on `plan/wave-33` (276298bb). Every line is
   migrates only on an isolated database (no CA, `postgres.rs:534`) — cited
 - **Revised after plan-critic round 1 (2026-11-28, read against fc19c7d9):** two lane tests added
   (D2 A, D3 A); the status row and its generated pages added — cited
+
+## Delivered
+
+Wave 33, unit U3, merged into wave/33 at 52c2c51f; adversary rounds 1-6, round 6 refuted.
+
+Changed from the plan, by the coordinator during the wave:
+
+- A reset by a leased run without a seed handles the removed components' records before it empties
+  any store. It refuses a bad body or world clock first, then takes every such table's lease (`409`
+  naming the table while another process holds one, no record touched), then removes every record
+  in one transaction (`500` naming the table on failure, none removed). Round 1's case of a held
+  orphan lease is answered `409`, not cleared after the reset (rounds 1-3).
+- The records are put back in one transaction whenever the reset changed no store's rows
+  (`Host::reset_changed_rows`), whatever it answers; a run that lost its lease puts them back before
+  it exits, renewing those tables' leases until the reset asks (rounds 4 and 5).
+- New public API: `spindle_host::Host::reset_changed_rows`, `spindle_kernel::postgres_store_wait`,
+  `Lease::forget_orphan_seeds`, `Lease::record_orphan_seeds`.

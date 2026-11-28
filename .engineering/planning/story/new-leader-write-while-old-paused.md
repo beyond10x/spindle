@@ -33,7 +33,7 @@ scope:
   path: website/docs/concepts/environment-and-admission.md
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 13
+revision: 14
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-28T09:24:51Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":7}}}
 - {from: "proposed", to: "active", at: "2026-11-28T09:24:51Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":7}}}
@@ -164,3 +164,18 @@ Derived 2026-11-28 by `story-scoper` on `plan/wave-33` (276298bb). Every line is
 
 - A view or events read behind the same publication lock still answers `501`
   (`crates/spindle-ingress/src/answer.rs:412`, `listed`). No story is filed for it.
+
+## Delivered
+
+Wave 33, unit U2, merged into wave/33 at f03764dd; adversary rounds 1-3, round 3 refuted.
+
+Changed from the plan, by the coordinator during the wave:
+
+- Only the PostgreSQL store returns `StoreError::Busy`: eventlog-sqlite 0.10.0 never returns
+  `Deadline`, so a command whose SQLite write is busy still answers `501`. The Outcome's SQLite
+  `503` is not delivered.
+- The `503` covers commands. A held view read answers `501`, a held events or history read `500`
+  (`503` during a drain, as before).
+- A `POST /api/reset` held by a busy store still answers `500` and loses the store:
+  `story:reset-on-a-busy-store-keeps-the-store`, its case parked with `#[ignore]`.
+- `UnknownCommit` still answers `501` `committed: false`: `story:unknown-commit-answered-as-unknown`.

@@ -37,7 +37,7 @@ scope:
   path: website/docs/concepts/capabilities.md
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 14
+revision: 15
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-28T09:24:51Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":7}}}
 - {from: "proposed", to: "active", at: "2026-11-28T09:24:51Z", actor: "human:operator", revision: 14, decided_on: {"recorded":{"review_outcome":7}}}
@@ -187,3 +187,21 @@ Derived 2026-11-28 by `story-scoper` on `plan/wave-33` (head 276298bb). Every li
 - **Revised after plan-critic round 1 (2026-11-28, read against fc19c7d9):** the Tests line names
   the Acceptance tests; the head limit is `max_header_size`; `Limits` carries the head read time;
   `answer.rs` stays U2's — cited
+
+## Delivered
+
+Wave 33, unit U1, merged into wave/33 at 3d8908b9; adversary rounds 1-4, round 4 refuted.
+
+Changed from the plan, by the coordinator during the wave:
+
+- The head size default is 64 KiB (65536), not 16 KiB: 16 KiB refused two existing cases (a
+  60,000-byte path, a view-list query of about 30 KiB). `a_head_under_the_default_is_answered` holds it.
+- A client that does not read its answer holds its place for at most `Limits::head_read`: the
+  socket has a write deadline below TLS (round 1).
+- A command past its request time is never handed, also when its client left: the deadline is kept
+  in the exchange (round 2).
+- On close, connections waiting at the cap are accepted and answered as during the drain: `503`
+  outside `/__spindle/`, the probes there as always (rounds 2 and 3).
+- A body is refused `408` when it pauses longer than the head read time between two pieces, or
+  takes over 10 s in all; a body arriving steadily under both is handed (round 3). At a head read
+  time of 10 s the answer is always the whole-body text (round 4).

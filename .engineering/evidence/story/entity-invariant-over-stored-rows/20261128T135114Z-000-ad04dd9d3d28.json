@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-28T13:51:14Z",
+  "actor": "human:operator",
+  "artifact": "story:entity-invariant-over-stored-rows",
+  "kind": "story",
+  "revision": 15,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "unit/w33-entity-invariant at 1f2e8853: spindle-kernel 533 passed, spindle-cli 741 (3 ui/dist cases red on the node's base); every Unicode scalar value escaped and read back; identity and state mutants killed by adversary_w33_u4 round 3. wave/33 at 46b237e3: task check exit 0, 2203 passed, nextest 69.9 s of 120 s; PostgreSQL lane pinned to 4 CPUs as on CI, 206 passed in 70.6 s of 100 s; lane script 38 cases, lane adversary 21 cases."
+  }
+}
