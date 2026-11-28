@@ -941,3 +941,176 @@ fn a_put_back_that_outlasts_the_runs_wait_is_not_answered_as_lost_once_it_lands(
          {record} again: {records:?}\n{body}\n{printed}"
     );
 }
+
+/// Every table of `component`'s store in `schema` but its lease table, each `<schema>.<name>`.
+fn store_tables(schema: &str, component: &str) -> Vec<String> {
+    let prefix = spindle_kernel::postgres_prefix(component);
+    super::super::sql(&[format!(
+        "SELECT format('%I.%I', schemaname, tablename) FROM pg_catalog.pg_tables WHERE \
+         schemaname = '{schema}' AND starts_with(tablename, '{prefix}_') AND tablename <> \
+         '{prefix}_p_lease' ORDER BY tablename"
+    )])
+}
+
+/// A session of the database's owner that holds every table of `tables` `ACCESS EXCLUSIVE` from
+/// when this answers for `seconds`: each read and write of those tables waits meanwhile, at most
+/// the store's lock timeout of 2 s.
+fn held_for(tables: &[String], seconds: f64) -> std::thread::JoinHandle<()> {
+    let (held, holding) = std::sync::mpsc::channel();
+    let tables = tables.join(", ");
+    let thread = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        runtime.block_on(async {
+            let (client, connection) =
+                tokio_postgres::connect(&super::super::owner_url(), tokio_postgres::NoTls)
+                    .await
+                    .expect("the test database accepts its owner");
+            let driver = tokio::spawn(connection);
+            client
+                .batch_execute(&format!(
+                    "BEGIN; LOCK TABLE {tables} IN ACCESS EXCLUSIVE MODE"
+                ))
+                .await
+                .expect("the lock is taken");
+            let _ = held.send(());
+            client
+                .batch_execute(&format!("SELECT pg_sleep({seconds}); COMMIT"))
+                .await
+                .expect("the lock is released");
+            drop(client);
+            let _ = driver.await;
+        });
+    });
+    holding
+        .recv_timeout(super::ANSWER)
+        .expect("the lock is held within 10 s");
+    thread
+}
+
+/// Moves the token of the lease row of `table` on, as a process that took the lease over does.
+fn taken_over(table: &str) {
+    super::super::sql(&[format!(
+        "UPDATE {table} SET body = jsonb_set(body, '{{token}}', to_jsonb((body->>'token')::bigint \
+         + 1)) WHERE row_key = 'lease'"
+    )]);
+}
+
+/// Waits until a session waits for a lock on a table of `component`'s store in `schema`, at most
+/// 2 s: whether one did.
+fn waiting_on(schema: &str, component: &str) -> bool {
+    let prefix = spindle_kernel::postgres_prefix(component);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        let waiting = super::super::sql(&[format!(
+            "SELECT count(*)::text FROM pg_catalog.pg_locks AS held JOIN pg_catalog.pg_class AS \
+             relation ON relation.oid = held.relation JOIN pg_catalog.pg_namespace AS space ON \
+             space.oid = relation.relnamespace WHERE NOT held.granted AND space.nspname = \
+             '{schema}' AND starts_with(relation.relname, '{prefix}_')"
+        )]);
+        if waiting.first().is_some_and(|count| count != "0") {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    false
+}
+
+/// Round 5. A leased run of a specification whose every component is current, no lease table of
+/// a removed component in its schema, loses its lease while a reset waits on `board`'s tables
+/// (a session holds them for 2.5 s; another process's take moves `board`'s token on meanwhile):
+/// the lease thread finds the lease taken at its next renewal and ends, since no claim holds a
+/// lease, and the reset's write then fails or is fenced. Its claim removed no record
+/// (`Claim::Taken(0)`), yet `seed::unclaimed` asks the ended lease thread for the put-back of
+/// nothing, and answers that "the seed record removed for it from the lease table of a component
+/// this specification no longer has was not put back", telling the operator to reset the store
+/// before the next seeded start. Before the unit this reset answered the plain refusal of a lost
+/// lease. About 4 s on the lane.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_lost_lease_during_a_reset_with_no_removed_component_reports_no_lost_seed_record() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let schema = super::super::schema();
+    let mut run = Replica::start(short_leased(&environment, &schema));
+    run.ready_by(Instant::now() + super::ANSWER);
+    let (status, answer) = run.open("t1");
+    assert_eq!(status, 201, "{answer}");
+    let tables = store_tables(&schema, "board");
+    assert!(!tables.is_empty(), "board's store has tables");
+
+    let lock = held_for(&tables, 2.5);
+    let address = run.address;
+    let reset = std::thread::spawn(move || reset_within(address, None));
+    let waited = waiting_on(&schema, "board");
+    taken_over(&lease_table(&schema, "board"));
+    let (status, body) = reset.join().expect("the reset is answered");
+    lock.join().expect("the lock ends");
+    let exited = run.exit_within(super::ANSWER);
+    let printed = run.printed();
+    assert!(
+        waited,
+        "the reset waited on board's tables: {status} {body}\n{printed}"
+    );
+    assert_ne!(status, 200, "the reset emptied no store: {body}\n{printed}");
+    let refused = body["refused"].as_str().unwrap_or_default();
+    assert!(
+        !refused.contains("no longer has"),
+        "no lease table of a removed component exists and the claim removed no record, yet the \
+         reset that lost the lease answers {status} that such a record was removed and not put \
+         back (exit {exited:?}): {refused}\n{printed}"
+    );
+}
+
+/// Round 5. The put-back after a lost lease waits at most one term (`Leases::closing`): a reset
+/// that waits on `board`'s tables longer than that after the lease thread found the lease taken
+/// does not get its record back. Release 1 leaves `audit`'s record at `done` 1 of 3; a run of
+/// release 2 without a seed, on a lease of 1 s, resets while a session holds `board`'s tables for
+/// 2.5 s; once the claim removed `audit`'s record, another process's take moves `board`'s token
+/// on. The lease thread finds that at its next renewal (a fifth of the lease), waits one term for
+/// the put-back, then releases `audit`'s lease with the record left removed. The reset's write
+/// waits for `board`'s tables up to the store's lock timeout of 2 s and then fails or is fenced,
+/// so it changed no store's rows; the put-back it asks for finds the lease thread ended. The run
+/// exits with `audit`'s table empty while the store still holds entry 1, against the CHANGELOG's
+/// "a run that lost its lease puts them back before it exits"; the next seeded start would take
+/// the store as seeded (D5 B) and never send entries 2 and 3. About 5 s on the lane.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_lost_lease_during_a_reset_slower_than_a_term_still_puts_the_removed_components_record_back() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let whole = seed_file(directory.path(), "seed.json", &["s1", "s2", "s3"]);
+    let schema = super::super::schema();
+    let part = left_part_done_in_audit(directory.path(), &environment, &schema, &whole);
+    let audit = lease_table(&schema, "audit");
+    let tables = store_tables(&schema, "board");
+
+    let mut unseeded = Replica::start(short_leased(&environment, &schema));
+    unseeded.ready_by(Instant::now() + super::ANSWER);
+    let lock = held_for(&tables, 2.5);
+    let address = unseeded.address;
+    let reset = std::thread::spawn(move || reset_within(address, None));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while record_in(&audit).is_some() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let claimed = record_in(&audit).is_none();
+    taken_over(&lease_table(&schema, "board"));
+    let (status, body) = reset.join().expect("the reset is answered");
+    lock.join().expect("the lock ends");
+    let exited = unseeded.exit_within(super::ANSWER);
+    let printed = unseeded.printed();
+    assert!(
+        claimed,
+        "the claim removed audit's record: {status} {body}\n{printed}"
+    );
+    assert_ne!(status, 200, "the reset emptied no store: {body}\n{printed}");
+    assert_eq!(
+        record_in(&audit),
+        Some(part),
+        "the reset that lost the lease answered {status} and the run exited ({exited:?}) without \
+         putting audit's record back: {body}\n{printed}"
+    );
+}
