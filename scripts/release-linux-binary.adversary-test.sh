@@ -1866,5 +1866,149 @@ else
 fi
 echo "$tagged" >"$work/rec/attested-commit"
 
+# --- adversary_w34_u1_r3 ---------------------------------------------------------------------
+# Round 3 of the adversarial cases for story:release-artifacts-signed (wave 34, unit U1), against
+# the fixes of round 2: the signer rule D-U1-r2 in publish's verification, and the permission
+# check's spelled and quoted keys.
+r3=$work/adversary-w34-u1-r3
+mkdir -p "$r3"
+r3_uri=https://github.com/beyond10x/spindle/.github/workflows/release.yml
+# One attestation as gh attestation verify prints it: the signer as a JSON value, the commit.
+r3_att() {
+    printf '{"verificationResult":{"signature":{"certificate":{"buildSignerURI":%s,"sourceRepositoryDigest":"%s"}}}}' "$1" "$2"
+}
+# publish's verification on a release of 0.26.0 tagged at $tagged, run on a $1 event at commit $2,
+# with gh attestation verify printing $3 for every asset and the image.
+r3_verify() {
+    printf '%s\n' "$3" >"$r2/gh/json"
+    rm -rf "$work/verify"
+    mkdir -p "$work/verify"
+    (cd "$work/verify" && PATH="$r2/gh:$work/sigtools:$PATH" RUNNER_TEMP=$work/verify GH_REPO=beyond10x/spindle \
+        TAG=0.26.0 COMMIT=$tagged GITHUB_SHA=$2 GITHUB_EVENT_NAME=$1 IMAGES_EXPECTED=true \
+        IMAGE=ghcr.io/beyond10x/spindle GITHUB_STEP_SUMMARY=$work/verify/summary bash "$work/steps/verify.sh" \
+        >"$work/verify/out" 2>&1 </dev/null)
+}
+
+# adversary_w34_u1_r3_signer_is_the_exact_uri: D-U1-r2 accepts a signer only when it is
+# release.yml of this repository at refs/heads/main or at refs/tags/<the tag>, byte for byte. Beside
+# an attestation that passes on its own, one signed by another repository, another workflow file,
+# a ref that only starts or ends like the accepted one, the accepted URI in another case, a tag
+# whose dots are read as any character, or a signer that is no string fails a tag push and a
+# backfill. Each names the tagged commit, which the rule accepts from either signer, so only the
+# signer can refuse it.
+r3_good_push=$(r3_att "\"$r3_uri@refs/tags/0.26.0\"" "$tagged")
+r3_good_backfill="$(r3_att "\"$r3_uri@refs/heads/main\"" "$dispatched"),$(r3_att "\"$r3_uri@refs/tags/0.26.0\"" "$tagged")"
+cat >"$r3/signers" <<'SIGNERS'
+"https://github.com/beyond10x/spindle-fork/.github/workflows/release.yml@refs/tags/0.26.0"
+"https://github.com/beyond10x/spindl/.github/workflows/release.yml@refs/heads/main"
+"https://github.com/other/spindle/.github/workflows/release.yml@refs/heads/main"
+"https://github.com/beyond10x/spindle/.github/workflows/ci.yml@refs/tags/0.26.0"
+"https://github.com/beyond10x/spindle/.github/workflows/release.yaml@refs/heads/main"
+"https://github.com/beyond10x/spindle/.github/workflows/nested/release.yml@refs/heads/main"
+"https://github.com/beyond10x/spindle/.github/workflows/xrelease.yml@refs/heads/main"
+"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/heads/main-x"
+"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/heads/mainx"
+"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/heads/main/x"
+"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/heads/main?ref=x"
+"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/heads/main "
+"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/heads/main\n"
+" https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/heads/main"
+"xhttps://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/heads/main"
+"http://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/heads/main"
+"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/tags/0.26.0x"
+"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/tags/0.26.00"
+"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/tags/0.26.0-rc.1"
+"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/tags/0.26.0/x"
+"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/tags/0.26."
+"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/tags/0x26x0"
+"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/tags/10.26.0"
+"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/tags/0.26.0@refs/heads/main"
+"https://github.com/Beyond10x/spindle/.github/workflows/release.yml@refs/heads/main"
+"https://github.com/beyond10x/Spindle/.github/workflows/release.yml@refs/tags/0.26.0"
+"https://github.com/beyond10x/spindle/.github/workflows/Release.yml@refs/heads/main"
+"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/heads/Main"
+"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/Tags/0.26.0"
+"HTTPS://GITHUB.COM/BEYOND10X/SPINDLE/.GITHUB/WORKFLOWS/RELEASE.YML@REFS/HEADS/MAIN"
+""
+null
+["https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/heads/main"]
+{"uri":"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/heads/main"}
+SIGNERS
+cases=$((cases + 1))
+if ! on_page true; then
+    fail "adversary_w34_u1_r3_signer_is_the_exact_uri: no signed release to put on the page: $(cat "$work/sign.out")"
+elif ! r3_verify push "$tagged" "[$r3_good_push]"; then
+    fail "adversary_w34_u1_r3_signer_is_the_exact_uri: a tag push with one attestation at the tag's ref of the tagged commit fails: $(tail -n 3 "$work/verify/out" | tr '\n' ' ')"
+elif ! r3_verify workflow_dispatch "$dispatched" "[$r3_good_backfill]"; then
+    fail "adversary_w34_u1_r3_signer_is_the_exact_uri: a backfill with its own attestation and the tag run's fails: $(tail -n 3 "$work/verify/out" | tr '\n' ' ')"
+else
+    while IFS= read -r r3_signer; do
+        r3_bad=$(r3_att "$r3_signer" "$tagged")
+        # The rule reads the signer alike on both events; a backfill runs the signers that look
+        # like its own, refs/heads/main.
+        for r3_run in "push $tagged $r3_good_push" "workflow_dispatch $dispatched $r3_good_backfill"; do
+            set -- $r3_run
+            case "$1 $r3_signer" in workflow_dispatch*refs/heads/main*) ;; workflow_dispatch*) continue ;; esac
+            cases=$((cases + 1))
+            ! r3_verify "$1" "$2" "[$3,$r3_bad]" ||
+                fail "adversary_w34_u1_r3_signer_is_the_exact_uri: a $1 run passes with an attestation signed by $r3_signer"
+        done
+    done <"$r3/signers"
+fi
+
+# adversary_w34_u1_r3_one_json_document: gh attestation verify --format json prints one JSON
+# array. jq -e reads every document in its input and exits on the last one alone, so output of
+# two documents, a refused one and then one that passes, must still fail the run, as any output
+# that is not one list of attestations does (adversary_w34_u1_r2_commit_rule_fails_closed).
+r3_foreign=$(r3_att '"https://github.com/other/spindle/.github/workflows/release.yml@refs/tags/0.26.0"' "$(printf '%040d' 6)")
+for r3_json in "[$r3_foreign]
+[$r3_good_push]" "[]
+[$r3_good_push]" "null [$r3_good_push]"; do
+    cases=$((cases + 1))
+    ! r3_verify push "$tagged" "$r3_json" ||
+        fail "adversary_w34_u1_r3_one_json_document: a tag push passes when gh attestation verify prints two documents, the last one passing: $(printf '%s' "$r3_json" | head -c 160 | tr '\n' ' ')"
+done
+echo "$tagged" >"$work/rec/attested-commit"
+
+# adversary_w34_u1_r3_permission_at_any_depth: the escape "id\x2dtoken" is refused only on lines
+# the check reads as a permission block, at the indentation release.yml uses (a job's keys at 4
+# spaces, permissions at 6), and a quoted key only up to 8 spaces. YAML takes any deeper indentation
+# and flow mappings: a job whose keys sit at 8 spaces, or one written on a single line, gives a job
+# with no if, which runs on a pull request, id-token: write. A copy of release.yml with either
+# must fail adversary_id_token_only_on_signing_jobs.
+for kind in deep flow; do
+    {
+        cat "$workflow"
+        case $kind in
+            deep) printf '%s\n' '  pr-signer:' '        runs-on: ubuntu-24.04' '        permissions:' \
+                '          "id\x2dtoken": write' '        steps:' '          - run: "true"' ;;
+            flow) printf '%s\n' '  pr-signer: {runs-on: ubuntu-24.04, permissions: {"id\x2dtoken": write}, steps: [{run: "true"}]}' ;;
+        esac
+    } >"$r3/permission-$kind.yml"
+    cases=$((cases + 1))
+    if id_token_breach "$r3/permission-$kind.yml" >/dev/null; then
+        fail "adversary_w34_u1_r3_permission_at_any_depth: a copy of release.yml with a job '$kind' holding \"id\\x2dtoken\": write and no if passes adversary_id_token_only_on_signing_jobs"
+    fi
+done
+
+# adversary_w34_u1_r3_facts_equal_under_each_awk: the permission check reads release.yml with the
+# awk on PATH, which is gawk on one host and mawk on another (Debian and Ubuntu install mawk as
+# awk). Every other awk found on PATH reads the same facts from release.yml and from each copy the
+# check refuses.
+for r3_awk in mawk gawk nawk original-awk; do
+    command -v "$r3_awk" >/dev/null 2>&1 || continue
+    for kind in top build if-removed or-true or-true-outside unparenthesised-or folded-if write-all flow attest-publish \
+        target quoted-parens double-quoted-parens escaped-quote-parens unclosed-literal anchor-alias merge-key \
+        explicit-key continued-after-blank; do
+        mutant "$kind"
+        cp "$work/mutant.yml" "$r3/mutant-$kind.yml"
+    done
+    for r3_copy in "$workflow" "$r3"/mutant-*.yml "$r2"/continued-*.yml "$r2"/escaped-*.yml; do
+        cases=$((cases + 1))
+        [ "$("$r3_awk" -f "$work/permissions.awk" "$r3_copy" 2>&1)" = "$(awk -f "$work/permissions.awk" "$r3_copy" 2>&1)" ] ||
+            fail "adversary_w34_u1_r3_facts_equal_under_each_awk: $r3_awk reads other facts than awk from $(basename "$r3_copy")"
+    done
+done
+
 echo "release-linux-binary-adversary: $cases cases, $failures failed"
 [ "$failures" -eq 0 ]
