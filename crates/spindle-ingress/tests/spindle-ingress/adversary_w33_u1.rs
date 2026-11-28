@@ -692,3 +692,387 @@ fn a_body_that_stalls_frees_its_place_at_the_head_read_time() {
          (head read time 1 s): {answered:?}"
     );
 }
+
+// Round 3: against round 2's fixes: the deadline kept in the `Exchange` (F1), the backlog taken
+// at close (F2) and the body read bounded by the head read time (F4), and what the documents say
+// of them.
+
+/// `Limits::head_read` says it bounds how long a request's body may *stall*, refused `408`, and
+/// the changelog and `run --max-connections` say a connection "whose body stalls" is closed. A
+/// body that never stalls, each piece arriving 100 ms after the one before, and that takes 1.6 s
+/// in all, is refused `408` at the head read time of 1 s: the bound is on the whole body's
+/// arrival, not on a stall.
+#[test]
+fn a_body_arriving_steadily_is_not_refused_as_stalled() {
+    const PIECES: usize = 16;
+    let limits = Limits {
+        head_read: Duration::from_secs(1),
+        ..Limits::DEFAULT
+    };
+    let (surface, method, path) = desk(limits);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let body = json!({"desk_id": "steady", "holder": "ada", "pad": "x".repeat(1600)}).to_string();
+    let head = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    );
+    let client = thread::spawn(move || {
+        let mut stream = connect(address);
+        stream
+            .write_all(head.as_bytes())
+            .expect("the head is written");
+        let bytes = body.into_bytes();
+        let piece = bytes.len().div_ceil(PIECES);
+        for chunk in bytes.chunks(piece) {
+            thread::sleep(Duration::from_millis(100));
+            if stream.write_all(chunk).is_err() {
+                break;
+            }
+        }
+        plain_answer(&mut stream, DUE)
+    });
+    let until = Instant::now() + Duration::from_secs(4);
+    let mut handed = false;
+    while !client.is_finished() && Instant::now() < until {
+        if let Some(exchange) = listener.next(Duration::from_millis(50)) {
+            handed = true;
+            exchange.respond(Answer {
+                status: 201,
+                body: Some(json!({"opened": "steady"})),
+                headers: Vec::new(),
+            });
+        }
+    }
+    let answered = client.join().expect("the client ends");
+    assert!(
+        handed && answered.as_ref().map(|(status, _)| *status) == Some(201),
+        "a body that never paused for more than 100 ms, 1.6 s in all, is refused as stalled \
+         at the head read time of 1 s (handed: {handed}): {answered:?}"
+    );
+}
+
+/// A client still sending its body after its `408` does not hold its place: hyper gives up the
+/// rest of the body and closes the connection once the `408` is written. With a cap of 1, a head
+/// read time of 1 s and a client trickling 10 bytes every 50 ms into a body of 100,000 bytes, a
+/// second client is answered within 2.5 s.
+#[test]
+fn a_client_still_sending_its_body_after_the_408_does_not_hold_the_cap() {
+    let limits = Limits {
+        connections: 1,
+        head_read: Duration::from_secs(1),
+        ..Limits::DEFAULT
+    };
+    let (surface, method, path) = desk(limits);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let mut trickling = connect(address);
+    write!(
+        trickling,
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\n\
+         Content-Length: 100000\r\n\r\n{{\"desk_id\":\"t\",\"pad\":\""
+    )
+    .expect("a head and part of a body are written");
+    let trickle = thread::spawn(move || {
+        let until = Instant::now() + Duration::from_secs(4);
+        while Instant::now() < until {
+            if trickling.write_all(b"xxxxxxxxxx").is_err() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        false
+    });
+    thread::sleep(Duration::from_millis(100));
+    let started = Instant::now();
+    let mut waiting = connect(address);
+    waiting
+        .write_all(get(address, LIVE).as_bytes())
+        .expect("the request is written");
+    let answered = plain_answer(&mut waiting, DUE);
+    let took = started.elapsed();
+    assert_eq!(
+        answered.map(|(status, _)| status),
+        Some(200),
+        "a client trickling its body past its 408 held the only place for {took:?}"
+    );
+    assert!(
+        took < Duration::from_millis(2500),
+        "the client behind a trickling body waited {took:?}"
+    );
+    assert!(
+        trickle.join().expect("the trickle ends"),
+        "the trickling connection was closed"
+    );
+}
+
+/// `run --max-connections` says: "When the run stops, each connection still waiting at the cap is
+/// taken and answered `503`." A probe waiting at the cap, `GET /__spindle/live`, is taken once the
+/// run stops taking work and the listener closes, and answered `200`.
+#[test]
+fn a_probe_waiting_at_the_cap_when_the_run_stops_is_answered_503() {
+    let limits = Limits {
+        connections: 1,
+        head_read: Duration::from_secs(5),
+        ..Limits::DEFAULT
+    };
+    let (surface, _, _) = desk(limits);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let mut holder = connect(address);
+    holder
+        .write_all(get(address, LIVE).as_bytes())
+        .expect("the request is written");
+    assert_eq!(
+        plain_answer(&mut holder, DUE).map(|(status, _)| status),
+        Some(200),
+        "the first connection is answered and kept alive"
+    );
+    let mut waiting = connect(address);
+    waiting
+        .write_all(get(address, LIVE).as_bytes())
+        .expect("the probe is written to the backlog");
+    thread::sleep(Duration::from_millis(200));
+    listener
+        .stopping()
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let closing = thread::spawn(move || listener.close(Duration::from_secs(2)));
+    let answered = plain_answer(&mut waiting, DUE);
+    closing.join().expect("the listener closes");
+    drop(holder);
+    assert_eq!(
+        answered.as_ref().map(|(status, _)| *status),
+        Some(503),
+        "a probe waiting at the cap when the run stopped: {answered:?}"
+    );
+}
+
+/// `Listener::close`: the connections waiting in the backlog when it closes are taken, "and no
+/// connection after them is accepted". The drain takes connections until an accept would wait,
+/// so clients that keep connecting while it runs keep it accepting. With 16 threads connecting
+/// to a closing listener and hanging up at once, the socket still takes connections more than
+/// 1 s after `close` was called, and `close`, given a grace of 500 ms, has not returned.
+#[test]
+fn a_flood_of_connections_does_not_keep_a_closing_listener_accepting() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    const FLOODERS: usize = 16;
+    let (surface, _, _) = desk(Limits::DEFAULT);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let origin = Instant::now();
+    let stop = Arc::new(AtomicBool::new(false));
+    let flood: Vec<_> = (0..FLOODERS)
+        .map(|_| {
+            let stop = Arc::clone(&stop);
+            thread::spawn(move || {
+                let mut last = None;
+                let mut made = 0u64;
+                while !stop.load(Ordering::SeqCst) && origin.elapsed() < Duration::from_secs(6) {
+                    match TcpStream::connect_timeout(&address, Duration::from_millis(500)) {
+                        Ok(stream) => {
+                            last = Some(origin.elapsed());
+                            made += 1;
+                            drop(stream);
+                        }
+                        Err(_) => thread::sleep(Duration::from_millis(1)),
+                    }
+                }
+                (last, made)
+            })
+        })
+        .collect();
+    thread::sleep(Duration::from_millis(300));
+    let called = origin.elapsed();
+    let closing = thread::spawn(move || {
+        listener.close(Duration::from_millis(500));
+        origin.elapsed()
+    });
+    let until = Instant::now() + Duration::from_secs(4);
+    while !closing.is_finished() && Instant::now() < until {
+        thread::sleep(Duration::from_millis(20));
+    }
+    stop.store(true, Ordering::SeqCst);
+    let returned = closing.join().expect("the listener closes");
+    let (last, made) = flood
+        .into_iter()
+        .map(|flooder| flooder.join().expect("the flooder ends"))
+        .fold((None, 0u64), |(last, made), (one, count)| {
+            (last.max(one), made + count)
+        });
+    let last = last.expect("some connection was made");
+    assert!(
+        returned.saturating_sub(called) < Duration::from_secs(2)
+            && last.saturating_sub(called) < Duration::from_secs(1),
+        "close was called at {called:?} and returned at {returned:?}; the socket took a \
+         connection at {last:?} ({made} connections in all)"
+    );
+}
+
+/// A client in the backlog that sends its request slowly while the listener closes is answered:
+/// the head arrives in two parts 500 ms apart, inside the grace of 3 s and the head read time of
+/// 5 s, and is answered `503`, the run having stopped taking work.
+#[test]
+fn a_request_sent_slowly_from_the_backlog_during_the_close_is_answered() {
+    let limits = Limits {
+        connections: 1,
+        head_read: Duration::from_secs(5),
+        ..Limits::DEFAULT
+    };
+    let (surface, method, path) = desk(limits);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let mut holder = connect(address);
+    holder
+        .write_all(get(address, LIVE).as_bytes())
+        .expect("the request is written");
+    assert_eq!(
+        plain_answer(&mut holder, DUE).map(|(status, _)| status),
+        Some(200),
+        "the first connection is answered and kept alive"
+    );
+    let request = command(address, &method, &path, "slow");
+    let (first, rest) = request.split_at(request.len() / 3);
+    let mut waiting = connect(address);
+    waiting
+        .write_all(first.as_bytes())
+        .expect("the first part is written to the backlog");
+    thread::sleep(Duration::from_millis(100));
+    listener
+        .stopping()
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let closing = thread::spawn(move || listener.close(Duration::from_secs(3)));
+    thread::sleep(Duration::from_millis(500));
+    waiting
+        .write_all(rest.as_bytes())
+        .expect("the rest is written during the close");
+    let answered = plain_answer(&mut waiting, DUE);
+    closing.join().expect("the listener closes");
+    drop(holder);
+    assert_eq!(
+        answered.as_ref().map(|(status, _)| *status),
+        Some(503),
+        "a request sent slowly from the backlog while the listener closes: {answered:?}"
+    );
+}
+
+/// A connection taken from the backlog at close is not kept alive: of two requests it pipelined,
+/// the first is answered `503` and the connection then closes, so it holds the close no longer
+/// than its one answer.
+#[test]
+fn a_connection_taken_from_the_backlog_at_close_answers_one_request_and_closes() {
+    let limits = Limits {
+        connections: 1,
+        head_read: Duration::from_secs(5),
+        ..Limits::DEFAULT
+    };
+    let (surface, method, path) = desk(limits);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let mut holder = connect(address);
+    holder
+        .write_all(get(address, LIVE).as_bytes())
+        .expect("the request is written");
+    assert_eq!(
+        plain_answer(&mut holder, DUE).map(|(status, _)| status),
+        Some(200),
+        "the first connection is answered and kept alive"
+    );
+    let mut waiting = connect(address);
+    let twice = format!(
+        "{}{}",
+        kept_command(address, &method, &path, "one"),
+        kept_command(address, &method, &path, "two")
+    );
+    waiting
+        .write_all(twice.as_bytes())
+        .expect("two requests are written to the backlog");
+    thread::sleep(Duration::from_millis(200));
+    listener
+        .stopping()
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let started = Instant::now();
+    let closing = thread::spawn(move || listener.close(Duration::from_secs(4)));
+    let first = plain_answer(&mut waiting, DUE);
+    let second = plain_answer(&mut waiting, Duration::from_secs(1));
+    closing.join().expect("the listener closes");
+    let took = started.elapsed();
+    drop(holder);
+    assert_eq!(first.as_ref().map(|(status, _)| *status), Some(503));
+    assert!(second.is_none(), "a second answer on it: {second:?}");
+    assert!(
+        took < Duration::from_millis(2500),
+        "the close waited {took:?} with a grace of 4 s"
+    );
+}
+
+/// No command is both handed and refused `503` at a tight request time: 40 commands at once,
+/// each with 30 ms, taken by a thread that pauses 0 to 9 ms after each (a fixed sequence), so
+/// that takes fall on both sides of their deadlines. Each handed answers `201` or `504`, each not
+/// handed `503` with `committed: false`, and every command is one or the other.
+#[test]
+fn no_command_is_both_handed_and_refused_at_a_tight_request_time() {
+    const SENT: usize = 40;
+    let limits = Limits {
+        request_time: Duration::from_millis(30),
+        ..Limits::DEFAULT
+    };
+    let (surface, method, path) = desk(limits);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let clients: Vec<_> = (0..SENT)
+        .map(|index| {
+            let request = command(address, &method, &path, &format!("t-{index}"));
+            thread::spawn(move || {
+                let mut stream = connect(address);
+                stream
+                    .write_all(request.as_bytes())
+                    .expect("the request is written");
+                (format!("t-{index}"), plain_answer(&mut stream, DUE))
+            })
+        })
+        .collect();
+    let mut handed = BTreeSet::new();
+    let mut pause = 7u64;
+    let until = Instant::now() + Duration::from_millis(1500);
+    while Instant::now() < until {
+        if let Some(exchange) = listener.next(Duration::from_millis(10)) {
+            let body: Value = serde_json::from_slice(exchange.body()).expect("a JSON body");
+            let desk_id = body["desk_id"].as_str().expect("a desk id").to_owned();
+            assert!(handed.insert(desk_id.clone()), "{desk_id} handed twice");
+            pause = (pause * 31 + 11) % 97;
+            thread::sleep(Duration::from_millis(pause % 10));
+            exchange.respond(Answer {
+                status: 201,
+                body: Some(json!({"opened": desk_id})),
+                headers: Vec::new(),
+            });
+        }
+    }
+    let answers: BTreeMap<String, Option<(u16, String)>> = clients
+        .into_iter()
+        .map(|client| client.join().expect("the client's thread ends"))
+        .collect();
+    let mut refused = 0;
+    for (desk_id, answered) in &answers {
+        let (status, body) = answered
+            .clone()
+            .unwrap_or_else(|| panic!("{desk_id} is answered"));
+        if handed.contains(desk_id) {
+            assert!(
+                status == 201 || status == 504,
+                "{desk_id} was handed and answered {status}: {body}"
+            );
+        } else {
+            refused += 1;
+            assert_eq!(status, 503, "{desk_id} was never handed: {body}");
+            let body: Value = serde_json::from_str(&body).expect("a JSON refusal");
+            assert_eq!(body["committed"], json!(false), "{desk_id}: {body}");
+        }
+    }
+    assert_eq!(
+        handed.len() + refused,
+        SENT,
+        "every command is accounted for"
+    );
+}
