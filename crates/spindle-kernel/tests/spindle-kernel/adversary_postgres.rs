@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use spindle_kernel::{Change, Database, PostgresStore, Row, Store, StoreError};
 
+use crate::postgres_reads;
+
 const SCHEMA: &str = "adv1_w19";
 /// A password no message may print, plain or URL-encoded.
 const PASSWORD: &str = "adv@pass:w/rd%x";
@@ -307,51 +309,56 @@ fn noise(component: &str, from: usize, count: usize) {
              event_name, event_schema_version, occurred_at, recorded_at, subject, actor, \
              request_id, trace_id, data) SELECT 'local', 'adv.noise.Noise', 'n' || g, 1, \
              gen_random_uuid(), 'spindle.row', 1, now(), now(), 'a', 'a', 'a', 'a', \
-             '{{\"state\":\"open\",\"fields\":{{}}}}'::jsonb FROM generate_series({}, {}) g",
+             '{{\"state\":\"open\",\"fields\":{{}}}}'::jsonb FROM generate_series({}, {}) g; \
+             ANALYZE {table}",
             from + 1,
             from + count
         ),
     );
 }
 
-/// The shortest of [`SCANS`] scans of `ENTITY` in `store`, each answering its one row.
-fn quickest_scan(store: &mut PostgresStore) -> Duration {
-    (0..SCANS)
-        .map(|_| {
-            let started = Instant::now();
-            assert_eq!(store.scan(ENTITY).expect("the scan").rows.len(), 1);
-            started.elapsed()
-        })
-        .min()
-        .unwrap_or_default()
+/// The rows one scan of `ENTITY` reads from `component`'s event table, through a store opened
+/// on `database`, whose sessions carry the application name `tag`; the scan answers its one row.
+fn rows_a_scan_reads(database: &Database, component: &str, tag: &str) -> u64 {
+    let before = postgres_reads::events_read(&url(), SCHEMA, component, tag);
+    {
+        let mut store = open(database, component);
+        assert_eq!(store.scan(ENTITY).expect("the scan").rows.len(), 1);
+    }
+    postgres_reads::events_read(&url(), SCHEMA, component, tag) - before
 }
 
-/// Scans timed at each log size in [`adv_a_scan_costs_in_proportion_to_the_log`], the shortest
-/// counted: one scan of a few milliseconds, timed once beside the rest of the lane, took 8 ms at
-/// 40,000 events and 45 ms at 80,000 (`story:postgres-lane-margin`).
-const SCANS: usize = 5;
-
-/// A scan reads the component's whole log; it costs in proportion to the log, as the SQLite
-/// store's does: twice the log, at most three times the time.
+/// A scan costs in proportion to the log at most, as the SQLite store's does: twice the log, at
+/// most three times the rows read from the event table. The scan reads the entity's own stream,
+/// 2 rows at 40,000 events and at 80,000; a scan of the whole log reads twice as many at twice
+/// the log, and one that reads the log again for every 20,000 events of it (a scratch build)
+/// read 360,029 and 1,200,052 rows and fails.
+///
+/// The case timed the quickest of five scans at each size, and a scan of 1 to 2 ms answered
+/// three times slower at 80,000 events beside other builds (1.5 and 6.9 ms, 1.4 and 4.9 ms): it
+/// counts the rows PostgreSQL read instead, the table analyzed after each append as it would be
+/// in service, so the plan does not change between the sizes (`story:postgres-lane-margin`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv_a_scan_costs_in_proportion_to_the_log() {
-    let database = database();
     let component = fresh("long");
-    let mut store = open(&database, &component);
-    store.commit(&created("one")).expect("the match is created");
+    let mut database = database();
+    database.url = postgres_reads::tagged(&url(), &component);
+    open(&database, &component)
+        .commit(&created("one"))
+        .expect("the match is created");
     let size = 40_000;
     noise(&component, 0, size);
-    let once = quickest_scan(&mut store);
+    let once = rows_a_scan_reads(&database, &component, &component);
     noise(&component, size, size);
-    let twice = quickest_scan(&mut store);
+    let twice = rows_a_scan_reads(&database, &component, &component);
     eprintln!(
-        "scan over {size} events: {once:?}; over {}: {twice:?}",
+        "a scan over {size} events read {once} rows; over {}: {twice}",
         2 * size
     );
     assert!(
-        twice < once * 3,
-        "a scan over {size} events took {once:?}, over {} {twice:?}",
+        twice <= once * 3,
+        "a scan over {size} events read {once} rows of the event table, over {} {twice}",
         2 * size
     );
 }
