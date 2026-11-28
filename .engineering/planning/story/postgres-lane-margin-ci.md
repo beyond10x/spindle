@@ -6,7 +6,7 @@ status: draft
 title: The PostgreSQL lane keeps a quarter of its bound free on CI
 relations:
 - serves: vision:spindle
-revision: 1
+revision: 2
 ---
 ## Outcome
 
@@ -36,6 +36,9 @@ this one is under it by 8.4 s.
   its ten slowest tests each take at most 15 s.
 - Locally, three runs of `slot --timeout 30m --tokens 4 task check:postgres` (pinned to 4 CPUs)
   each pass and end their parallel part within 60 s.
+- `check:postgres` fails, locally and on CI, when any lane test took over 15 s, naming each such
+  test with its time, so a slow new test goes red on its own PR (operator's decision D-LM = A,
+  2026-11-28).
 - Each changed test is shown red against a deliberately broken build (not committed), and its
   before and after times are in its commit body.
 - No bound, thread count or timeout is raised, no test is ignored, and no shard is added.
