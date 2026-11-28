@@ -851,12 +851,16 @@ case "$1 $2" in
             *) [ -f "$3" ] || exit 1; sum=$(sha256sum <"$3" | cut -d ' ' -f 1) ;;
         esac
         grep -Fqx "$sum" "$rec/attested" || { echo "stub gh: no attestation for $3" >&2; exit 1; }
-        # One attestation per line of attested-commit, each naming that commit.
+        # One attestation per line of attested-commit, `<commit> [<ref>]`: it names that commit
+        # and is signed by release.yml at that ref, by default the run's own (refs/heads/main on a
+        # workflow_dispatch, refs/tags/$TAG otherwise).
+        own=refs/tags/$TAG
+        [ "${GITHUB_EVENT_NAME:-}" != workflow_dispatch ] || own=refs/heads/main
         separator=""
         printf '['
-        while IFS= read -r named; do
-            printf '%s{"verificationResult":{"signature":{"certificate":{"buildSignerURI":"https://github.com/beyond10x/spindle/.github/workflows/release.yml@stub","sourceRepositoryDigest":"%s"}}}}' \
-                "$separator" "$named"
+        while read -r named ref; do
+            printf '%s{"verificationResult":{"signature":{"certificate":{"buildSignerURI":"https://github.com/beyond10x/spindle/.github/workflows/release.yml@%s","sourceRepositoryDigest":"%s"}}}}' \
+                "$separator" "${ref:-$own}" "$named"
             separator=","
         done <"$rec/attested-commit"
         printf ']\n'
@@ -1261,20 +1265,45 @@ function guarded(e,    q, a, b, c, rest, depth, i, ch, quote) {
     }
     return depth == 0 && quote == ""
 }
+# A character that makes a YAML key or value other than it reads: a quote (and with it an escape
+# such as \x2d), a backslash, an anchor, an alias, a tag or a flow collection.
+function spelled(s) {
+    return index(s, "\"") || index(s, "'") || index(s, "\\") || index(s, "&") || index(s, "*") ||
+        index(s, "!") || index(s, "{") || index(s, "[")
+}
+# A plain scalar goes on over the next, deeper indented lines: a job-level if followed by one is
+# no longer the guard it reads as (text after its }} makes it an always-true format string).
+pendingif != "" && /^[ \t]*$/ { next }
+pendingif != "" && /^     / { print "if " pendingif " 0"; print "continued " pendingif }
+pendingif != "" { pendingif = "" }
+# Above run-block depth (keys of the workflow, its jobs and their steps), no key is quoted (a quoted
+# scalar followed by a colon; a quoted list item such as a tag pattern is no key), merged
+# or written as an explicit ? key, so every key is the word it reads as.
+{
+    match($0, /^ */)
+    indent = RLENGTH
+    body = substr($0, indent + 1)
+    if (substr(body, 1, 2) == "- ") body = substr(body, 3)
+}
+indent <= 8 && body ~ /^["'].*["'][ \t]*:([ \t]|$)/ { print "quoted-key " NR }
+indent <= 8 && body ~ /^<<[ \t]*:/ { print "merge-key " NR }
+indent <= 8 && (body ~ /^[?:][ \t]/ || body == "?" || body == ":") { print "explicit-key " NR }
 /^[ \t]*#/ { next }
 /^[^ ]/ { top = $0; sub(/:.*/, "", top); job = ""; inperm = 0 }
 /^on:/ { inon = 1; next }
 /^[^ ]/ { inon = 0 }
 inon && /^  [^ ]/ { v = trim($0); sub(/:.*/, "", v); print "on " v }
+top == "permissions" && spelled($0) { print "spelled-permission permissions" }
 top == "permissions" && /^permissions:/ { v = trim(substr($0, 13)); if (v != "") print "top " v; next }
 top == "permissions" && /^  [^ ]/ { print "top " trim($0) }
 top == "jobs" && /^  [a-z][a-z0-9_-]*:[ ]*$/ { job = trim($0); sub(/:$/, "", job); inperm = 0; next }
 job != "" && /^    [^ ]/ { inperm = 0 }
 job != "" && /^    permissions:/ { inperm = (trim(substr($0, index($0, ":") + 1)) == "") }
+job != "" && (inperm || /^    permissions:/) && spelled($0) { print "spelled-permission " job }
 /write-all/ { print "write-all " (job != "" ? job : top) }
 /id-token/ { print "id-token " (job != "" ? job : top) " " (inperm && /^      id-token: write$/ ? "block" : "other") }
 /attestations["']?[ \t]*:/ { print "attestations " (job != "" ? job : top) " " (inperm && /^      attestations: write$/ ? "block" : "other") }
-job != "" && /^    if:/ { e = trim(substr($0, index($0, ":") + 1)); print "if " job " " guarded(e) }
+job != "" && /^    if:/ { e = trim(substr($0, index($0, ":") + 1)); print "if " job " " guarded(e); pendingif = job }
 AWK
 id_token_breach() {
     facts=$(awk -f "$work/permissions.awk" "$1")
@@ -1283,6 +1312,9 @@ id_token_breach() {
     [ "$(printf '%s\n' "$facts" | sed -n 's/^on //p' | sort | tr '\n' ' ')" = "pull_request push workflow_dispatch " ] ||
         { echo "the workflow runs on other events than push, workflow_dispatch and pull_request"; return 1; }
     ! printf '%s\n' "$facts" | grep -q '^write-all ' || { echo "a permission is write-all"; return 1; }
+    odd=$(printf '%s\n' "$facts" | grep -E '^(spelled-permission|quoted-key|merge-key|explicit-key|continued) ' | tr '\n' ';')
+    [ -z "$odd" ] ||
+        { echo "a permission is spelled with a quote, escape, anchor, alias, tag or flow, a key is quoted, merged or explicit, or a job's if goes on over another line: $odd"; return 1; }
     [ "$(printf '%s\n' "$facts" | grep '^id-token ' | sort | tr '\n' ';')" = "id-token image-manifest block;id-token sign block;" ] ||
         { echo "id-token is not write on sign and image-manifest alone: $(printf '%s\n' "$facts" | grep '^id-token ' | tr '\n' ';')"; return 1; }
     [ "$(printf '%s\n' "$facts" | grep '^attestations ' | tr '\n' ';')" = "attestations sign block;" ] ||
@@ -1308,6 +1340,8 @@ mutant() {
         kind == "double-quoted-parens" && job == "image-manifest:" && /^    if:/ { sub(/ }}$/, " \\&\\& \"(\" || true || \")\" }}") }
         kind == "escaped-quote-parens" && job == "sign:" && /^    if:/ { sub(/ }}$/, " \\&\\& '"'"'a'"''"'('"'"' || true || '"'"')'"'"' }}") }
         kind == "unclosed-literal" && job == "sign:" && /^    if:/ { sub(/ }}$/, " \\&\\& '"'"'(x }}") }
+        kind == "anchor-alias" && job == "sign:" && $0 == "    permissions:" { $0 = "    permissions: &granted" }
+        kind == "continued-after-blank" && job == "image-manifest:" && /^    if:/ { print; print ""; print "      && true"; next }
         { print }
         kind == "top" && $0 == "permissions:" { print "  id-token: write" }
         kind == "build" && $0 == "  build:" { print "    permissions:"; print "      contents: read"; print "      id-token: write" }
@@ -1315,10 +1349,14 @@ mutant() {
         kind == "flow" && $0 == "  gate:" { print "    permissions: { contents: read, id-token: write }" }
         kind == "attest-publish" && $0 == "      contents: write" { print "      attestations: write" }
         kind == "target" && $0 == "  pull_request:" { print "  pull_request_target:" }
+        kind == "anchor-alias" && $0 == "  ui:" { print "    permissions: *granted" }
+        kind == "merge-key" && $0 == "  ui:" { print "    <<: *granted" }
+        kind == "explicit-key" && $0 == "  ui:" { print "    ? permissions"; print "    : read-all" }
     ' "$workflow" >"$work/mutant.yml"
 }
 for kind in top build if-removed or-true or-true-outside unparenthesised-or folded-if write-all flow attest-publish target \
-    quoted-parens double-quoted-parens escaped-quote-parens unclosed-literal; do
+    quoted-parens double-quoted-parens escaped-quote-parens unclosed-literal anchor-alias merge-key explicit-key \
+    continued-after-blank; do
     mutant "$kind"
     cases=$((cases + 1))
     if cmp -s "$workflow" "$work/mutant.yml"; then
@@ -1521,7 +1559,7 @@ else
     cat >>"$work/lenient/gh" <<'STUB'
 case "$1 $2" in
     "attestation verify")
-        printf '[{"verificationResult":{"signature":{"certificate":{"sourceRepositoryDigest":"%s"}}}}]\n' "$(cat "$rec/attested-commit")"
+        printf '[{"verificationResult":{"signature":{"certificate":{"buildSignerURI":"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/tags/%s","sourceRepositoryDigest":"%s"}}}}]\n' "$TAG" "$(cat "$rec/attested-commit")"
         ;;
     *) exec "$real" "$@" ;;
 esac
@@ -1542,26 +1580,44 @@ STUB
     grep -Fq '$ cosign verify-blob --bundle SHA256SUMS.sigstore.json' "$work/verify/summary" &&
         grep -Fq '$ gh attestation verify oci://ghcr.io/beyond10x/spindle:0.26.0@sha256:' "$work/verify/summary" ||
         fail "adversary_backfill_verifies_at_main: the step summary does not hold each command: $(head -c 600 "$work/verify/summary")"
-    # Each attestation names the tagged commit or this run's, and one names the commit expected
-    # for the run (D-U1-r1): a backfill passes with the tag run's attestation beside its own, and
-    # fails with only the tag run's or with any other commit; a tag push fails with any other.
-    for row in "workflow_dispatch $dispatched pass $tagged $dispatched" \
-        "workflow_dispatch $dispatched pass $dispatched" \
-        "workflow_dispatch $dispatched fail $tagged" \
-        "workflow_dispatch $dispatched fail $dispatched $(printf '%040d' 9)" \
-        "push $tagged pass $tagged" \
-        "push $tagged fail $tagged $dispatched" \
-        "push $tagged fail $(printf '%040d' 9)"; do
+    # D-U1-r2: every attestation is signed by release.yml at refs/heads/main or at this tag's ref,
+    # each at the tag's ref names the tagged commit, and one names the commit expected for the run
+    # (the tagged commit on a tag push, github.sha on a backfill). An attestation is
+    # <commit>@<ref>; the run is a tag push of 0.26.0 at T or a backfill from main at B; A is an
+    # earlier backfill's commit of main, O any other commit.
+    earlier=$(printf '%040d' 9)
+    other=$(printf '%040d' 6)
+    for row in \
+        "workflow_dispatch $dispatched pass $tagged@refs/tags/0.26.0 $dispatched@refs/heads/main" \
+        "workflow_dispatch $dispatched pass $dispatched@refs/heads/main" \
+        "workflow_dispatch $dispatched pass $earlier@refs/heads/main $dispatched@refs/heads/main" \
+        "workflow_dispatch $dispatched pass $tagged@refs/tags/0.26.0 $earlier@refs/heads/main $dispatched@refs/heads/main" \
+        "workflow_dispatch $dispatched fail $tagged@refs/tags/0.26.0" \
+        "workflow_dispatch $dispatched fail $earlier@refs/heads/main" \
+        "workflow_dispatch $dispatched fail $dispatched@refs/heads/main $other@refs/heads/feature" \
+        "workflow_dispatch $dispatched fail $dispatched@refs/heads/main $tagged@refs/tags/0.25.0" \
+        "workflow_dispatch $dispatched fail $dispatched@refs/heads/main $other@refs/tags/0.26.0" \
+        "workflow_dispatch $dispatched fail $dispatched@refs/heads/feature" \
+        "push $tagged pass $tagged@refs/tags/0.26.0" \
+        "push $tagged pass $tagged@refs/tags/0.26.0 $earlier@refs/heads/main" \
+        "push $tagged fail $tagged@refs/tags/0.26.0 $other@refs/tags/0.26.0" \
+        "push $tagged fail $tagged@refs/tags/0.26.0 $other@refs/heads/feature" \
+        "push $tagged fail $tagged@refs/tags/0.26.1" \
+        "push $tagged fail $other@refs/tags/0.26.0" \
+        "push $tagged fail $earlier@refs/heads/main"; do
         set -- $row
         event=$1
         sha=$2
         want=$3
         shift 3
-        printf '%s\n' "$@" >"$work/rec/attested-commit"
+        : >"$work/rec/attested-commit"
+        for attestation in "$@"; do
+            printf '%s %s\n' "${attestation%@*}" "${attestation#*@}" >>"$work/rec/attested-commit"
+        done
         cases=$((cases + 1))
         if verify_run "$work/steps/verify.sh" "$sha" "$event" true; then got=pass; else got=fail; fi
         [ "$got" = "$want" ] ||
-            fail "adversary_backfill_verifies_at_main: a $event run whose attestations name '$*' should $want and does $got: $(tail -n 3 "$work/verify/out" | tr '\n' ' ')"
+            fail "adversary_backfill_verifies_at_main: a $event run at $sha whose attestations are '$*' should $want and does $got: $(tail -n 3 "$work/verify/out" | tr '\n' ' ')"
     done
     echo "$tagged" >"$work/rec/attested-commit"
 fi

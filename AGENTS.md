@@ -267,8 +267,10 @@ cut from `main`:
    sha256 before it runs, in each job that fetches it; every action is pinned by commit.
    `publish` uploads each asset with its bundle and refuses one already on the page; it then
    downloads them back and verifies each with `cosign verify-blob` and `gh attestation verify`
-   (each attestation must name the tagged commit or the run's, and one of them the commit
-   expected for the run), refuses a copy of one archive with one byte changed, and
+   (each attestation must be signed by `release.yml` at `refs/heads/main` or at the tag's ref,
+   each at the tag's ref must name the tagged commit, and one must name the commit expected for
+   the run: the tagged commit on a tag push, `github.sha` on a backfill), refuses a copy of one
+   archive with one byte changed, and
    verifies the image with `cosign verify` and `gh attestation verify oci://<line>`, each command
    and its output in the run's summary; a failed check fails the run. The signing identity is
    `https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/tags/<version>`, or
@@ -284,8 +286,9 @@ cut from `main`:
    backfill is dispatched from `main`: `provenance`'s first step fails a `workflow_dispatch` run
    from any other ref before anything is built or signed. It is signed by the workflow at
    `refs/heads/main`, and its attestations name the commit of `main` the workflow ran from
-   (`github.sha`), not the tag's; an image or asset the tag run already attested keeps that
-   attestation beside the backfill's, and both pass. A commit with one
+   (`github.sha`), not the tag's. Attestations of earlier runs stay beside a backfill's and pass:
+   the tag run's at the tagged commit, and an earlier backfill's at another commit of `main`. A
+   commit with one
    rebuilds the images, and their tag is left as it is only where the rebuilt images have the
    digests it lists, since a rebuilt binary that differs gives other images. `image-manifest`
    tags only on the registry's answer `<image>:<version>: not found`; any other error stops it.

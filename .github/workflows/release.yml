@@ -1010,12 +1010,12 @@ jobs:
           gh release view "$TAG" --json assets --jq '.assets[].name' | tee -a "$GITHUB_STEP_SUMMARY"
 
       # The assets as a consumer gets them, downloaded back from the release page: each verified
-      # with cosign against its bundle and with gh against its attestations, each of which must
-      # name the tagged commit or this run's (a backfill finds the tag run's attestation of the same
-      # image or asset too), one of them the commit expected for this run (the tagged commit on a
-      # tag push, main's on a backfill); a copy of one archive with one byte changed must fail both;
-      # and the image by
-      # the line in IMAGES. The identity is this workflow at the tag's ref, or at refs/heads/main
+      # with cosign against its bundle and with gh against its attestations: each signed by this
+      # workflow at refs/heads/main or at this tag's ref, each at the tag's ref naming the tagged
+      # commit, and one naming the commit expected for this run (the tagged commit on a tag push,
+      # github.sha on a backfill); attestations of earlier runs, the tag run's or a backfill's at
+      # another commit of main, stay beside it. A copy of one archive with one byte changed must
+      # fail both; and the image by the line in IMAGES. The identity is this workflow at the tag's ref, or at refs/heads/main
       # for a backfill (workflow_dispatch), whose certificates name the commit of main the workflow
       # ran from (github.sha), not the tag's. Each command and its output go to the step summary;
       # any check that fails fails the run.
@@ -1030,6 +1030,8 @@ jobs:
             *) echo "No signing identity for a $GITHUB_EVENT_NAME run; nothing verified." | tee -a "$GITHUB_STEP_SUMMARY" >&2; exit 1 ;;
           esac
           identity="https://github.com/${GH_REPO}/.github/workflows/release.yml@${ref}"
+          at_main="https://github.com/${GH_REPO}/.github/workflows/release.yml@refs/heads/main"
+          at_tag="https://github.com/${GH_REPO}/.github/workflows/release.yml@refs/tags/${TAG}"
           issuer=https://token.actions.githubusercontent.com
           signer="${GH_REPO}/.github/workflows/release.yml"
           summary="$GITHUB_STEP_SUMMARY"
@@ -1050,13 +1052,15 @@ jobs:
             if [ "$status" -eq 0 ]; then
               jq -r '.[].verificationResult.signature.certificate | "signed by \(.buildSignerURI) at \(.sourceRepositoryDigest)"' \
                 "$RUNNER_TEMP/attested.json" >> "$summary" 2>&1 || status=1
-              if ! jq -e --arg commit "$commit" --arg tagged "$COMMIT" --arg run "$GITHUB_SHA" '
-                [.[].verificationResult.signature.certificate.sourceRepositoryDigest] as $named
-                | ($named | length) > 0
-                  and all($named[]; . == $tagged or . == $run)
-                  and any($named[]; . == $commit)
+              if ! jq -e --arg commit "$commit" --arg tagged "$COMMIT" --arg main "$at_main" --arg tag "$at_tag" '
+                type == "array" and length > 0
+                and ([.[] | .verificationResult.signature.certificate
+                      | {signer: .buildSignerURI, named: .sourceRepositoryDigest}] as $all
+                     | all($all[]; .signer == $main or .signer == $tag)
+                       and all($all[]; .signer != $tag or .named == $tagged)
+                       and any($all[]; .named == $commit))
               ' "$RUNNER_TEMP/attested.json" > /dev/null 2>&1; then
-                echo "The attestations do not each name the tagged commit $COMMIT or this run's $GITHUB_SHA, with one naming $commit." >> "$summary"
+                echo "Not every attestation is signed by $at_main or $at_tag, one at the tag's ref names a commit other than $COMMIT, or none names $commit." >> "$summary"
                 status=1
               fi
             fi
