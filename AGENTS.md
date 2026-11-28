@@ -267,7 +267,8 @@ cut from `main`:
    sha256 before it runs, in each job that fetches it; every action is pinned by commit.
    `publish` uploads each asset with its bundle and refuses one already on the page; it then
    downloads them back and verifies each with `cosign verify-blob` and `gh attestation verify`
-   (which must name the commit built), refuses a copy of one archive with one byte changed, and
+   (each attestation must name the tagged commit or the run's, and one of them the commit
+   expected for the run), refuses a copy of one archive with one byte changed, and
    verifies the image with `cosign verify` and `gh attestation verify oci://<line>`, each command
    and its output in the run's summary; a failed check fails the run. The signing identity is
    `https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/tags/<version>`, or
@@ -280,8 +281,11 @@ cut from `main`:
    page lacks the assets: a version older than 0.26.0 without a root `Containerfile` builds no
    image, and `publish` uploads the archives, the SBOM and `SHA256SUMS`, signed, without
    `IMAGES`; for 0.26.0 or later a commit without one fails `provenance`, naming the file. A
-   backfill is signed by the workflow at `refs/heads/main`, and its attestations name the commit
-   of `main` the workflow ran from (`github.sha`), not the tag's. A commit with one
+   backfill is dispatched from `main`: `provenance`'s first step fails a `workflow_dispatch` run
+   from any other ref before anything is built or signed. It is signed by the workflow at
+   `refs/heads/main`, and its attestations name the commit of `main` the workflow ran from
+   (`github.sha`), not the tag's; an image or asset the tag run already attested keeps that
+   attestation beside the backfill's, and both pass. A commit with one
    rebuilds the images, and their tag is left as it is only where the rebuilt images have the
    digests it lists, since a rebuilt binary that differs gives other images. `image-manifest`
    tags only on the registry's answer `<image>:<version>: not found`; any other error stops it.

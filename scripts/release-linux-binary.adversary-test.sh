@@ -851,8 +851,15 @@ case "$1 $2" in
             *) [ -f "$3" ] || exit 1; sum=$(sha256sum <"$3" | cut -d ' ' -f 1) ;;
         esac
         grep -Fqx "$sum" "$rec/attested" || { echo "stub gh: no attestation for $3" >&2; exit 1; }
-        printf '[{"verificationResult":{"signature":{"certificate":{"buildSignerURI":"https://github.com/beyond10x/spindle/.github/workflows/release.yml@stub","sourceRepositoryDigest":"%s"}}}}]\n' \
-            "$(cat "$rec/attested-commit")"
+        # One attestation per line of attested-commit, each naming that commit.
+        separator=""
+        printf '['
+        while IFS= read -r named; do
+            printf '%s{"verificationResult":{"signature":{"certificate":{"buildSignerURI":"https://github.com/beyond10x/spindle/.github/workflows/release.yml@stub","sourceRepositoryDigest":"%s"}}}}' \
+                "$separator" "$named"
+            separator=","
+        done <"$rec/attested-commit"
+        printf ']\n'
         ;;
 esac
 exit 0
@@ -1225,10 +1232,11 @@ done
 #   ${{ github.event_name != 'pull_request' }}
 #   ${{ github.event_name != 'pull_request' && <rest> }}
 #   ${{ !cancelled() && github.event_name != 'pull_request' && <rest> }}
-# where <rest> holds no || outside parentheses and nothing follows the closing }}.
+# where <rest> holds no || outside parentheses (a parenthesis inside a '...' or "..." literal
+# counts as none), every literal is closed, and nothing follows the closing }}.
 cat >"$work/permissions.awk" <<'AWK'
 function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
-function guarded(e,    q, a, b, c, rest, depth, i, ch) {
+function guarded(e,    q, a, b, c, rest, depth, i, ch, quote) {
     q = "'"
     a = "${{ github.event_name != " q "pull_request" q " }}"
     b = "${{ github.event_name != " q "pull_request" q " && "
@@ -1241,13 +1249,17 @@ function guarded(e,    q, a, b, c, rest, depth, i, ch) {
     rest = substr(rest, 1, length(rest) - 3)
     if (index(rest, "{{") || index(rest, "}}") || trim(rest) == "") return 0
     depth = 0
+    quote = ""
+    # A literal's quote closes it; an escaped quote ('' inside '...') closes and reopens it.
     for (i = 1; i <= length(rest); i++) {
         ch = substr(rest, i, 1)
-        if (ch == "(") depth++
+        if (quote != "") { if (ch == quote) quote = ""; continue }
+        if (ch == q || ch == "\"") quote = ch
+        else if (ch == "(") depth++
         else if (ch == ")") { depth--; if (depth < 0) return 0 }
         else if (ch == "|" && substr(rest, i + 1, 1) == "|" && depth == 0) return 0
     }
-    return depth == 0
+    return depth == 0 && quote == ""
 }
 /^[ \t]*#/ { next }
 /^[^ ]/ { top = $0; sub(/:.*/, "", top); job = ""; inperm = 0 }
@@ -1292,6 +1304,10 @@ mutant() {
         kind == "or-true-outside" && job == "sign:" && /^    if:/ { $0 = $0 " || true" }
         kind == "unparenthesised-or" && job == "image-manifest:" && /^    if:/ { sub(/ }}$/, " || github.event_name == '"'"'pull_request'"'"' }}") }
         kind == "folded-if" && job == "sign:" && /^    if:/ { print "    if: >-"; sub(/^    if:/, "     "); }
+        kind == "quoted-parens" && job == "sign:" && /^    if:/ { sub(/ }}$/, " \\&\\& '"'"'('"'"' || true || '"'"')'"'"' }}") }
+        kind == "double-quoted-parens" && job == "image-manifest:" && /^    if:/ { sub(/ }}$/, " \\&\\& \"(\" || true || \")\" }}") }
+        kind == "escaped-quote-parens" && job == "sign:" && /^    if:/ { sub(/ }}$/, " \\&\\& '"'"'a'"''"'('"'"' || true || '"'"')'"'"' }}") }
+        kind == "unclosed-literal" && job == "sign:" && /^    if:/ { sub(/ }}$/, " \\&\\& '"'"'(x }}") }
         { print }
         kind == "top" && $0 == "permissions:" { print "  id-token: write" }
         kind == "build" && $0 == "  build:" { print "    permissions:"; print "      contents: read"; print "      id-token: write" }
@@ -1301,7 +1317,8 @@ mutant() {
         kind == "target" && $0 == "  pull_request:" { print "  pull_request_target:" }
     ' "$workflow" >"$work/mutant.yml"
 }
-for kind in top build if-removed or-true or-true-outside unparenthesised-or folded-if write-all flow attest-publish target; do
+for kind in top build if-removed or-true or-true-outside unparenthesised-or folded-if write-all flow attest-publish target \
+    quoted-parens double-quoted-parens escaped-quote-parens unclosed-literal; do
     mutant "$kind"
     cases=$((cases + 1))
     if cmp -s "$workflow" "$work/mutant.yml"; then
@@ -1525,7 +1542,48 @@ STUB
     grep -Fq '$ cosign verify-blob --bundle SHA256SUMS.sigstore.json' "$work/verify/summary" &&
         grep -Fq '$ gh attestation verify oci://ghcr.io/beyond10x/spindle:0.26.0@sha256:' "$work/verify/summary" ||
         fail "adversary_backfill_verifies_at_main: the step summary does not hold each command: $(head -c 600 "$work/verify/summary")"
+    # Each attestation names the tagged commit or this run's, and one names the commit expected
+    # for the run (D-U1-r1): a backfill passes with the tag run's attestation beside its own, and
+    # fails with only the tag run's or with any other commit; a tag push fails with any other.
+    for row in "workflow_dispatch $dispatched pass $tagged $dispatched" \
+        "workflow_dispatch $dispatched pass $dispatched" \
+        "workflow_dispatch $dispatched fail $tagged" \
+        "workflow_dispatch $dispatched fail $dispatched $(printf '%040d' 9)" \
+        "push $tagged pass $tagged" \
+        "push $tagged fail $tagged $dispatched" \
+        "push $tagged fail $(printf '%040d' 9)"; do
+        set -- $row
+        event=$1
+        sha=$2
+        want=$3
+        shift 3
+        printf '%s\n' "$@" >"$work/rec/attested-commit"
+        cases=$((cases + 1))
+        if verify_run "$work/steps/verify.sh" "$sha" "$event" true; then got=pass; else got=fail; fi
+        [ "$got" = "$want" ] ||
+            fail "adversary_backfill_verifies_at_main: a $event run whose attestations name '$*' should $want and does $got: $(tail -n 3 "$work/verify/out" | tr '\n' ' ')"
+    done
+    echo "$tagged" >"$work/rec/attested-commit"
 fi
+
+# adversary_backfill_verifies_at_main, the ref: a workflow_dispatch run from any ref but
+# refs/heads/main stops in provenance's first step, before anything is built, signed or uploaded;
+# a tag push and a pull request pass it.
+step_script provenance "A backfill runs the workflow from main" "$work/steps/from-main.sh"
+cases=$((cases + 1))
+[ "$(job provenance | grep -m 1 '^      - ')" = "      - name: A backfill runs the workflow from main" ] ||
+    fail "adversary_backfill_verifies_at_main: provenance does not start with the step 'A backfill runs the workflow from main'"
+for row in "workflow_dispatch refs/heads/main pass" "workflow_dispatch refs/heads/feature fail" \
+    "workflow_dispatch refs/tags/0.26.0 fail" "workflow_dispatch refs/heads/main2 fail" "workflow_dispatch '' fail" \
+    "push refs/tags/0.26.0 pass" "pull_request refs/pull/1/merge pass"; do
+    set -- $row
+    [ "$2" != "''" ] || set -- "$1" "" "$3"
+    cases=$((cases + 1))
+    if (GITHUB_EVENT_NAME=$1 GITHUB_REF=$2 GITHUB_STEP_SUMMARY=$work/from-main.summary \
+        bash "$work/steps/from-main.sh" >/dev/null 2>&1); then got=pass; else got=fail; fi
+    [ "$got" = "$3" ] ||
+        fail "adversary_backfill_verifies_at_main: a $1 run from '$2' should $3 provenance's first step and does $got"
+done
 
 # --- adversary_w34_u1 ------------------------------------------------------------------------
 # Adversarial cases for story:release-artifacts-signed (wave 34, unit U1), added after the unit's

@@ -39,6 +39,17 @@ jobs:
       commit: ${{ steps.release.outputs.commit }}
       containerfile: ${{ steps.image.outputs.containerfile }}
     steps:
+      # A backfill is signed as release.yml@refs/heads/main and verified only at that ref, after
+      # an upload that is never replaced; a dispatch from any other ref stops here, before
+      # anything is built, signed or uploaded. A tag push and a pull request pass.
+      - name: A backfill runs the workflow from main
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "A backfill runs release.yml from refs/heads/main, the ref its signatures name; this one runs from '$GITHUB_REF'. Nothing built, signed or uploaded." | tee -a "$GITHUB_STEP_SUMMARY" >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
@@ -999,8 +1010,11 @@ jobs:
           gh release view "$TAG" --json assets --jq '.assets[].name' | tee -a "$GITHUB_STEP_SUMMARY"
 
       # The assets as a consumer gets them, downloaded back from the release page: each verified
-      # with cosign against its bundle and with gh against its attestation, which must name the
-      # commit built; a copy of one archive with one byte changed must fail both; and the image by
+      # with cosign against its bundle and with gh against its attestations, each of which must
+      # name the tagged commit or this run's (a backfill finds the tag run's attestation of the same
+      # image or asset too), one of them the commit expected for this run (the tagged commit on a
+      # tag push, main's on a backfill); a copy of one archive with one byte changed must fail both;
+      # and the image by
       # the line in IMAGES. The identity is this workflow at the tag's ref, or at refs/heads/main
       # for a backfill (workflow_dispatch), whose certificates name the commit of main the workflow
       # ran from (github.sha), not the tag's. Each command and its output go to the step summary;
@@ -1036,9 +1050,13 @@ jobs:
             if [ "$status" -eq 0 ]; then
               jq -r '.[].verificationResult.signature.certificate | "signed by \(.buildSignerURI) at \(.sourceRepositoryDigest)"' \
                 "$RUNNER_TEMP/attested.json" >> "$summary" 2>&1 || status=1
-              if ! jq -e --arg commit "$commit" 'length > 0 and all(.[]; .verificationResult.signature.certificate.sourceRepositoryDigest == $commit)' \
-                "$RUNNER_TEMP/attested.json" > /dev/null 2>&1; then
-                echo "The attestation does not name the commit $commit." >> "$summary"
+              if ! jq -e --arg commit "$commit" --arg tagged "$COMMIT" --arg run "$GITHUB_SHA" '
+                [.[].verificationResult.signature.certificate.sourceRepositoryDigest] as $named
+                | ($named | length) > 0
+                  and all($named[]; . == $tagged or . == $run)
+                  and any($named[]; . == $commit)
+              ' "$RUNNER_TEMP/attested.json" > /dev/null 2>&1; then
+                echo "The attestations do not each name the tagged commit $COMMIT or this run's $GITHUB_SHA, with one naming $commit." >> "$summary"
                 status=1
               fi
             fi

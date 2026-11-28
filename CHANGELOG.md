@@ -40,7 +40,8 @@ are Spindle's releases.
   signature, uploaded beside it as `<asset>.sigstore.json`, and a SLSA build provenance
   attestation in the repository's attestations; the image's manifest list is signed by its digest
   and attested the same way. The signer is `release.yml` at the tag's ref, or at
-  `refs/heads/main` for a backfill. A new job `sign`, the only one with `attestations: write`,
+  `refs/heads/main` for a backfill, which fails before it builds anything when it is dispatched
+  from another ref. A new job `sign`, the only one with `attestations: write`,
   and `image-manifest` are the only jobs with `id-token: write`, and neither runs on a pull
   request; cosign v3.1.6 is checked against its pinned sha256 before it runs, and
   `actions/attest-build-provenance` v4.2.2 is pinned by commit. `publish` uploads each bundle with
