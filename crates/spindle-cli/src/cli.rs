@@ -558,8 +558,13 @@ pub enum Command {
         /// of the entries sent before it, and prints that the seed already ran once every one is
         /// done; one with another file exits 1 before listening, naming both digests, unless the
         /// state holds no row. A state without `seed.json` gets the whole seed, then the record,
-        /// and a reset by a run without `--seed` removes it. Without `--state` nothing is
-        /// recorded and every start sends the whole seed. `POST /api/reset` drops the entries
+        /// and a reset by a run without `--seed` removes it. On PostgreSQL with `database_lease`
+        /// the same record is the row `seed` of the first component's lease table
+        /// (`<prefix>_p_lease`), written by the leading process under its lease whatever lease
+        /// token it took, and read the same way, but a store with rows and no record (seeded by an
+        /// earlier release, or filled by `state move`) is taken as seeded: the record is written
+        /// with every entry done and none is sent. Otherwise nothing is recorded and every start
+        /// sends the whole seed. `POST /api/reset` drops the entries
         /// not yet sent; with no world it then records 0 entries done and submits the seed
         /// again, from its first entry, before it answers, its end line counting that run alone,
         /// and with a world it loads that world alone and records every entry done.

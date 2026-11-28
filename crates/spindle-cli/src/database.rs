@@ -266,9 +266,12 @@ fn lease_term() -> Result<Option<Duration>> {
 const RETRY: Duration = Duration::from_millis(50);
 
 /// The leases of every component of a served run bound to `postgres`, taken in name order through
-/// one connection of their own, which reads and takes only the lease rows and opens no store.
+/// one connection of their own, which reads and takes only the lease rows and the seed's record
+/// beside them, and opens no store.
 pub(crate) struct Leases {
     lease: Lease,
+    /// The schema the components' tables are in.
+    schema: String,
     /// The components, in name order.
     components: Vec<String>,
     /// The token of each lease taken, by component.
@@ -296,6 +299,7 @@ impl Leases {
         let lease = Lease::connect(&database, term).context("connecting for the leases")?;
         Ok(Some(Self {
             lease,
+            schema: database.schema,
             components,
             held: BTreeMap::new(),
             told: None,
@@ -384,36 +388,95 @@ impl Leases {
     }
 
     /// Keeps every lease held on a thread of its own, renewing each every [`Leases::renewal`], until
-    /// the [`Kept`] is dropped, which releases them.
+    /// the [`Kept`] is dropped, which releases them. The same thread reads and writes the seed's
+    /// record on the lease connection when asked ([`SeedRow`]).
     ///
     /// # Errors
     /// The thread cannot start.
     pub(crate) fn keep(self) -> Result<Kept> {
         let term = self.lease.term();
-        let tokens = self.held.clone();
         let shared = Arc::new(Mutex::new(Renewal {
             lost: None,
             renewed: Instant::now(),
         }));
-        let (stop, stopped) = mpsc::channel::<()>();
+        let (asks, asked) = mpsc::channel::<Ask>();
+        let first = self.components.first().cloned().unwrap_or_default();
+        let row = SeedRow {
+            asks: asks.clone(),
+            // The thread answers between two renewals: at most one statement per lease before the
+            // one asked, each bounded by the connection's statement timeout, and one more to
+            // connect again.
+            wait: self
+                .lease
+                .statement_wait()
+                .saturating_mul(u32::try_from(self.components.len() + 2).unwrap_or(u32::MAX)),
+            table: format!(
+                "{}.{}_p_lease",
+                self.schema,
+                spindle_kernel::postgres_prefix(&first)
+            ),
+        };
         let noted = Arc::clone(&shared);
         let thread = std::thread::Builder::new()
             .name("spindle-lease".to_owned())
-            .spawn(move || self.renewing(&stopped, &noted))
+            .spawn(move || self.renewing(&asked, &noted))
             .context("starting the lease thread")?;
         Ok(Kept {
             shared,
             term,
-            tokens,
-            stop: Some(stop),
+            row,
+            stop: Some(asks),
             thread: Some(thread),
         })
     }
 
-    /// Renews every lease held until `stopped` reads, then releases them; notes on `shared` when
-    /// each renewal began that landed, and why a lease was lost: another process took it, or no
-    /// renewal landed for a whole lease.
-    fn renewing(mut self, stopped: &mpsc::Receiver<()>, shared: &Mutex<Renewal>) {
+    /// Answers `ask` about the seed's record, in the lease table of the first component in name
+    /// order, under the token this run took its lease at (`story:seed-under-a-lease`, D3 A, D4 A).
+    fn answer(&mut self, ask: Ask) {
+        let held = self
+            .components
+            .first()
+            .and_then(|first| self.held.get(first).map(|token| (first.clone(), *token)));
+        let Some((first, token)) = held else {
+            let none = "this run holds no lease".to_owned();
+            match ask {
+                Ask::Stop => {}
+                Ask::Read(reply) => drop(reply.send(Err(none))),
+                Ask::Write(_, reply) | Ask::Forget(reply) => drop(reply.send(Err(none))),
+            }
+            return;
+        };
+        match ask {
+            Ask::Stop => {}
+            Ask::Read(reply) => {
+                let read = self
+                    .lease
+                    .seed_record(&first)
+                    .map_err(|error| error.to_string());
+                let _ = reply.send(read);
+            }
+            Ask::Write(body, reply) => {
+                let written = self
+                    .lease
+                    .record_seed(&first, token, &body)
+                    .map_err(|error| error.to_string());
+                let _ = reply.send(written);
+            }
+            Ask::Forget(reply) => {
+                let removed = self
+                    .lease
+                    .forget_seed(&first, token)
+                    .map_err(|error| error.to_string());
+                let _ = reply.send(removed);
+            }
+        }
+    }
+
+    /// Renews every lease held until `asked` reads [`Ask::Stop`], then releases them; notes on
+    /// `shared` when each renewal began that landed, and why a lease was lost: another process
+    /// took it, or no renewal landed for a whole lease. Between two renewals it answers each ask
+    /// about the seed's record.
+    fn renewing(mut self, asked: &mpsc::Receiver<Ask>, shared: &Mutex<Renewal>) {
         let term = self.lease.term();
         let mut renewed = Instant::now();
         let lose = |why: String| {
@@ -425,10 +488,17 @@ impl Leases {
         // holding the row lands as the write ends.
         let mut next = Instant::now() + self.renewal();
         let mut retry = RETRY;
-        // A message or a dropped sender stops the renewals.
-        while let Err(mpsc::RecvTimeoutError::Timeout) =
-            stopped.recv_timeout(next.saturating_duration_since(Instant::now()))
-        {
+        // A stop or a dropped sender stops the renewals; an ask about the seed's record is
+        // answered at once.
+        loop {
+            match asked.recv_timeout(next.saturating_duration_since(Instant::now())) {
+                Ok(Ask::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Ok(ask) => {
+                    self.answer(ask);
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+            }
             let began = Instant::now();
             let mut failed = None;
             for (component, &token) in &self.held {
@@ -480,6 +550,82 @@ impl Leases {
     }
 }
 
+/// What the run's thread asks the lease thread ([`Leases::renewing`]).
+enum Ask {
+    /// Release the leases and end.
+    Stop,
+    /// Read the seed's record.
+    Read(mpsc::Sender<Result<Option<serde_json::Value>, String>>),
+    /// Write the seed's record.
+    Write(serde_json::Value, mpsc::Sender<Result<(), String>>),
+    /// Remove the seed's record.
+    Forget(mpsc::Sender<Result<(), String>>),
+}
+
+/// Where a leading run records its seed (`story:seed-under-a-lease`): the row `seed` of the lease
+/// table of its first component in name order, read and written by the lease thread on the lease
+/// connection, each write landing only while the lease row names the token this run took (D3 A).
+/// The run's thread waits for each answer, at most the statements the lease thread may run
+/// before it ([`Leases::keep`]); no connection is opened for it.
+#[derive(Clone)]
+pub(crate) struct SeedRow {
+    asks: mpsc::Sender<Ask>,
+    wait: Duration,
+    /// The lease table, `<schema>.<prefix>_p_lease`.
+    table: String,
+}
+
+impl SeedRow {
+    /// The lease table the record is a row of.
+    pub(crate) fn table(&self) -> &str {
+        &self.table
+    }
+
+    /// What the row holds, `None` where there is none.
+    ///
+    /// # Errors
+    /// A row that cannot be read, or a lease thread that has ended or did not answer in time.
+    pub(crate) fn read(&self) -> Result<Option<serde_json::Value>> {
+        self.asked(Ask::Read)
+    }
+
+    /// Writes `body` as the row.
+    ///
+    /// # Errors
+    /// A row that cannot be written, a lease another process took, or a lease thread that has
+    /// ended or did not answer in time.
+    pub(crate) fn write(&self, body: serde_json::Value) -> Result<()> {
+        self.asked(|reply| Ask::Write(body, reply))
+    }
+
+    /// Removes the row.
+    ///
+    /// # Errors
+    /// As [`SeedRow::write`].
+    pub(crate) fn forget(&self) -> Result<()> {
+        self.asked(Ask::Forget)
+    }
+
+    /// Sends the ask `ask` makes of a reply channel and waits for its answer.
+    fn asked<T>(&self, ask: impl FnOnce(mpsc::Sender<Result<T, String>>) -> Ask) -> Result<T> {
+        let (reply, answer) = mpsc::channel();
+        self.asks
+            .send(ask(reply))
+            .ok()
+            .context("the lease thread has ended, so the seed's record is not read or written")?;
+        match answer.recv_timeout(self.wait) {
+            Ok(answered) => answered.map_err(|why| anyhow::anyhow!(why)),
+            Err(mpsc::RecvTimeoutError::Timeout) => bail!(
+                "the lease thread did not answer about the seed's record within {:?}",
+                self.wait
+            ),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                bail!("the lease thread has ended, so the seed's record is not read or written")
+            }
+        }
+    }
+}
+
 /// What the lease thread notes for the run's thread ([`Kept`]).
 struct Renewal {
     /// Why a lease was lost, once one was.
@@ -492,9 +638,9 @@ struct Renewal {
 pub(crate) struct Kept {
     shared: Arc<Mutex<Renewal>>,
     term: Duration,
-    /// The token of each lease, by component, as this run took it.
-    tokens: BTreeMap<String, u64>,
-    stop: Option<mpsc::Sender<()>>,
+    /// Where the run records its seed.
+    row: SeedRow,
+    stop: Option<mpsc::Sender<Ask>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -534,20 +680,17 @@ impl Kept {
         })
     }
 
-    /// The first component, in name order, whose lease this run took at a token above the
-    /// first, with that token: a lease another process held before.
-    pub(crate) fn taken_again(&self) -> Option<(&str, u64)> {
-        self.tokens
-            .iter()
-            .find(|(_, token)| **token > 1)
-            .map(|(component, token)| (component.as_str(), *token))
+    /// Where the run records its seed, whatever token it took each lease at
+    /// (`story:seed-under-a-lease`).
+    pub(crate) fn seed_row(&self) -> SeedRow {
+        self.row.clone()
     }
 }
 
 impl Drop for Kept {
     fn drop(&mut self) {
         if let Some(stop) = self.stop.take() {
-            let _ = stop.send(());
+            let _ = stop.send(Ask::Stop);
         }
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();

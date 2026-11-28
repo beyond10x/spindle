@@ -239,11 +239,12 @@ impl LogStore<PostgresEventStore> {
 /// statements.
 const MIGRATION_WAIT: Duration = Duration::from_secs(60);
 
-/// The read model a component's lease is kept in, `<prefix>_p_lease`: one row, its body
-/// `{"token": <n>, "pid": <the holder's session>, "until": <seconds since 1970>}`, which
+/// The read model a component's lease is kept in, `<prefix>_p_lease`: the row [`LEASE_ROW`], its
+/// body `{"token": <n>, "pid": <the holder's session>, "until": <seconds since 1970>}`, which
 /// [`Lease`] takes, renews and releases on a connection of its own, and which every write of a
-/// store opened under it reads, locked, inside its own append transaction ([`Fence`]).
-/// `store migrate` creates it beside the component's other tables.
+/// store opened under it reads, locked, inside its own append transaction ([`Fence`]); and, where
+/// a run with a lease recorded a seed, the row [`SEED_ROW`]. `store migrate` creates it beside the
+/// component's other tables.
 const LEASE: ProjectionSpec = ProjectionSpec {
     name: "lease",
     indexed: &[],
@@ -252,8 +253,14 @@ const LEASE: ProjectionSpec = ProjectionSpec {
 /// Every read model a component's tables hold.
 const LEASES: &[ProjectionSpec] = &[LEASE];
 
-/// The key of the one row of [`LEASE`].
+/// The key of the row of [`LEASE`] that holds the lease.
 const LEASE_ROW: &str = "lease";
+
+/// The key of the row of [`LEASE`] that records the seed a run with a lease applied to the
+/// component's store (`story:seed-under-a-lease`, D4 A): `{"digest", "done", "rejected"}`, as
+/// `run --state` records it in `seed.json`. Only [`Lease::record_seed`] and [`Lease::forget_seed`]
+/// write it, under the lease; no fence, take or renewal reads it.
+const SEED_ROW: &str = "seed";
 
 /// Drives [`LEASE`] inline, so a write's fence may read it locked in the write's transaction. No
 /// event moves it: only [`Lease`] writes it.
@@ -391,12 +398,12 @@ fn current(component: &str, place: &str) -> Result<(), StoreError> {
 }
 
 /// A process's hold on the leases of its components' tables (`story:several-writers-one-postgres`):
-/// one connection of its own to the database, which reads and writes only the lease rows
-/// ([`LEASE`]) and opens no store. A lease is free once its time ran out by the database's clock,
-/// or once the session of the process that holds it has ended (a process killed); taking it moves
-/// its token on, so each holder's token is greater than every earlier one. Every store this
-/// process opens on a component's tables after taking its lease is fenced by that token
-/// ([`PostgresStore::open`]).
+/// one connection of its own to the database, which reads and writes only the rows of the lease
+/// tables ([`LEASE`]: the lease, and the record of a seed beside it) and opens no store. A lease
+/// is free once its time ran out by the database's clock, or once the session of the process that
+/// holds it has ended (a process killed); taking it moves its token on, so each holder's token is
+/// greater than every earlier one. Every store this process opens on a component's tables after
+/// taking its lease is fenced by that token ([`PostgresStore::open`]).
 pub struct Lease {
     database: Database,
     term: Duration,
@@ -667,7 +674,158 @@ impl Lease {
         }
         released
     }
+
+    /// How long one statement on the connection for the leases waits for itself and for a lock:
+    /// a third of the term, at least 200 ms.
+    #[must_use]
+    pub fn statement_wait(&self) -> Duration {
+        self.wait()
+    }
+
+    /// What the row `seed` of `component`'s lease table holds, `None` where there is none
+    /// (`story:seed-under-a-lease`).
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where the row cannot be read.
+    pub fn seed_record(
+        &mut self,
+        component: &str,
+    ) -> Result<Option<serde_json::Value>, StoreError> {
+        let tenant = crate::sqlite::TENANT;
+        let row = self.seed_statement(component, SEED_READ, &[&tenant, &SEED_ROW])?;
+        row.map(|row| {
+            let text: String = row.try_get(0).map_err(|error| {
+                StoreError::Backend(format!(
+                    "the seed record of {component} was not read: {error}"
+                ))
+            })?;
+            serde_json::from_str(&text).map_err(|error| {
+                StoreError::Backend(format!(
+                    "the seed record of {component} is not JSON: {error}"
+                ))
+            })
+        })
+        .transpose()
+    }
+
+    /// Writes `body` as the row `seed` of `component`'s lease table, in one statement that writes
+    /// only while the lease row names `token` and this connection's session, and holds the lease
+    /// row locked while it writes (`story:seed-under-a-lease`, D3 A).
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where the row cannot be written, and, naming the lease, where the
+    /// lease row names another token or session: another process took the lease.
+    pub fn record_seed(
+        &mut self,
+        component: &str,
+        token: u64,
+        body: &serde_json::Value,
+    ) -> Result<(), StoreError> {
+        let tenant = crate::sqlite::TENANT;
+        let held = i64::try_from(token).unwrap_or(i64::MAX);
+        let text = body.to_string();
+        let written = self.seed_statement(
+            component,
+            SEED_WRITE,
+            &[&tenant, &LEASE_ROW, &held, &SEED_ROW, &text],
+        )?;
+        match written {
+            Some(_) => Ok(()),
+            None => Err(deposed(component, token, "write")),
+        }
+    }
+
+    /// Removes the row `seed` of `component`'s lease table where there is one, only while the
+    /// lease row names `token` and this connection's session (`story:seed-under-a-lease`, D6 A).
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where the row cannot be removed, and, naming the lease, where the
+    /// lease row names another token or session.
+    pub fn forget_seed(&mut self, component: &str, token: u64) -> Result<(), StoreError> {
+        let tenant = crate::sqlite::TENANT;
+        let held = i64::try_from(token).unwrap_or(i64::MAX);
+        let removed = self.seed_statement(
+            component,
+            SEED_FORGET,
+            &[&tenant, &LEASE_ROW, &held, &SEED_ROW],
+        )?;
+        match removed {
+            Some(_) => Ok(()),
+            None => Err(deposed(component, token, "remove")),
+        }
+    }
+
+    /// Runs `statement` on the lease table of `component` with `parameters`: the row it answered.
+    fn seed_statement(
+        &mut self,
+        component: &str,
+        statement: &str,
+        parameters: &[&(dyn tokio_postgres::types::ToSql + Sync)],
+    ) -> Result<Option<tokio_postgres::Row>, StoreError> {
+        let table = self.table(component)?;
+        let statement = statement.replace("{table}", &table);
+        if let Err(error) = self.connected() {
+            self.trouble = Some(error.to_string());
+            return Err(error);
+        }
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| StoreError::Backend("no connection for the lease".to_owned()))?;
+        let answered = self
+            .runtime
+            .block_on(client.query_opt(&statement, parameters));
+        match answered {
+            Ok(row) => {
+                self.trouble = None;
+                Ok(row)
+            }
+            Err(error) => {
+                let failed = self.failed(&error, component);
+                let closed = self
+                    .client
+                    .as_ref()
+                    .is_some_and(tokio_postgres::Client::is_closed);
+                if closed || dropped(&error) {
+                    self.client = None;
+                    self.trouble = Some(failed.to_string());
+                }
+                Err(failed)
+            }
+        }
+    }
 }
+
+/// The refusal of a write of the seed record of `component` under `token` that another process's
+/// lease, or the end of this process's session, kept from landing.
+fn deposed(component: &str, token: u64, what: &str) -> StoreError {
+    StoreError::Backend(format!(
+        "fenced: the lease of {component} no longer names token {token} and this session, so \
+         this process does not {what} the seed record in its tables"
+    ))
+}
+
+/// Reads the row `$2` of the lease table. `$1` the tenant.
+const SEED_READ: &str =
+    "SELECT body::text FROM {table} WHERE tenant_id = $1::text AND row_key = $2::text";
+
+/// Writes `$5`, JSON text, as the row `$4` where the lease row `$2` names the token `$3` and this
+/// session, the lease row locked meanwhile; answers a row only where it wrote. `$1` the tenant.
+const SEED_WRITE: &str = "WITH held AS (SELECT 1 FROM {table} WHERE tenant_id = $1::text \
+     AND row_key = $2::text AND (body->>'token')::bigint = $3::bigint \
+     AND (body->>'pid')::int = pg_backend_pid() FOR UPDATE) \
+     INSERT INTO {table} (tenant_id, row_key, body) SELECT $1::text, $4::text, $5::text::jsonb \
+     FROM held ON CONFLICT (tenant_id, row_key) DO UPDATE SET body = EXCLUDED.body RETURNING 1";
+
+/// Removes the row `$4` where the lease row `$2` names the token `$3` and this session, the lease
+/// row locked meanwhile; answers a row only where the lease is held, whether there was a row `$4`
+/// or not. `$1` the tenant.
+const SEED_FORGET: &str = "WITH held AS (SELECT 1 FROM {table} WHERE tenant_id = $1::text \
+     AND row_key = $2::text AND (body->>'token')::bigint = $3::bigint \
+     AND (body->>'pid')::int = pg_backend_pid() FOR UPDATE), \
+     gone AS (DELETE FROM {table} WHERE tenant_id = $1::text AND row_key = $4::text \
+     AND EXISTS (SELECT 1 FROM held)) \
+     SELECT 1 FROM held";
 
 /// The longest a release of a lease waits for its statement and for the lease row's lock
 /// ([`Lease::release`]).

@@ -28,8 +28,18 @@
 //! ([`begin`]); it remembers the request ids of the entries sent before it that were not rejected.
 //! One with another file stops before listening, naming both digests, unless the state holds no
 //! row, when the file runs from its first entry. A state with no marker gets the whole seed, then
-//! the marker. A store kept elsewhere (PostgreSQL, memory) records nothing, and every start sends
-//! the whole seed. A reset by a run without a seed removes the marker ([`forget`]).
+//! the marker. A reset by a run without a seed removes the marker ([`forget`]).
+//!
+//! A run on PostgreSQL given `database_lease` keeps the same record as the row `seed` of the
+//! lease table of its first component in name order, which the lease thread reads and writes on
+//! the lease connection, each write landing only while the lease is this run's
+//! ([`crate::database::SeedRow`], `story:seed-under-a-lease`). It decides from that record
+//! whatever lease token it took, standing by first or not, as a `--state` run decides from
+//! [`MARKER`], with one difference: a store that holds rows and no record (seeded before the
+//! record existed, or filled by `state move`) is taken as seeded by this file: the record is
+//! written with every entry done and no entry is sent (D5 B). A reset by a leased run without a
+//! seed removes the row ([`forget_row`]). Any other store (PostgreSQL without a lease, memory)
+//! records nothing, and every start sends the whole seed.
 //!
 //! A `POST /api/reset` drops the entries of the seed run under way that are not yet sent
 //! ([`Seeding::cut`]). One with no world then submits the seed again from its first entry, once
@@ -209,6 +219,81 @@ fn record(path: &Path, recorded: &Recorded) -> std::io::Result<()> {
     std::fs::rename(&beside, path)
 }
 
+/// Where a run records the seed it applied.
+pub(crate) enum Record<'a> {
+    /// Nowhere: every start sends the whole seed.
+    Nowhere,
+    /// [`MARKER`] in the `--state` directory.
+    State(&'a Path),
+    /// The row `seed` of the store's lease table, on PostgreSQL with `database_lease`.
+    Store(crate::database::SeedRow),
+}
+
+/// Where the seed's record is kept: a file beside the state, or a row of the store's lease table.
+enum Marker {
+    File(PathBuf),
+    Row(crate::database::SeedRow),
+}
+
+impl Marker {
+    /// What the record holds; `None` where there is none.
+    ///
+    /// # Errors
+    /// A record that cannot be read, or does not hold `{"digest", "done", "rejected"}`.
+    fn recorded(&self) -> Result<Option<Recorded>> {
+        match self {
+            Self::File(path) => recorded(path),
+            Self::Row(row) => row
+                .read()
+                .with_context(|| format!("reading the seed record in {}", row.table()))?
+                .map(|body| {
+                    serde_json::from_value(body).with_context(|| {
+                        format!(
+                            "the row `seed` of {} does not hold {{\"digest\", \"done\", \
+                             \"rejected\"}}",
+                            row.table()
+                        )
+                    })
+                })
+                .transpose(),
+        }
+    }
+
+    /// Writes `recorded`.
+    ///
+    /// # Errors
+    /// The record cannot be written.
+    fn record(&self, recorded: &Recorded) -> Result<()> {
+        match self {
+            Self::File(path) => Ok(record(path, recorded)?),
+            Self::Row(row) => row.write(serde_json::to_value(recorded)?),
+        }
+    }
+
+    /// What holds the record, as a line names it: the marker's path, or the row of the store.
+    fn named(&self) -> String {
+        match self {
+            Self::File(path) => path.display().to_string(),
+            Self::Row(row) => format!("the row `seed` of {}", row.table()),
+        }
+    }
+}
+
+/// Removes the row of the store's lease table that records a seed, where a leased run without a
+/// seed emptied the store or loaded a world (`story:seed-under-a-lease`, D6 A): a later start with
+/// a seed treats the store as one with no record. A failure is printed on stderr.
+pub(crate) fn forget_row(row: &crate::database::SeedRow) {
+    if let Err(error) = row.forget() {
+        log::warn(format!(
+            "the row `seed` of {} could not be removed after the reset, so a start with that seed \
+             may skip the entries it records done: {error:#}",
+            row.table()
+        ))
+        .field("error", format!("{error:#}"))
+        .write();
+    }
+}
+
 /// Removes the marker of the `--state` directory `state`, where a run without a seed emptied the
 /// state or loaded a world: a later start with a seed treats the state as one with no marker.
 /// A failure is printed on stderr.
@@ -228,48 +313,80 @@ pub(crate) fn forget(state: &Path) {
 }
 
 /// The seeding of a start: `seed`, its counts noted on `recorder` and its state published on
-/// `published` ([`Seeding::step`]). With `state`, the `--state`
-/// directory, the marker there decides where it starts: with no marker, or one of another seed
-/// file on a state that holds no row ([`Host::rows`]), from its first entry; with one of this file,
-/// after the entries it records done, and with every one done it prints one line and sends
-/// nothing. Prints on stderr what it will send, and records where it starts.
+/// `published` ([`Seeding::step`]). Where `record` keeps a record of the seed, a `--state`
+/// directory's [`MARKER`] or the row of the store's lease table, that record decides where it
+/// starts: with none, or one of another seed file on a state or store that holds no row
+/// ([`Host::rows`]), from its first entry; with one of this file, after the entries it records
+/// done, and with every one done it prints one line and sends nothing. A store that holds rows and
+/// no record is taken as seeded by this file: one line, nothing sent, and the record written with
+/// every entry done (`story:seed-under-a-lease`, D5 B). Prints on stderr what it will send, and
+/// records where it starts.
 ///
 /// # Errors
-/// A marker that cannot be read or written, or one of another seed file on a state that holds a
-/// row: the run stops before listening, naming both digests.
+/// A record that cannot be read or written, or one of another seed file on a state or store that
+/// holds a row: the run stops before it serves a request, naming both digests.
 pub(crate) fn begin(
     seed: Seed,
-    state: Option<&Path>,
+    record: Record<'_>,
     host: &mut Host,
     recorder: Option<Recorder>,
     published: SeedState,
 ) -> Result<Seeding> {
-    let Some(state) = state else {
-        log::info(format!(
-            "seed {}: {} entries, submitted one at a time once listening",
-            seed.path.display(),
-            seed.len()
-        ))
-        .write();
-        return Ok(Seeding::new(
-            seed,
-            (recorder, published),
-            None,
-            0,
-            BTreeSet::new(),
-            false,
-        ));
+    // Where the record is, what a line calls the state or store it records, and what kind of
+    // place that is.
+    let (marker, on, kind) = match record {
+        Record::Nowhere => {
+            log::info(format!(
+                "seed {}: {} entries, submitted one at a time once listening",
+                seed.path.display(),
+                seed.len()
+            ))
+            .write();
+            return Ok(Seeding::new(
+                seed,
+                (recorder, published),
+                None,
+                0,
+                BTreeSet::new(),
+                false,
+            ));
+        }
+        Record::State(state) => (
+            Marker::File(state.join(MARKER)),
+            format!("the state {}", state.display()),
+            "state",
+        ),
+        Record::Store(row) => (Marker::Row(row), "the PostgreSQL store".to_owned(), "store"),
     };
-    let marker = state.join(MARKER);
-    let (from, rejected, ran) = match recorded(&marker)? {
+    let named = marker.named();
+    let recorded = marker.recorded()?;
+    // Rows a store holds without any record of a seed (D5 B); a state is not asked.
+    let unrecorded = if recorded.is_none() && matches!(marker, Marker::Row(_)) {
+        held(host)?
+    } else {
+        0
+    };
+    let (from, rejected, ran) = match recorded {
+        None if unrecorded > 0 => {
+            log::info(format!(
+                "seed {} ({}): {on} holds {} rows and {named} records no seed, as a store seeded \
+                 before that record was kept, or filled by `state move`, leaves it; the seed is \
+                 taken as applied there, so no entry is sent, and the record now holds every \
+                 entry done",
+                seed.path.display(),
+                seed.digest,
+                unrecorded
+            ))
+            .write();
+            (seed.len(), BTreeSet::new(), true)
+        }
         None => {
             log::info(format!(
-                "seed {} ({}): {} entries, submitted one at a time once listening; {} records \
-                 each entry done",
+                "seed {} ({}): {} entries, submitted one at a time once listening; {named} \
+                 records each entry done",
                 seed.path.display(),
                 seed.digest,
                 seed.len(),
-                marker.display()
             ))
             .write();
             (0, BTreeSet::new(), false)
@@ -285,11 +402,9 @@ pub(crate) fn begin(
                 .collect();
             if done == seed.len() && rejected.is_empty() {
                 log::info(format!(
-                    "seed {} ({}) already ran on the state {}, as {} records: no entry is sent",
+                    "seed {} ({}) already ran on {on}, as {named} records: no entry is sent",
                     seed.path.display(),
                     seed.digest,
-                    state.display(),
-                    marker.display()
                 ))
                 .write();
             } else {
@@ -306,13 +421,11 @@ pub(crate) fn begin(
                     )
                 };
                 log::info(format!(
-                    "seed {} ({}): {} entries, the first {done} sent on the state {}, as {} \
+                    "seed {} ({}): {} entries, the first {done} sent on {on}, as {named} \
                      records{again}; the {} after them are submitted one at a time once listening",
                     seed.path.display(),
                     seed.digest,
                     seed.len(),
-                    state.display(),
-                    marker.display(),
                     seed.len() - done
                 ))
                 .write();
@@ -321,30 +434,22 @@ pub(crate) fn begin(
             (done, rejected, ran)
         }
         Some(recorded) => {
-            let rows: usize = host
-                .rows()
-                .context("counting the rows the state holds")?
-                .iter()
-                .map(|(_, held)| held)
-                .sum();
+            let rows = held(host)?;
             if rows > 0 {
                 bail!(
-                    "the seed {} is {}, and the state {} was seeded from {} ({}) and holds {rows} \
-                     rows: give the seed file it was seeded from, or run on a state with no row",
+                    "the seed {} is {}, and {on} was seeded from {} ({named}) and holds {rows} \
+                     rows: give the seed file it was seeded from, or run on a {kind} with no row",
                     seed.path.display(),
                     seed.digest,
-                    state.display(),
                     recorded.digest,
-                    marker.display()
                 );
             }
             log::info(format!(
-                "seed {} ({}): {} entries, submitted one at a time once listening; the state {} \
-                 was seeded from {} and holds no row, so this seed runs from its first entry",
+                "seed {} ({}): {} entries, submitted one at a time once listening; {on} was \
+                 seeded from {} and holds no row, so this seed runs from its first entry",
                 seed.path.display(),
                 seed.digest,
                 seed.len(),
-                state.display(),
                 recorded.digest
             ))
             .write();
@@ -361,8 +466,21 @@ pub(crate) fn begin(
     );
     seeding
         .mark()
-        .with_context(|| format!("writing the seed marker in {}", state.display()))?;
+        .with_context(|| format!("writing the seed record of {on}"))?;
     Ok(seeding)
+}
+
+/// How many rows the stores of `host` hold, every entity's summed.
+///
+/// # Errors
+/// A store that cannot be counted.
+fn held(host: &mut Host) -> Result<usize> {
+    Ok(host
+        .rows()
+        .context("counting the rows the state holds")?
+        .iter()
+        .map(|(_, held)| held)
+        .sum())
 }
 
 /// Refuses an entry the kernel would refuse before reading anything, or the host would not route.
@@ -460,8 +578,9 @@ pub(crate) struct Seeding {
     rejected: u64,
     /// Whether a seed run of this start ended having rejected an entry: the run then exits 1.
     failed: bool,
-    /// The marker of the `--state` directory, where the run has one ([`MARKER`]).
-    marker: Option<PathBuf>,
+    /// Where the run records the seed, where it does: the `--state` directory's [`MARKER`], or
+    /// the row of the store's lease table.
+    marker: Option<Marker>,
     /// The entries before `next` that a start sends again before `next`, in the file's order:
     /// those the marker recorded rejected.
     retry: Vec<usize>,
@@ -489,7 +608,7 @@ impl Seeding {
     fn new(
         seed: Seed,
         (recorder, published): (Option<Recorder>, SeedState),
-        marker: Option<PathBuf>,
+        marker: Option<Marker>,
         from: usize,
         rejected: BTreeSet<usize>,
         ran: bool,
@@ -523,7 +642,7 @@ impl Seeding {
 
     /// Writes to the marker, where the run has one, the entries done: every entry before the
     /// next, but those whose last sending was rejected.
-    fn mark(&self) -> std::io::Result<()> {
+    fn mark(&self) -> Result<()> {
         let Some(marker) = &self.marker else {
             return Ok(());
         };
@@ -532,7 +651,7 @@ impl Seeding {
             done: self.next,
             rejected: self.rejected_at.iter().map(|index| index + 1).collect(),
         };
-        record(marker, &recorded)
+        marker.record(&recorded)
     }
 
     /// [`Seeding::mark`], a failure printed on stderr: the run goes on, and a restart may send an
@@ -541,11 +660,11 @@ impl Seeding {
         if let Err(error) = self.mark() {
             log::warn(format!(
                 "seed {}: the marker {} could not be written, so a restart may send the entries \
-                 done since the last one written again: {error}",
+                 done since the last one written again: {error:#}",
                 self.seed.path.display(),
-                self.marker.as_deref().unwrap_or(Path::new("")).display()
+                self.marker.as_ref().map(Marker::named).unwrap_or_default()
             ))
-            .field("error", error.to_string())
+            .field("error", format!("{error:#}"))
             .write();
         }
     }

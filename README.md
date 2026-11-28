@@ -92,8 +92,13 @@ before listening, then one at a time in order beside the listener. An outcome de
 file's digest, the entries sent and those rejected in `seed.json`, so a restart with the same file
 sends only the entries not yet done (a rejected entry is sent again), and none once all are; one
 with another file exits 1 before listening, naming both digests, unless the state holds no row. A
-reset by a run without `--seed` removes `seed.json`. A store kept elsewhere records nothing, and
-every start sends the whole seed. Within one start, an entry whose request id an earlier applied
+reset by a run without `--seed` removes `seed.json`. On PostgreSQL with `database_lease` the
+leading process keeps the same record as the row `seed` of the first component's lease table,
+written under its lease whatever lease token it took, so a restart, a takeover by a standby and a
+process that leads after one that never seeded all decide from it alike; a store with rows and no
+record (seeded by 0.26.0, or filled by `state move`) is taken as seeded, and the record is written
+with every entry done. Any other store records nothing, and every start sends the whole seed.
+Within one start, an entry whose request id an earlier applied
 or already-there entry carried is not submitted again. A declared refusal is logged and the rest still run; one line on
 stderr gives the counts when the seed ends. An entry that did not run (the host or the kernel
 refused it before an outcome, such as `not_granted`) is counted `rejected`, and once the seed ends

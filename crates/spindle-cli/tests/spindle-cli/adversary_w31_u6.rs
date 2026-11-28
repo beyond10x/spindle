@@ -546,53 +546,10 @@ mod postgres {
         eprintln!("taken {:?} after the kill", killed.elapsed());
     }
 
-    /// D5 A, as the story decided it: "the seed runs only under the first token of the lease; on a
-    /// takeover it is skipped with a log line." A leader killed after its seed ended, and a
-    /// process started once its session ended, takes the leases at their second token: it skips
-    /// the seed and logs that it did.
-    #[test]
-    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
-    fn the_seed_runs_only_under_the_first_token() {
-        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-        let environment = environment(directory.path());
-        let seed = directory.path().join("seed.json");
-        std::fs::write(
-            &seed,
-            json!([{
-                "command": "tasks.board.OpenTask",
-                "input": {"task_id": "s1", "title": "seeded"},
-                "request_id": "seed-1",
-            }])
-            .to_string(),
-        )
-        .expect("the seed is written");
-        let schema = schema();
-        let seeded = |schema: &str| {
-            let mut command = run(&environment, schema, LEASE);
-            command.arg("--seed").arg(&seed);
-            command
-        };
-        let mut first = Replica::start(seeded(&schema));
-        assert!(
-            first.line_by("ended:", Instant::now() + ANSWER),
-            "{}",
-            first.printed()
-        );
-        first.child.kill().expect("SIGKILL is sent");
-        let _ = first.child.wait();
-        // The killed leader's session ends at once on loopback.
-        std::thread::sleep(Duration::from_secs(1));
-
-        let mut second = Replica::start(seeded(&schema));
-        std::thread::sleep(Duration::from_millis(1500));
-        assert!(
-            second.has_line("is not submitted") && !second.has_line("ended:"),
-            "the process leading under the second token skips the seed: {}",
-            second.printed()
-        );
-        assert!(second.running(), "{}", second.printed());
-        second.ready_by(Instant::now() + ANSWER);
-    }
+    // `the_seed_runs_only_under_the_first_token` is retired by `story:seed-under-a-lease`: D5 A,
+    // which it checked, is replaced by the seed's record in the store. A process that takes over
+    // from a killed leader whose seed ended skips the seed on that record:
+    // `postgres::replicas::a_standby_that_takes_over_after_the_seed_skips_it`.
 
     /// The first column of the first row `query` answers, run as the test database's owner.
     fn sql_value(query: &str) -> Option<String> {
@@ -839,49 +796,15 @@ mod postgres {
         seed
     }
 
-    /// Round 2, F4: one lease at its first token and another at its second. `ledger`'s lease was
-    /// taken and released before (as by a process that served only it); the run takes `board`'s
-    /// at token 1 and `ledger`'s at token 2, skips the seed, and names `ledger` and token 2.
-    #[test]
-    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
-    fn a_seed_with_one_lease_taken_before_is_skipped_naming_it() {
-        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-        let environment = environment(directory.path());
-        let seed = seed_file(directory.path());
-        let schema = schema();
-        let mut database = spindle_kernel::Database::new(owner_url());
-        database.schema.clone_from(&schema);
-        let mut lease = spindle_kernel::Lease::connect(&database, Duration::from_secs(2))
-            .expect("the test connects for the lease");
-        let token = lease
-            .take("ledger")
-            .expect("the lease is read")
-            .expect("the lease is free");
-        assert_eq!(token, 1);
-        lease
-            .release("ledger", token)
-            .expect("the lease is released");
-        drop(lease);
+    // `a_seed_with_one_lease_taken_before_is_skipped_naming_it` is retired by
+    // `story:seed-under-a-lease`, which reverses it: a run that takes a lease at token 2 with no
+    // record of the seed in the store sends the whole seed
+    // (`postgres::replicas::a_seed_after_a_lease_taken_without_seeding_runs`).
 
-        let mut command = run(&environment, &schema, LEASE);
-        command.arg("--seed").arg(&seed);
-        let leader = Replica::start(command);
-        leader.ready_by(Instant::now() + ANSWER);
-        assert!(
-            leader.line_by("is not submitted", Instant::now() + ANSWER),
-            "{}",
-            leader.printed()
-        );
-        assert!(
-            leader.has_line("lease of ledger at token 2") && !leader.has_line("ended:"),
-            "{}",
-            leader.printed()
-        );
-    }
-
-    /// Round 2, F4 and D5 A read literally: a single process given a seed and stopped cleanly
-    /// (SIGTERM, which releases its leases) takes token 2 on its restart, so the seed is not
-    /// submitted again, and the run serves.
+    /// Round 2, F4, rewritten by `story:seed-under-a-lease`: a single process given a seed and
+    /// stopped cleanly (SIGTERM, which releases its leases) takes token 2 on its restart; the
+    /// store's record of the seed says every entry is done, so the seed is not submitted again,
+    /// the line naming the store's record and no token, and the run serves.
     #[test]
     #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
     fn a_restart_after_a_clean_stop_skips_the_seed() {
@@ -908,8 +831,10 @@ mod postgres {
         // (`story:postgres-lane-margin`: read once at ready, the line was missing in one lane run
         // and printed right after).
         assert!(
-            second.line_by("is not submitted", Instant::now() + ANSWER)
-                && second.has_line("at token 2"),
+            second.line_by(
+                "already ran on the PostgreSQL store",
+                Instant::now() + ANSWER
+            ) && !second.has_line("token"),
             "{}",
             second.printed()
         );

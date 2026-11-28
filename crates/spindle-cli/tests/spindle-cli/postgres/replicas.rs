@@ -868,3 +868,581 @@ fn a_leader_paused_inside_a_write_is_taken_over_whole_within_the_lease_and_the_i
         "one TaskOpened for each task held, none written twice: {printed}"
     );
 }
+
+// `story:seed-under-a-lease`: a run given `database_lease` decides its seed from the row `seed` of
+// the lease table of its first component in name order, whatever lease token it took, as
+// `seed.json` decides it on a `--state` directory.
+
+/// A seed file of `tasks.board.OpenTask` entries, one per task id of `tasks`, written into
+/// `directory` as `name`.
+fn seed_file(directory: &Path, name: &str, tasks: &[&str]) -> PathBuf {
+    let entries: Vec<Value> = tasks
+        .iter()
+        .map(|task| {
+            json!({
+                "command": "tasks.board.OpenTask",
+                "input": {"task_id": task, "title": format!("seeded {task}")},
+                "request_id": format!("seed-{task}"),
+            })
+        })
+        .collect();
+    let path = directory.join(name);
+    std::fs::write(&path, Value::Array(entries).to_string()).expect("the seed is written");
+    path
+}
+
+/// [`run`] with `--seed seed`.
+fn seeded(environment: &Path, schema: &str, seed: &Path) -> Command {
+    let mut command = run(environment, schema);
+    command.arg("--seed").arg(seed);
+    command
+}
+
+/// The body of the row `seed` of `component`'s lease table in `schema`, read as the database's
+/// owner; `None` where there is none.
+fn recorded(schema: &str, component: &str) -> Option<Value> {
+    super::sql(&[format!(
+        "SELECT body::text FROM {schema}.{}_p_lease WHERE row_key = 'seed'",
+        spindle_kernel::postgres_prefix(component)
+    )])
+    .first()
+    .map(|text| serde_json::from_str(text).expect("the seed row holds JSON"))
+}
+
+/// The task ids `GET /tasks` answers at `replica`, in order.
+fn task_ids(replica: &Replica) -> Vec<String> {
+    replica.tasks()["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .filter_map(|row| row["task_id"].as_str().map(str::to_owned))
+        .collect()
+}
+
+impl Replica {
+    /// The first stderr line holding `text`, waiting until `deadline`.
+    fn line(&self, text: &str, deadline: Instant) -> Option<String> {
+        self.line_by(text, deadline)?;
+        self.lines
+            .lock()
+            .expect("the lines")
+            .iter()
+            .find(|(_, line)| line.contains(text))
+            .map(|(_, line)| line.clone())
+    }
+
+    /// Whether a stderr line holds `text`.
+    fn has_line(&self, text: &str) -> bool {
+        self.line_by(text, Instant::now()).is_some()
+    }
+
+    /// Sends SIGTERM and waits for the exit 143 within [`ANSWER`].
+    fn stop(&mut self) {
+        self.signal(rustix::process::Signal::TERM);
+        assert_eq!(
+            self.exit_within(ANSWER).code(),
+            Some(143),
+            "{}",
+            self.printed()
+        );
+    }
+}
+
+/// Asserts the line `replica` printed for a seed it skips on the record names the store, by the
+/// row `seed` of `schema`'s lease table, and no lease token, and that it sent no entry.
+fn skipped_on_the_record(replica: &Replica, schema: &str) {
+    let line = replica
+        .line("already ran", Instant::now() + ANSWER)
+        .unwrap_or_else(|| panic!("no line says the seed already ran: {}", replica.printed()));
+    assert!(
+        line.contains("the PostgreSQL store")
+            && line.contains(&format!("{schema}.spindle_board_p_lease"))
+            && line.contains("no entry is sent"),
+        "the line names the store's record: {line}"
+    );
+    assert!(!line.contains("token"), "the line names no token: {line}");
+    assert!(
+        !replica.has_line("ended:"),
+        "no entry is sent: {}",
+        replica.printed()
+    );
+}
+
+/// The leases of board and ledger were taken at token 1 and released, as a process that exited
+/// 3 on a misfit leaves them: the next run leads at token 2 and sends the whole seed.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_seed_after_a_lease_taken_without_seeding_runs() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let seed = seed_file(directory.path(), "seed.json", &["s1", "s2"]);
+    let schema = schema();
+    let mut database = spindle_kernel::Database::new(owner_url());
+    database.schema.clone_from(&schema);
+    let mut lease = spindle_kernel::Lease::connect(&database, Duration::from_secs(2))
+        .expect("the test connects for the leases");
+    for component in ["board", "ledger"] {
+        let token = lease
+            .take(component)
+            .expect("the lease is read")
+            .expect("the lease is free");
+        assert_eq!(token, 1);
+        lease
+            .release(component, token)
+            .expect("the lease is released");
+    }
+    drop(lease);
+
+    let leader = Replica::start(seeded(&environment, &schema, &seed));
+    assert!(
+        leader
+            .line_by("ended: 2 sent, 2 applied", Instant::now() + ANSWER)
+            .is_some(),
+        "{}",
+        leader.printed()
+    );
+    assert_eq!(
+        super::sql(&[format!(
+            "SELECT body->>'token' FROM {schema}.spindle_board_p_lease WHERE row_key = 'lease'"
+        )]),
+        ["2"],
+        "the run leads at token 2"
+    );
+    leader.ready_by(Instant::now() + ANSWER);
+    assert_eq!(task_ids(&leader), ["s1", "s2"], "each seeded row once");
+    let record = recorded(&schema, "board").expect("the seed is recorded");
+    assert_eq!(record["done"], 2, "{record}");
+}
+
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_restart_after_a_completed_seed_skips_it() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let seed = seed_file(directory.path(), "seed.json", &["s1"]);
+    let schema = schema();
+    let mut first = Replica::start(seeded(&environment, &schema, &seed));
+    assert!(
+        first
+            .line_by("ended: 1 sent, 1 applied", Instant::now() + ANSWER)
+            .is_some(),
+        "{}",
+        first.printed()
+    );
+    first.stop();
+
+    let second = Replica::start(seeded(&environment, &schema, &seed));
+    let started = Instant::now();
+    second.ready_by(started + Duration::from_secs(10));
+    skipped_on_the_record(&second, &schema);
+    assert_eq!(task_ids(&second), ["s1"]);
+}
+
+/// D7 A: a store with rows and a complete record of one file, and a restart with another.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn another_seed_file_is_refused_before_serving() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let first_file = seed_file(directory.path(), "first.json", &["s1"]);
+    let other_file = seed_file(directory.path(), "other.json", &["s1", "s2"]);
+    let schema = schema();
+    let mut first = Replica::start(seeded(&environment, &schema, &first_file));
+    assert!(
+        first
+            .line_by("ended: 1 sent, 1 applied", Instant::now() + ANSWER)
+            .is_some(),
+        "{}",
+        first.printed()
+    );
+    first.stop();
+    let record = recorded(&schema, "board").expect("the seed is recorded");
+    let before = counts(&schema);
+
+    let refused = super::refused(seeded(&environment, &schema, &other_file));
+    assert_eq!(refused.status.code(), Some(1), "{}", refused.stderr);
+    let digest = record["digest"].as_str().expect("a digest");
+    assert!(
+        refused.stderr.contains(digest) && refused.stderr.matches("sha256:").count() >= 2,
+        "the refusal names both digests: {}",
+        refused.stderr
+    );
+    assert!(!refused.stderr.contains("ended:"), "{}", refused.stderr);
+    assert_eq!(counts(&schema), before, "the rows are as they were");
+    assert_eq!(
+        recorded(&schema, "board"),
+        Some(record),
+        "the record is as it was"
+    );
+}
+
+/// D2 A: a store with no row and a record of one file, as a reset with an empty world leaves it,
+/// and a restart with another file.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn another_seed_file_on_an_empty_store_seeds_from_the_first_entry() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let first_file = seed_file(directory.path(), "first.json", &["s1"]);
+    let other_file = seed_file(directory.path(), "other.json", &["s1", "s2"]);
+    let schema = schema();
+    let mut first = Replica::start(seeded(&environment, &schema, &first_file));
+    assert!(
+        first
+            .line_by("ended: 1 sent, 1 applied", Instant::now() + ANSWER)
+            .is_some(),
+        "{}",
+        first.printed()
+    );
+    let (status, body) = call(
+        first.address,
+        "POST",
+        "/api/reset",
+        Some(&json!({"rows": []})),
+    );
+    assert_eq!(status, 200, "{body}");
+    assert!(task_ids(&first).is_empty());
+    first.stop();
+    let record = recorded(&schema, "board").expect("the seed is recorded");
+    assert_eq!(record["done"], 1, "{record}");
+
+    let second = Replica::start(seeded(&environment, &schema, &other_file));
+    assert!(
+        second
+            .line_by("ended: 2 sent, 2 applied", Instant::now() + ANSWER)
+            .is_some(),
+        "{}",
+        second.printed()
+    );
+    let now = recorded(&schema, "board").expect("the seed is recorded");
+    assert_ne!(now["digest"], record["digest"], "{now}");
+    assert_eq!(now["done"], 2, "{now}");
+    assert_eq!(task_ids(&second), ["s1", "s2"]);
+}
+
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_standby_that_takes_over_after_the_seed_skips_it() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let seed = seed_file(directory.path(), "seed.json", &["s1"]);
+    let schema = schema();
+    let mut leader = Replica::start(seeded(&environment, &schema, &seed));
+    assert!(
+        leader
+            .line_by("ended: 1 sent, 1 applied", Instant::now() + ANSWER)
+            .is_some(),
+        "{}",
+        leader.printed()
+    );
+    leader.ready_by(Instant::now() + ANSWER);
+    let standby = Replica::start(seeded(&environment, &schema, &seed));
+    let (status, body) = standby.ready();
+    assert_eq!(status, 503, "{body}");
+
+    let killed = leader.kill();
+    standby
+        .line_by(TOOK, killed + Duration::from_secs(5))
+        .unwrap_or_else(|| panic!("the standby never took over: {}", standby.printed()));
+    standby.ready_by(killed + Duration::from_secs(10));
+    skipped_on_the_record(&standby, &schema);
+    assert_eq!(task_ids(&standby), ["s1"]);
+}
+
+/// The fixture `tests/fixtures/seed`: `gate`, whose `VouchFor` asks an `external:` cause.
+const VAULT: &str = "crates/spindle-cli/tests/fixtures/seed";
+
+/// An environment document keeping `gate`'s state in PostgreSQL, `VouchFor`'s cause answered by
+/// the desk at `desk`, written into `directory`.
+fn vault_environment(directory: &Path, desk: SocketAddr) -> PathBuf {
+    let text = format!(
+        "format = \"spindle-environment/1\"\nname = \"vault\"\nos = \"linux\"\n\
+         arch = \"x86_64\"\n\n[provides]\n\"store.durable\" = [\"postgres\"]\n\
+         \"store.ephemeral\" = [\"memory\"]\n\"identity.mint\" = [\"uuid-v4\"]\n\
+         clock = [\"system\"]\ntimer = [\"tokio\"]\nchannel = [\"in-process\"]\n\
+         projection = [\"in-process\"]\n\"ingress.network\" = [\"http-loopback\"]\n\
+         \"external.*\" = [\"operator-prompt\"]\n\
+         \"external.vault.access.VouchFor.vouched\" = [\"desk\"]\n\n[http.desk]\n\
+         method = \"POST\"\nurl = \"http://{desk}/vouch\"\ntimeout_ms = 30000\n"
+    );
+    let path = directory.join("vault.toml");
+    std::fs::write(&path, text).expect("the environment is written");
+    path
+}
+
+/// `run` on [`VAULT`] with `environment` and `--seed seed`, its state in `schema`, a lease of
+/// [`LEASE`].
+fn vault_seeded(environment: &Path, schema: &str, seed: &Path) -> Command {
+    let url = owner_url();
+    let environment = environment.to_str().expect("a UTF-8 path");
+    let seed = seed.to_str().expect("a UTF-8 path");
+    spindle(
+        &["run", VAULT, "--environment", environment, "--seed", seed],
+        &[
+            ("database_url", url.as_str()),
+            ("database_schema", schema),
+            ("database_lease", LEASE),
+        ],
+    )
+}
+
+/// A seed of `vault.access.GrantRole`s, `(role, request id)`, and `vault.access.VouchFor`s,
+/// `(voucher, request id)` with `vouch` set, in that order of `entries`, written into `directory`.
+fn vault_seed(directory: &Path, entries: &[(&str, &str, bool)]) -> PathBuf {
+    let entries: Vec<Value> = entries
+        .iter()
+        .map(|&(identity, request, vouch)| {
+            if vouch {
+                json!({
+                    "command": "vault.access.VouchFor",
+                    "input": {"voucher_id": identity, "role_id": "admin"},
+                    "actor": "vault.access.Visitor",
+                    "request_id": request,
+                })
+            } else {
+                json!({
+                    "command": "vault.access.GrantRole",
+                    "input": {"role_id": identity, "title": format!("{identity} title")},
+                    "actor": "vault.access.Operator",
+                    "caller": {"tenant": "north"},
+                    "request_id": request,
+                })
+            }
+        })
+        .collect();
+    let path = directory.join("vault-seed.json");
+    std::fs::write(&path, Value::Array(entries).to_string()).expect("the seed is written");
+    path
+}
+
+/// A desk on 127.0.0.1 answering every vouch request `{"holds": true}`, one at a time, each only
+/// once `release` is sent; `asked` is sent as each request arrives.
+fn holding_desk() -> (SocketAddr, mpsc::Receiver<()>, mpsc::Sender<()>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("the desk binds");
+    let address = listener.local_addr().expect("the desk has an address");
+    let (asked, arrived) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { return };
+            let _ = stream.set_read_timeout(Some(ANSWER));
+            let mut reader = BufReader::new(stream);
+            let mut length = 0;
+            loop {
+                let mut header = String::new();
+                if reader.read_line(&mut header).is_err() {
+                    return;
+                }
+                let header = header.trim_end().to_ascii_lowercase();
+                if header.is_empty() {
+                    break;
+                }
+                if let Some(value) = header.strip_prefix("content-length:") {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut body = vec![0; length];
+            if reader.read_exact(&mut body).is_err() {
+                return;
+            }
+            if asked.send(()).is_err() || released.recv_timeout(STARTUP).is_err() {
+                return;
+            }
+            let body = json!({"holds": true}).to_string();
+            let _ = write!(
+                reader.into_inner(),
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
+                 Connection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    (address, arrived, release)
+}
+
+/// A leader killed while the desk holds entry 2 of 3 has recorded entry 1 done; the next process
+/// sends entries 2 and 3 alone.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_killed_leader_resumes_the_seed_after_its_count() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let (desk, asked, release) = holding_desk();
+    let environment = vault_environment(directory.path(), desk);
+    let seed = vault_seed(
+        directory.path(),
+        &[
+            ("admin", "seed-1", false),
+            ("v-1", "seed-2", true),
+            ("auditor", "seed-3", false),
+        ],
+    );
+    let schema = schema();
+    let mut leader = Replica::start(vault_seeded(&environment, &schema, &seed));
+    asked
+        .recv_timeout(ANSWER)
+        .unwrap_or_else(|_| panic!("entry 2 never asked the desk: {}", leader.printed()));
+    let record = recorded(&schema, "gate").expect("the seed is recorded");
+    assert_eq!(record["done"], 1, "entry 1 is done: {record}");
+    leader.kill();
+    // The desk answers the killed leader's ask into a closed connection, then takes the next.
+    release.send(()).expect("the desk is released");
+
+    let next = Replica::start(vault_seeded(&environment, &schema, &seed));
+    asked
+        .recv_timeout(ANSWER)
+        .unwrap_or_else(|_| panic!("entry 2 never asked the desk again: {}", next.printed()));
+    release.send(()).expect("the desk is released");
+    let ended = next
+        .line("ended:", Instant::now() + ANSWER)
+        .unwrap_or_else(|| panic!("the seed never ended: {}", next.printed()));
+    assert!(
+        ended.contains("ended: 2 sent, 2 applied, 0 already there, 0 refused, 0 rejected"),
+        "entries 2 and 3 alone: {ended}"
+    );
+    let record = recorded(&schema, "gate").expect("the seed is recorded");
+    assert_eq!(record["done"], 3, "{record}");
+}
+
+/// D5 B: a store with rows and no record, as 0.26.0 or `state move` leaves it.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_store_seeded_without_a_record_skips_and_records() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let seed = seed_file(directory.path(), "seed.json", &["s1"]);
+    let schema = schema();
+    let mut unseeded = Replica::start(run(&environment, &schema));
+    unseeded.ready_by(Instant::now() + ANSWER);
+    let (status, answer) = unseeded.open("t1");
+    assert_eq!(status, 201, "{answer}");
+    unseeded.stop();
+    assert_eq!(recorded(&schema, "board"), None);
+
+    let mut first = Replica::start(seeded(&environment, &schema, &seed));
+    first.ready_by(Instant::now() + ANSWER);
+    let line = first
+        .line("records no seed", Instant::now() + ANSWER)
+        .unwrap_or_else(|| {
+            panic!(
+                "no line says the store records no seed: {}",
+                first.printed()
+            )
+        });
+    assert!(line.contains("no entry is sent"), "{line}");
+    assert_eq!(
+        first
+            .printed()
+            .lines()
+            .filter(|line| line.contains("no entry is sent"))
+            .count(),
+        1,
+        "one line: {}",
+        first.printed()
+    );
+    assert!(!first.has_line("ended:"), "{}", first.printed());
+    assert_eq!(task_ids(&first), ["t1"], "no entry is sent");
+    let record = recorded(&schema, "board").expect("the seed is recorded");
+    assert_eq!(record["done"], 1, "{record}");
+    assert_eq!(record["rejected"], json!([]), "{record}");
+    assert!(
+        record["digest"]
+            .as_str()
+            .is_some_and(|digest| digest.starts_with("sha256:")),
+        "{record}"
+    );
+    first.stop();
+
+    let second = Replica::start(seeded(&environment, &schema, &seed));
+    second.ready_by(Instant::now() + ANSWER);
+    skipped_on_the_record(&second, &schema);
+}
+
+/// D6 A: a reset with no world records 0 entries done before it sends the first, and every one
+/// once the seed ended; a reset with a world records every entry done and sends none.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_reset_of_a_leased_run_rewrites_the_record() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let (desk, asked, release) = holding_desk();
+    let environment = vault_environment(directory.path(), desk);
+    let seed = vault_seed(
+        directory.path(),
+        &[("v-1", "seed-1", true), ("admin", "seed-2", false)],
+    );
+    let schema = schema();
+    let leader = Replica::start(vault_seeded(&environment, &schema, &seed));
+    asked
+        .recv_timeout(ANSWER)
+        .unwrap_or_else(|_| panic!("the start's seed never asked: {}", leader.printed()));
+    release.send(()).expect("the desk is released");
+    assert!(
+        leader
+            .line_by("ended: 2 sent, 2 applied", Instant::now() + ANSWER)
+            .is_some(),
+        "{}",
+        leader.printed()
+    );
+    assert_eq!(recorded(&schema, "gate").expect("a record")["done"], 2);
+
+    let address = leader.address;
+    let reset = std::thread::spawn(move || call(address, "POST", "/api/reset", None));
+    asked
+        .recv_timeout(ANSWER)
+        .unwrap_or_else(|_| panic!("the reset's seed never asked: {}", leader.printed()));
+    let before = recorded(&schema, "gate").expect("a record");
+    assert_eq!(before["done"], 0, "0 done before the first entry: {before}");
+    release.send(()).expect("the desk is released");
+    let (status, body) = reset.join().expect("the reset is answered");
+    assert_eq!(status, 200, "{body}");
+    let after = recorded(&schema, "gate").expect("a record");
+    assert_eq!(after["done"], 2, "every entry done once it ended: {after}");
+
+    let (status, body) = call(address, "POST", "/api/reset", Some(&json!({"rows": []})));
+    assert_eq!(status, 200, "{body}");
+    let loaded = recorded(&schema, "gate").expect("a record");
+    assert_eq!(
+        loaded["done"], 2,
+        "a world records every entry done: {loaded}"
+    );
+    assert_eq!(loaded["rejected"], json!([]), "{loaded}");
+    assert!(
+        asked.recv_timeout(Duration::from_millis(300)).is_err(),
+        "a reset with a world sends no entry"
+    );
+    let ends = leader
+        .printed()
+        .lines()
+        .filter(|line| line.contains("ended:"))
+        .count();
+    assert_eq!(ends, 2, "{}", leader.printed());
+}
+
+/// D6 A: a leased run without `--seed` on a store with a record.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_reset_by_a_run_without_a_seed_deletes_the_record() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let seed = seed_file(directory.path(), "seed.json", &["s1"]);
+    let schema = schema();
+    let mut first = Replica::start(seeded(&environment, &schema, &seed));
+    assert!(
+        first
+            .line_by("ended: 1 sent, 1 applied", Instant::now() + ANSWER)
+            .is_some(),
+        "{}",
+        first.printed()
+    );
+    first.stop();
+    assert!(recorded(&schema, "board").is_some(), "the seed is recorded");
+
+    let unseeded = Replica::start(run(&environment, &schema));
+    unseeded.ready_by(Instant::now() + ANSWER);
+    let (status, body) = call(unseeded.address, "POST", "/api/reset", None);
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        recorded(&schema, "board"),
+        None,
+        "the reset removed the record"
+    );
+}

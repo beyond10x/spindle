@@ -18,8 +18,7 @@ use spindle_host::{
 };
 use spindle_ingress::console::{self, Worlds};
 use spindle_ingress::{
-    Answer, Caller, Console, Exchange, Listener, Recorder, SeedPhase, SeedProgress, SeedState,
-    Surface, Unfixed,
+    Answer, Caller, Console, Exchange, Listener, Recorder, SeedState, Surface, Unfixed,
 };
 use spindle_spec::EssIr;
 
@@ -591,32 +590,19 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             .write();
         }
     }
-    // Where a `--state` records the seed applied to it (`seed.json`), a seed it does not record
-    // stops the run here, before listening.
-    let taken_again = kept.as_ref().and_then(crate::database::Kept::taken_again);
+    // Where a `--state` records the seed applied to it (`seed.json`), or a leading run on
+    // PostgreSQL records it in the store under its lease whatever token it took
+    // (`story:seed-under-a-lease`), a seed it does not record stops the run here, before it
+    // serves a request.
+    let record = match (&kept, serving.state) {
+        (Some(kept), _) => crate::seed::Record::Store(kept.seed_row()),
+        (None, Some(state)) => crate::seed::Record::State(state),
+        (None, None) => crate::seed::Record::Nowhere,
+    };
     let mut seeding = match (serving.seed, published) {
-        // The seed runs only under the first token of each lease: a run that took one at a later
-        // token, standing by first or not, skips it (`story:several-writers-one-postgres`, D5).
-        (Some(seed), Some(published)) if taken_again.is_some() => {
-            let (component, token) = taken_again.unwrap_or_default();
-            log::info(format!(
-                "seed {} is not submitted: this run took the lease of {component} at token \
-                 {token}, and the seed runs only under a lease's first token",
-                seed.path().display()
-            ))
-            .field("component", component)
-            .field("token", token)
-            .write();
-            published.publish(SeedProgress {
-                phase: SeedPhase::Ended,
-                left: 0,
-                ..SeedProgress::starting(published.read().entries)
-            });
-            None
-        }
         (Some(seed), Some(published)) => Some(crate::seed::begin(
             seed,
-            serving.state,
+            record,
             &mut host,
             recorder.clone(),
             published,
@@ -771,6 +757,24 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
                     recorder.count_reset();
                 }
                 crate::seed::forget(state);
+            }
+            exchange.respond(answer);
+            continue;
+        }
+        if exchange.console() == Some(Console::Reset)
+            && let Some(held) = kept.as_ref()
+        {
+            // A leased run without a seed: a reset that empties the store or loads a world leaves
+            // no seed's entries done, so the store's record goes (`story:seed-under-a-lease`,
+            // D6 A). A reset the lease's fence refused answers `503`, as any write does (D4).
+            let mut answer = console::reset(&mut host, exchange.body(), Some(&worlds));
+            if answer.status == 200 {
+                if let Some(recorder) = recorder.as_ref() {
+                    recorder.count_reset();
+                }
+                crate::seed::forget_row(&held.seed_row());
+            } else if crate::database::Kept::fenced().is_some() {
+                answer = Answer::refusal(503, LEASE_LOST);
             }
             exchange.respond(answer);
             continue;
