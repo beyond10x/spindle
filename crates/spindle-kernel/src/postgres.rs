@@ -98,6 +98,16 @@ impl std::fmt::Debug for Database {
     }
 }
 
+/// The longest one operation of a served store ([`PostgresStore::open`]) waits: for a connection
+/// of its pool, then for its transaction to end, whatever its statements wait for.
+#[must_use]
+pub fn store_wait() -> Duration {
+    let options = PoolOptions::default();
+    options
+        .acquisition_timeout
+        .saturating_add(options.transaction_timeout)
+}
+
 /// The table prefix of `component`'s store: `spindle_` and the component's name, each `-` as
 /// `_` and each digit as `__` and the letter of its place in the alphabet (`0` as `a`), so that
 /// two component names never share a prefix and eventlog's rule (lowercase ASCII and `_`, up to

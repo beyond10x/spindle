@@ -377,13 +377,19 @@ pub(crate) fn claimed(row: &crate::database::SeedRow) -> Result<usize, spindle_i
 /// too, and `answer` stands. Where that transaction failed, the answer keeps its refusal, its
 /// status at least `500`, and says the records are lost, naming their tables; where the lease
 /// thread did not answer, it says they were not put back as far as the run knows. Without
-/// `restore` a failure is printed on stderr, and the leases run out by their time.
+/// `restore` a failure is printed on stderr, and the leases run out by their time. A claim that
+/// took no lease leaves `answer` as it is (adversary round 5).
 pub(crate) fn unclaimed(
     row: &crate::database::SeedRow,
     answer: spindle_ingress::Answer,
     restore: bool,
     tables: usize,
 ) -> spindle_ingress::Answer {
+    // A claim that took no lease removed no record: nothing to put back or release, and the
+    // answer stands, whether or not the lease thread still runs.
+    if tables == 0 {
+        return answer;
+    }
     let unclaimed = row.unclaim(restore, tables);
     let why = match unclaimed {
         Ok(Ok(())) => return answer,

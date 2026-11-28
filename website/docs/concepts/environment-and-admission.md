@@ -361,7 +361,10 @@ emptied with the old record left would read as seeded at the next start. Once th
 ended, or the row `seed` of that table is removed, the reset can be sent again. A reset that then
 changes no store's rows puts the rows back, in one transaction, before it answers, whatever it
 answers: `400` for a row of its world, `503` where the lease was lost and the fence refused its
-first write, `500` where a store refused its first removal. Its answer stands; where the put-back
+first write, `500` where a store refused its first removal. A run that lost its lease while the
+reset ran keeps renewing the leases of the removed components' tables, not its own, until the
+reset has put the rows back, as long as the reset's store operations may still wait, then exits.
+A reset that removed no such row keeps its answer as it is. Its answer stands; where the put-back
 fails, the answer, at least `500`, also names the tables whose record was lost, and the next start
 with the seed may take the store as seeded, so reset the store before it. The run waits for the
 removal and the put-back as long as their statements may take, a statement's timeout for each.

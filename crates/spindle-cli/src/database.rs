@@ -827,7 +827,7 @@ impl Leases {
                 }
             }
             if taken {
-                self.closing(asked, term);
+                self.closing(asked);
                 return;
             }
             // The lease of each table a reset removed an old record from is held as long as the
@@ -851,7 +851,7 @@ impl Leases {
                          hold it, and this one exits: {why}",
                         self.components.join(", ")
                     ));
-                    self.closing(asked, term);
+                    self.closing(asked);
                     return;
                 }
                 Some(_) => {
@@ -873,17 +873,37 @@ impl Leases {
         let _ = self.unclaim(false);
     }
 
-    /// Once the run's lease is lost, keeps answering asks while a reset's claim holds leases, at
-    /// most `term`: the reset answers `503` and asks [`Ask::Unclaim`] first, and the records its
-    /// claim removed are put back under those leases, its own, before the run exits
-    /// (`story:seed-record-after-a-component-is-removed`, adversary round 4). Leases still held
-    /// after are released with their records left removed.
-    fn closing(&mut self, asked: &mpsc::Receiver<Ask>, term: Duration) {
-        let until = Instant::now() + term;
+    /// Once the run's lease is lost, keeps the leases a reset's claim holds, renewed every fifth
+    /// of the lease, and answers asks until the reset asks [`Ask::Unclaim`]: the records its
+    /// claim removed are put back under those leases before the run exits
+    /// (`story:seed-record-after-a-component-is-removed`, adversary rounds 4 and 5). The run's
+    /// lease is not renewed. The reset answers within two operations of its stores from then on
+    /// (the one under way, then one its fence or the store refuses), each at most
+    /// [`spindle_kernel::postgres_store_wait`], and asks within the run's wait for the lease
+    /// thread: at most that long. Where another process takes a claimed lease meanwhile, the
+    /// put-back under it is refused and the reset's answer names the table whose record was lost;
+    /// leases still held after are released with their records left removed.
+    fn closing(&mut self, asked: &mpsc::Receiver<Ask>) {
+        let statements = as_statements(self.components.len() + 2);
+        let until = Instant::now()
+            + spindle_kernel::postgres_store_wait().saturating_mul(2)
+            + self.lease.statement_wait().saturating_mul(statements);
+        let mut next = Instant::now();
         while !self.claimed.is_empty() {
-            match asked.recv_timeout(until.saturating_duration_since(Instant::now())) {
-                Ok(Ask::Stop) | Err(_) => break,
+            let now = Instant::now();
+            if now >= until {
+                break;
+            }
+            if now >= next {
+                for claimed in &self.claimed {
+                    let _ = self.lease.renew_orphan(&claimed.table, claimed.token);
+                }
+                next = Instant::now() + self.renewal();
+            }
+            match asked.recv_timeout(next.min(until).saturating_duration_since(Instant::now())) {
+                Ok(Ask::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 Ok(ask) => self.answer(ask),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
         }
         // A release puts back no record, so it fails in no way it answers.

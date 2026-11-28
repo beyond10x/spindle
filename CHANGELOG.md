@@ -91,9 +91,12 @@ are Spindle's releases.
   A reset that then changes no store's rows (`spindle_host::Host::reset_changed_rows`) puts the
   records back in one transaction before it answers (`record_orphan_seeds`), whatever it answers:
   `400` for a row of its world, `503` where the lease's fence refused its first write, `500` where
-  a store refused its first removal; a run that lost its lease puts them back before it exits.
-  The answer stands, and where the put-back fails it also names the tables whose record was lost,
-  at least `500`. The run waits for the claim and the put-back a statement's timeout for each of
+  a store refused its first removal; a run that lost its lease puts them back before it exits,
+  renewing the leases of those tables, not its own, until the reset asks, at most two store
+  operations (`spindle_kernel::postgres_store_wait`) and the run's wait for its lease thread. The
+  answer stands, and where the put-back fails it also names the tables whose record was lost, at
+  least `500`; a reset whose claim took no lease, as on a schema with no removed component, keeps
+  its answer as it is. The run waits for the claim and the put-back a statement's timeout for each of
   their statements, so a slow put-back is not answered as lost; a claim it stopped waiting for is
   undone behind it: no lease is kept and no record is lost. A removal from a current table that
   fails after the reset is printed naming that table.
