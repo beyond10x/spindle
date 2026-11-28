@@ -815,3 +815,129 @@ fn a_claim_that_outlasts_the_runs_wait_keeps_no_lease_and_removes_no_record_once
         );
     }
 }
+
+/// Round 4. A reset whose stores the lease's fence keeps, as when another process took `board`'s
+/// lease after the claim removed `audit`'s record and before the reset's first write, empties no
+/// store: every write of the run lands nothing from then on (D4), and it answers `503`. Here a
+/// trigger the owner puts on `audit`'s lease table moves `board`'s lease token on in the claim's
+/// own removal, so the take lands at that moment without timing. The reset is not `400` or `409`,
+/// so the unit does not put `audit`'s record back, while the store still holds entry 1: the next
+/// start of release 2 with the seed finds rows and no record, takes the seed as run (D5 B) and
+/// never sends entries 2 and 3. A record in a current table is kept by such a reset
+/// (`forget_row` runs only on `200`). About 3 s on the lane.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_reset_fenced_after_the_claim_empties_no_store_and_leaves_the_part_done_seed_to_resume() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let whole = seed_file(directory.path(), "seed.json", &["s1", "s2", "s3"]);
+    let schema = super::super::schema();
+    let part = left_part_done_in_audit(directory.path(), &environment, &schema, &whole);
+    let audit = lease_table(&schema, "audit");
+    let board = lease_table(&schema, "board");
+    super::super::sql(&[
+        format!(
+            "CREATE FUNCTION {schema}.take_board() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+             UPDATE {board} SET body = jsonb_set(body, '{{token}}', \
+             to_jsonb((body->>'token')::bigint + 1)) WHERE row_key = 'lease'; RETURN OLD; END $$"
+        ),
+        format!(
+            "CREATE TRIGGER take_board BEFORE DELETE ON {audit} FOR EACH ROW WHEN (OLD.row_key = \
+             'seed') EXECUTE FUNCTION {schema}.take_board()"
+        ),
+    ]);
+
+    let mut unseeded = Replica::start(super::run(&environment, &schema));
+    unseeded.ready_by(Instant::now() + super::ANSWER);
+    let (status, body) = reset_within(unseeded.address, None);
+    unseeded.kill();
+    let reset_printed = unseeded.printed();
+    super::super::sql(&[format!("DROP TRIGGER take_board ON {audit}")]);
+    assert_eq!(
+        status, 503,
+        "the fence refused the reset's writes: {body}\n{reset_printed}"
+    );
+
+    let mut next = Replica::start(seeded(&environment, &schema, &whole));
+    next.ready_by(Instant::now() + super::ANSWER);
+    let deadline = Instant::now() + super::ANSWER;
+    while !(next.has_line("ended:") || next.has_line("taken as applied"))
+        && Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let next_tasks = task_ids(&next);
+    let printed = next.printed();
+    next.stop();
+    assert_eq!(
+        next_tasks,
+        ["s1", "s2", "s3"],
+        "a reset the fence refused emptied no store, yet audit's record {part} was removed for it \
+         and not put back (audit's table holds {:?}, board's {:?}), so the next seeded start took \
+         the store as seeded and never sent entries 2 and 3.\nreset {status} {body}\nreset run \
+         printed:\n{reset_printed}\nnext start printed:\n{printed}",
+        record_in(&audit),
+        recorded(&schema, "board")
+    );
+}
+
+/// The removed components' tables of the put-back case: `audit`'s and five copies of it.
+const PUT_BACK: [&str; 6] = ["archive", "audit", "bygone", "former", "retired", "vintage"];
+
+/// Round 4. A reset refused `400` for a row of its world (two rows one instance) after the claim
+/// removed six removed components' records puts them back in one transaction; a trigger holds
+/// each write of a row `seed` 0.5 s, under the lease connection's statement timeout (2/3 s), so
+/// the put-back lands, after about 3 s, past the run's wait for the lease thread (four statement
+/// timeouts, about 2.67 s). The run's thread stops waiting and answers `500` saying the records
+/// are lost and to reset the store before the next seeded start; the lease thread then puts every
+/// record back. The answer states a loss that did not happen. About 6 s on the lane.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_put_back_that_outlasts_the_runs_wait_is_not_answered_as_lost_once_it_lands() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let seed = seed_file(directory.path(), "seed.json", &["s1", "s2"]);
+    let schema = super::super::schema();
+    let record = seeded_by_release_one(&environment, &schema, &seed);
+    let tables: Vec<String> = PUT_BACK
+        .iter()
+        .map(|component| {
+            if *component == "audit" {
+                lease_table(&schema, component)
+            } else {
+                copied_from_audit(&schema, component)
+            }
+        })
+        .collect();
+    let mut statements = vec![format!(
+        "CREATE FUNCTION {schema}.slow_put_back() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+         PERFORM pg_sleep(0.5); RETURN NEW; END $$"
+    )];
+    for table in &tables {
+        statements.push(format!(
+            "CREATE TRIGGER slow_put_back BEFORE INSERT OR UPDATE ON {table} FOR EACH ROW WHEN \
+             (NEW.row_key = 'seed') EXECUTE FUNCTION {schema}.slow_put_back()"
+        ));
+    }
+    super::super::sql(&statements);
+    let row = json!({"entity": "tasks.board.Task", "identity": "w1", "state": "Open",
+        "fields": {"title": "twice"}});
+
+    let mut unseeded = Replica::start(super::run(&environment, &schema));
+    unseeded.ready_by(Instant::now() + super::ANSWER);
+    let world = json!({"rows": [row.clone(), row]});
+    let (status, body) = reset_within(unseeded.address, Some(&world));
+    // The put-back, six writes of 0.5 s, lands within about 0.5 s of the answer.
+    std::thread::sleep(Duration::from_millis(1_500));
+    let records: Vec<Option<Value>> = tables.iter().map(|table| record_in(table)).collect();
+    let printed = unseeded.printed();
+    unseeded.stop();
+    let lost = body["refused"]
+        .as_str()
+        .is_some_and(|refused| refused.contains("is lost"));
+    assert!(
+        !lost || records.iter().all(Option::is_none),
+        "the reset answered {status} that the records are lost, yet after it every table holds \
+         {record} again: {records:?}\n{body}\n{printed}"
+    );
+}
