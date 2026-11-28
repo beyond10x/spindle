@@ -1,0 +1,30 @@
+domain: tasks.audit
+summary: Notes on tasks, kept by a component a later release adds before the board in name order.
+entities:
+  - name: tasks.audit.Note
+    identity:
+      name: task_id
+      type: tasks.board.TaskId
+    fields: []
+    lifecycle:
+      initial: Noted
+      states: [Noted]
+      terminal: [Noted]
+commands:
+  - name: tasks.audit.NoteTask
+    input:
+      - name: task_id
+        type: tasks.board.TaskId
+    outcomes:
+      - name: noted
+        creates: tasks.audit.Note
+        instance: task_id
+        emits: [tasks.audit.TaskNoted]
+        payload:
+          tasks.audit.TaskNoted: {task_id: input.task_id}
+        summary: The note is kept.
+events:
+  - name: tasks.audit.TaskNoted
+    fields:
+      - name: task_id
+        type: tasks.board.TaskId

@@ -65,6 +65,7 @@ mod adversary_w31_u5;
 #[cfg(all(feature = "postgres", feature = "sqlite"))]
 mod adversary_w31_u8;
 mod adversary_w32_u3;
+mod adversary_w32_u4;
 mod affects_each;
 mod before_row;
 mod caller;

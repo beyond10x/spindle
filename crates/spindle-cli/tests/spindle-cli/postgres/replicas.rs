@@ -22,6 +22,8 @@ use serde_json::{Value, json};
 
 use super::{ANSWER, STARTUP, call, owner_url, schema, spindle};
 
+mod adversary_w32_u4;
+
 const SPEC: &str = "crates/spindle-cli/tests/fixtures/ingress";
 const BINDING: &str = "crates/spindle-cli/tests/fixtures/ingress-http.yaml";
 /// The lease every case runs with, in seconds.
