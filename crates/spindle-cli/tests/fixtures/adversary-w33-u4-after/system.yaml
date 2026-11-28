@@ -1,0 +1,19 @@
+format: ess/34
+system: archive
+version: v1
+summary: Books shelved with an optional note, the specification of adversary-w33-u4-before with the state Lent removed and three invariants on each book.
+domains:
+  - archive.shelf
+components:
+  - component: archive
+    summary: Shelves books for callers outside the process.
+    owns:
+      domains:
+        - archive.shelf
+    accepts:
+      commands:
+        - archive.shelf.ShelveBook
+    publishes:
+      events:
+        - archive.shelf.BookShelved
+    reached_by: network

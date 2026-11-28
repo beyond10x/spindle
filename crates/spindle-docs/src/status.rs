@@ -142,7 +142,7 @@ pub const CAPABILITIES: &[Capability] = &[
     shipped(
         "Execution",
         "Specification change over stored rows",
-        "Each durable store records the specification it was last written under. run under another one starts where every stored row stays readable, such as an optional field added, and otherwise exits 3 before listening or reading stdin, naming each entity and field (or state) whose rows the new specification cannot read: a field removed, a field retyped so that a stored value no longer reads, a required field added, a state or an entity removed, or an entity moved to another component. Nothing is migrated.",
+        "Each durable store records the specification it was last written under. run under another one starts where every stored row stays readable, such as an optional field added, and otherwise exits 3 before listening or reading stdin, naming each entity and field (or state) whose rows the new specification cannot read: a field removed, a field retyped so that a stored value no longer reads, a required field added, a state or an entity removed, an entity moved to another component, or an entity invariant a stored row breaks, one line per invariant. Nothing is migrated.",
         "/docs/concepts/environment-and-admission#a-specification-change-over-stored-rows",
         "crates/spindle-cli/tests/spindle-cli/spec_change.rs::an_incompatible_change_exits_before_listening",
     ),
