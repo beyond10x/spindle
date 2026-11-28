@@ -145,7 +145,9 @@ struct Running {
     events: Vec<ObservedEvent>,
     /// Every attempt an event binding made of its command, in the order made.
     invocations: Vec<Invocation>,
-    /// How many values an await has minted for an input its system decides.
+    /// How many values the awaits that reached a step minted for an input their system decides.
+    /// An await that reaches nothing leaves it where it was, as ESS's interpreter mints from a
+    /// copy of its store it keeps only when a step is reached, so asking again mints the same.
     minted: u64,
 }
 
@@ -352,18 +354,20 @@ impl HostTarget {
     /// for absent, as ESS's interpreter lists them (`choices`): the `identity` input the awaited
     /// instance; a stated input its value alone; any other absent first where it is `Optional`,
     /// then each held row's identity where a `when_related:` guard reads it, or else one minted
-    /// value.
+    /// value; with the mint counter as it stands after them, which the scenario keeps only where
+    /// the await reaches a step.
     fn choices(
         &self,
         command: &ResolvedCommand,
         (identity, request): (&str, &AwaitRequest),
         observation: &str,
-    ) -> Result<Choices, TargetError> {
+    ) -> Result<(Choices, u64), TargetError> {
         let related = related_inputs(command);
         let mut running = self.running.borrow_mut();
         let running = running
             .as_mut()
             .ok_or_else(|| TargetError::unavailable(observation, "no scenario is open"))?;
+        let mut minted = running.minted;
         let mut choices = Vec::with_capacity(command.input.len());
         for field in &command.input {
             let mut values = Vec::new();
@@ -390,8 +394,8 @@ impl HostTarget {
                         .collect::<Result<BTreeSet<_>, _>>()?;
                     values.extend(held.into_iter().map(Some));
                 } else {
-                    running.minted += 1;
-                    let minted = minted_value(&self.ir, field.type_ref.required(), running.minted)
+                    minted += 1;
+                    let value = minted_value(&self.ir, field.type_ref.required(), minted)
                         .map_err(|why| TargetError::unsupported(observation, why.to_string()))?
                         .ok_or_else(|| {
                             TargetError::unsupported(
@@ -399,12 +403,12 @@ impl HostTarget {
                                 format!("no value of `{}` to issue it with", field.type_ref),
                             )
                         })?;
-                    values.push(Some(minted));
+                    values.push(Some(value));
                 }
             }
             choices.push((field.name.clone(), values));
         }
-        Ok(choices)
+        Ok((choices, minted))
     }
 
     /// Sends `request` to the host of the scenario in progress: what
@@ -819,10 +823,14 @@ impl ConformanceTarget for HostTarget {
     /// `instance`; a stated input is its `compared` value alone; any other is left absent first
     /// where it is `Optional`, then each identity of the held rows a `when_related:` guard reads
     /// through it, in their order as values, or else one value minted as the interpreter mints one
-    /// ([`ess_conformance::interpret::values::mint`]). The combinations are tried first field
-    /// slowest, and the first under which the model takes an accepting branch, or the external one
-    /// the scenario forced, is committed and answered, taken at once (`elapsed_ms` 0); a refused
-    /// combination commits nothing. Where several combinations would take different accepting
+    /// ([`ess_conformance::interpret::values::mint`]) at the next tick of a counter of the
+    /// scenario's, which an await that reaches nothing leaves where it was, so asking again
+    /// answers the same. That counter counts only the awaits' values: the interpreter's also
+    /// counts each value the scenario's commands generated, which the host mints from its own
+    /// seed, so a minted input can differ from the interpreter's. The combinations are tried
+    /// first field slowest, and the first under which the model takes an accepting branch, or the
+    /// external one the scenario forced, is committed and answered, taken at once (`elapsed_ms`
+    /// 0); a refused combination commits nothing. Where several combinations would take different accepting
     /// branches, the interpreter answers unsupported and this target takes the first.
     ///
     /// None reached: nothing else takes the step, since nothing in the host issues a system-issued
@@ -871,7 +879,7 @@ impl ConformanceTarget for HostTarget {
             .filter(|(forced, _)| *forced == command.name.to_string())
             .map(|(_, outcome)| outcome.clone());
 
-        let choices = self.choices(command, (identity, &request), &observation)?;
+        let (choices, minted) = self.choices(command, (identity, &request), &observation)?;
         let combinations = combinations(&choices).ok_or_else(|| {
             TargetError::unsupported(
                 &observation,
@@ -902,6 +910,10 @@ impl ConformanceTarget for HostTarget {
                     .find(|declared| declared.name == taken.outcome)
                     .is_some_and(|declared| declared.error.is_none());
             if reached {
+                // The values minted for this ask are spent only where it reached a step.
+                if let Some(running) = self.running.borrow_mut().as_mut() {
+                    running.minted = minted;
+                }
                 self.lapse(&request.command.to_string());
                 return Ok(AwaitAnswer::Reached {
                     result: sent,

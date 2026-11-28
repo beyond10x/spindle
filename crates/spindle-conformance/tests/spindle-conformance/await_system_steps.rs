@@ -11,18 +11,19 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use ess_conformance::authored::{self, Source};
 use ess_conformance::interpret::Interpreted;
 use ess_conformance::occurrence_clock::CommandClock;
 use ess_conformance::target::{
     AbsentInputRequest, AwaitAnswer, AwaitRequest, EntitySetupRequest, RecordedCommandCompletion,
 };
 use ess_conformance::{
-    AdmittedSuite, CheckCode, ConformanceTarget, ElapsedObservation, ElapsedObservationRequest,
-    EventDeliveryRequest, EventObservationRequest, ExternalOutcomeControl, ImplementationIdentity,
-    InstantMark, InvocationObservationRequest, NowHold, ObservedEvent, ObservedInvocation,
-    OrderedScan, OrderedScanRequest, RedeliveryRequest, ScenarioContext, ScenarioStep,
-    SemanticCommandRequest, SemanticCommandResult, SemanticViewRequest, SemanticViewResult, Status,
-    TargetError,
+    AdmittedSuite, CheckCode, ConformanceSuite, ConformanceTarget, ElapsedObservation,
+    ElapsedObservationRequest, EventDeliveryRequest, EventObservationRequest,
+    ExternalOutcomeControl, ImplementationIdentity, InstantMark, InvocationObservationRequest,
+    NowHold, ObservedEvent, ObservedInvocation, OrderedScan, OrderedScanRequest, RedeliveryRequest,
+    ScenarioContext, ScenarioStep, SemanticCommandRequest, SemanticCommandResult,
+    SemanticViewRequest, SemanticViewResult, Status, SuiteProvenance, TargetError,
 };
 use ess_primitives::node::Node;
 use spindle_capability::Environment;
@@ -30,6 +31,7 @@ use spindle_conformance::{HostTarget, Run};
 use spindle_spec::Specification;
 
 const FIXTURE: &str = "tests/fixtures/await-system";
+const SCENARIOS: &str = "tests/fixtures/await-system-scenarios";
 
 fn specification() -> Specification {
     spindle_spec::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURE))
@@ -466,6 +468,70 @@ fn an_await_answered_not_issued_fails() {
                 && check.code.to_string() == "ESS-CF-AWAIT"),
         "{}",
         rendered(&run)
+    );
+}
+
+/// The red side answered by the host itself: with only a busy agent held, every agent the host
+/// tries is refused, so its own `await_outcome` answers nothing issued, held for the 5 s bound,
+/// and the act that claims `rushed` fails under `ESS-CF-AWAIT`, as on ESS's interpreter.
+#[test]
+fn a_bounded_await_the_host_does_not_reach_fails() {
+    let specification = specification();
+    let file = "only-busy.yaml";
+    let text = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(SCENARIOS)
+            .join(file),
+    )
+    .expect("the document reads");
+    let authoring = authored::compile(&specification.ir, &[Source::new(file, text)]);
+    assert!(authoring.is_complete(), "{:?}", authoring.refusals);
+    let mut suite = ConformanceSuite::new(SuiteProvenance::of(&specification.ir));
+    for (id, scenario) in authoring.scenarios {
+        suite.insert(id, scenario).expect("one scenario");
+    }
+    suite.select_fresh_format_for(&specification.ir);
+    let suite = AdmittedSuite::from_suite(&suite).expect("the suite is admitted");
+
+    let host = Watched::new(host(&specification));
+    let run = spindle_conformance::execute(&suite, &host);
+    let seen = host.seen();
+    assert!(
+        matches!(
+            seen.as_slice(),
+            [Seen::NotIssued { command, elapsed_ms: Some(5_000), .. }]
+                if command == "dispatch.desk.Route"
+        ),
+        "the host answers nothing issued at the bound: {seen:#?}"
+    );
+    let result = run.report().scenarios.first().expect("one scenario");
+    assert_eq!(result.status, Status::Failed, "{}", rendered(&run));
+    assert!(
+        result
+            .checks
+            .iter()
+            .any(|check| check.status == Status::Failed
+                && check.code == CheckCode::Await
+                && check.code.to_string() == "ESS-CF-AWAIT"),
+        "{}",
+        rendered(&run)
+    );
+
+    let interpreted = Watched::new(Interpreted::for_model(specification.ir.clone()));
+    let reference = spindle_conformance::execute(&suite, &interpreted);
+    assert_eq!(
+        reference
+            .report()
+            .scenarios
+            .first()
+            .map(|result| result.status),
+        Some(Status::Failed),
+        "ESS's interpreter fails it too"
+    );
+    assert_eq!(
+        seen,
+        interpreted.seen(),
+        "answered as the interpreter answers"
     );
 }
 
