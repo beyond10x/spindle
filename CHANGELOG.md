@@ -36,6 +36,23 @@ are Spindle's releases.
   not admit. The record is unchanged, so a row that already broke an unchanged invariant now
   refuses the next start under another digest. On SQLite and PostgreSQL alike
   (`story:entity-invariant-over-stored-rows`).
+- Each release asset (every archive, the SBOM, `IMAGES` and `SHA256SUMS`) carries a cosign keyless
+  signature, uploaded beside it as `<asset>.sigstore.json`, and a SLSA build provenance
+  attestation in the repository's attestations; the image's manifest list is signed by its digest
+  and attested the same way. The signer is `release.yml` at the tag's ref, or at
+  `refs/heads/main` for a backfill, which fails before it builds anything when it is dispatched
+  from another ref. A new job `sign`, the only one with `attestations: write`,
+  and `image-manifest` are the only jobs with `id-token: write`, and neither runs on a pull
+  request; cosign v3.1.6 is checked against its pinned sha256 before it runs, and
+  `actions/attest-build-provenance` v4.2.2 is pinned by commit. `publish` uploads each bundle with
+  its asset, then downloads every asset back from the page and verifies it with
+  `cosign verify-blob` and `gh attestation verify`, the image with `cosign verify` and
+  `gh attestation verify oci://`, and fails the run on any check that fails. `gh` must answer one
+  JSON list, every attestation in it must be signed by `release.yml` at `refs/heads/main` or at
+  the tag's ref, each at the tag's ref must name the tagged commit, and one must name the commit
+  of the run, so a backfill passes beside the attestations of the tag run and of earlier
+  backfills. The README tells a
+  consumer how to verify each (`story:release-artifacts-signed`).
 
 ### Fixed
 
