@@ -416,3 +416,279 @@ fn a_stalled_tls_handshake_frees_its_place_at_the_head_read_time() {
         "the stalled handshake was closed"
     );
 }
+
+// Round 2: against the fix that closes a connection whose answer cannot be written (`Stalling`),
+// and what round 1 left: a client that trickles its reads, an honest reader of a large answer, a
+// command whose client left while it was queued, a connection waiting at the cap when the
+// listener closes, and a body that stalls.
+
+/// A keep-alive `method path` with a JSON body for the desk `desk_id`.
+fn kept_command(address: SocketAddr, method: &str, path: &str, desk_id: &str) -> String {
+    let body = json!({"desk_id": desk_id, "holder": "ada"}).to_string();
+    format!(
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+/// Writes pipelined `GET /__spindle/live` requests on `stuck` until the listener stops reading
+/// them, its answers unread; the bytes sent.
+fn fill(stuck: &mut TcpStream, address: SocketAddr) -> usize {
+    stuck
+        .set_write_timeout(Some(Duration::from_millis(500)))
+        .expect("a write timeout");
+    let batch = get(address, LIVE).repeat(256);
+    let started = Instant::now();
+    let mut sent = 0usize;
+    while let Ok(count) = stuck.write(batch.as_bytes()) {
+        sent += count;
+        assert!(
+            started.elapsed() < Duration::from_secs(20) && sent < 256 << 20,
+            "the listener kept reading: {sent} bytes in {:?}",
+            started.elapsed()
+        );
+    }
+    sent
+}
+
+/// Progress resets the write bound, but a read of one byte now and then is no progress: the
+/// kernel opens no window for it, so the listener's write stays blocked and the connection is
+/// closed at the head read time. With a cap of 1, a client that fills its answers and then reads
+/// one byte every 250 ms does not keep a second client from being answered.
+#[test]
+fn a_client_reading_one_byte_at_a_time_does_not_hold_the_cap() {
+    let limits = Limits {
+        connections: 1,
+        head_read: Duration::from_secs(1),
+        request_time: Duration::from_secs(1),
+        ..Limits::DEFAULT
+    };
+    let (surface, _, _) = desk(limits);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let mut stuck = connect(address);
+    let sent = fill(&mut stuck, address);
+    let trickle = thread::spawn(move || {
+        stuck
+            .set_read_timeout(Some(Duration::from_millis(250)))
+            .expect("a read timeout");
+        let until = Instant::now() + Duration::from_secs(4);
+        let mut byte = [0u8; 1];
+        while Instant::now() < until {
+            match stuck.read(&mut byte) {
+                Ok(1) => thread::sleep(Duration::from_millis(250)),
+                Ok(_) => return true,
+                Err(error)
+                    if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+                Err(_) => return true,
+            }
+        }
+        false
+    });
+    let started = Instant::now();
+    let mut waiting = connect(address);
+    waiting
+        .write_all(get(address, LIVE).as_bytes())
+        .expect("the request is written");
+    let answered = plain_answer(&mut waiting, DUE);
+    assert_eq!(
+        answered.map(|(status, _)| status),
+        Some(200),
+        "a client trickling one byte at a time ({sent} bytes of requests sent) held the cap for \
+         {:?}",
+        started.elapsed()
+    );
+    drop(trickle);
+}
+
+/// The write bound is reset by every write that proceeds: a client that reads a large answer in
+/// chunks, pausing 400 ms between them (under the head read time of 1 s), gets the whole answer,
+/// though the answer takes several head read times to write. A `Stalling` that ran its bound
+/// from the first blocked write and never reset it would cut this answer off.
+#[test]
+fn an_answer_read_in_chunks_with_short_pauses_is_written_whole() {
+    const PAD: usize = 24 << 20;
+    const CHUNK: usize = 3 << 20;
+    let limits = Limits {
+        head_read: Duration::from_secs(1),
+        request_time: Duration::from_secs(10),
+        ..Limits::DEFAULT
+    };
+    let (surface, method, path) = desk(limits);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let request = command(address, &method, &path, "big");
+    let reader = thread::spawn(move || {
+        let mut stream = connect(address);
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("a read timeout");
+        stream
+            .write_all(request.as_bytes())
+            .expect("the request is written");
+        let started = Instant::now();
+        let mut read = Vec::with_capacity(PAD + 4096);
+        let mut chunk = vec![0u8; 64 << 10];
+        let mut since_pause = 0usize;
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => {
+                    read.extend_from_slice(&chunk[..count]);
+                    since_pause += count;
+                    if since_pause >= CHUNK {
+                        since_pause = 0;
+                        thread::sleep(Duration::from_millis(400));
+                    }
+                }
+            }
+        }
+        (read, started.elapsed())
+    });
+    let exchange = listener.next(DUE).expect("the command is handed over");
+    exchange.respond(Answer {
+        status: 200,
+        body: Some(json!({"pad": "x".repeat(PAD)})),
+        headers: Vec::new(),
+    });
+    let (read, took) = reader.join().expect("the reader ends");
+    let head = read
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("an answer head");
+    let text = String::from_utf8_lossy(&read[..head]).into_owned();
+    let length: usize = text
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.trim().eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, value)| value.trim().parse().ok())
+        .expect("a content length");
+    assert!(text.starts_with("HTTP/1.1 200"), "{text}");
+    assert_eq!(
+        read.len() - head - 4,
+        length,
+        "the whole answer is written to a reader that pauses under the head read time; \
+         {} of {length} bytes in {took:?}",
+        read.len() - head - 4
+    );
+    assert!(
+        took > Duration::from_secs(2),
+        "the answer took more than one head read time to write: {took:?}"
+    );
+}
+
+/// A command whose client left while it was queued is not handed once its request time has
+/// passed. hyper drops a request's future when its client closes the connection, and with it the
+/// only place the request time is enforced (`handed`), so the exchange stays queued with no
+/// deadline: a later `Listener::next` hands a command 600 ms past its request time of 300 ms, and
+/// the caller's thread commits a command nobody waits for. D3 A: "a request still queued answers
+/// 503 ... and Listener::next skips it".
+#[test]
+fn a_command_whose_client_left_is_not_handed_past_its_request_time() {
+    let limits = Limits {
+        request_time: Duration::from_millis(300),
+        ..Limits::DEFAULT
+    };
+    let (surface, method, path) = desk(limits);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let mut client = connect(address);
+    client
+        .write_all(kept_command(address, &method, &path, "left").as_bytes())
+        .expect("the request is written");
+    thread::sleep(Duration::from_millis(100));
+    let _ = client.shutdown(std::net::Shutdown::Both);
+    drop(client);
+    thread::sleep(Duration::from_millis(800));
+    let handed = listener.next(Duration::from_millis(300));
+    let late = handed
+        .as_ref()
+        .map(|exchange| String::from_utf8_lossy(exchange.body()).into_owned());
+    assert!(
+        late.is_none(),
+        "a command queued 900 ms ago, past its request time of 300 ms, its client gone, is \
+         handed to the caller's thread: {late:?}"
+    );
+}
+
+/// A connection that waits at the cap with a whole command sent, when the run stops taking work
+/// and the listener closes, is answered `503` like every request that reaches the listener from
+/// then on (`Listener::stopping`, `Listener::close`), not reset: a reset after a whole `POST`
+/// leaves its client not knowing whether the command ran. The listener drops its socket before
+/// the places free up, so the kernel resets every connection in its backlog.
+#[test]
+fn a_connection_waiting_at_the_cap_when_the_listener_closes_is_answered_503() {
+    let limits = Limits {
+        connections: 1,
+        head_read: Duration::from_secs(5),
+        ..Limits::DEFAULT
+    };
+    let (surface, method, path) = desk(limits);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let mut holder = connect(address);
+    holder
+        .write_all(get(address, LIVE).as_bytes())
+        .expect("the request is written");
+    assert_eq!(
+        plain_answer(&mut holder, DUE).map(|(status, _)| status),
+        Some(200),
+        "the first connection is answered and kept alive"
+    );
+    let mut waiting = connect(address);
+    waiting
+        .write_all(command(address, &method, &path, "late").as_bytes())
+        .expect("the request is written to the backlog");
+    thread::sleep(Duration::from_millis(200));
+    listener
+        .stopping()
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let closing = thread::spawn(move || listener.close(Duration::from_secs(2)));
+    let answered = plain_answer(&mut waiting, DUE);
+    closing.join().expect("the listener closes");
+    drop(holder);
+    assert_eq!(
+        answered.as_ref().map(|(status, _)| *status),
+        Some(503),
+        "a whole command waiting at the cap when the run stopped taking work is answered: \
+         {answered:?}"
+    );
+}
+
+/// `Limits::head_read` says an idle or stalled connection holds a place of the cap for at most
+/// the head read time. A connection that sends a head and stalls in its body holds it for
+/// `BODY_READ` (10 s) whatever the head read time: with a cap of 1 and a head read time of 1 s,
+/// a second client is not answered within 3 s.
+#[test]
+fn a_body_that_stalls_frees_its_place_at_the_head_read_time() {
+    let limits = Limits {
+        connections: 1,
+        head_read: Duration::from_secs(1),
+        ..Limits::DEFAULT
+    };
+    let (surface, method, path) = desk(limits);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let mut stalled = connect(address);
+    write!(
+        stalled,
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\n\
+         Content-Length: 100\r\n\r\n{{\"desk_id\":"
+    )
+    .expect("a head and part of a body are written");
+    thread::sleep(Duration::from_millis(100));
+    let started = Instant::now();
+    let mut waiting = connect(address);
+    waiting
+        .write_all(get(address, LIVE).as_bytes())
+        .expect("the request is written");
+    let answered = plain_answer(&mut waiting, DUE);
+    let took = started.elapsed();
+    drop(stalled);
+    assert!(
+        answered.is_some() && took < Duration::from_millis(2500),
+        "a connection stalled in its body held the only place of the cap for {took:?} \
+         (head read time 1 s): {answered:?}"
+    );
+}
