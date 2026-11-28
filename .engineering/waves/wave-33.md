@@ -194,3 +194,7 @@ Every decision takes the scoper's default, option A, each reversible (D-W33b A).
 - Run the whole workspace's tests; run the tests of the crates the unit touched.
 - Make a model call, a call to a real API or a network request in a test; loopback only.
 - Add a dependency: none of the four needs one.
+
+## Revision round 3
+
+- `story:seed-record-after-a-component-is-removed`: on `wave33-acc-r3`, the current-record case plants records that send only an entry no release stored (audit at `done` 1 of 3, board at `done` 2, release 2 sends entry 3), and a kernel case refuses a move out of an orphan table whose lease another handle holds (D1 A).

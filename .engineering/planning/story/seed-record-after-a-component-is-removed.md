@@ -37,7 +37,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 13
+revision: 14
 ---
 ## Outcome
 
@@ -92,13 +92,15 @@ names each one's time. No new fixture. Each wait for a run's line or exit is bou
 - `another_seed_file_after_the_component_holding_the_record_was_removed_is_refused` (same file):
   release 2 with another seed file exits 1 before listening, naming both digests, prints no
   listening line, and `audit`'s record is unchanged.
-- `a_record_in_a_current_table_wins_over_an_orphan_record` (same file; D2 A): release 1 leaves the
-  record in `audit`'s lease table at `done` 1 of 1; the test then writes into `board`'s lease table
-  a record that differs from it only in `done` (0), with one SQL statement as
+- `a_record_in_a_current_table_wins_over_an_orphan_record` (same file; D2 A): release 1 starts
+  with a 3-entry seed file and is stopped with the record in `audit`'s lease table at `done` 1 of 3,
+  as the first case leaves it; the test then writes into `board`'s lease table a record of the same
+  file at `done` 2, with one SQL statement as
   `records_in_three_tables_two_alike_and_one_different_are_refused` (`adversary_w32_u4.rs:228`)
-  does. Release 2 with the same file starts from `board`'s record: it does not exit 1, its end line
-  counts 1 sent, and `audit`'s record is unchanged afterwards. Under D2 B (a scan on every read)
-  the two differing records would exit 1, so this line tells the two apart.
+  does. Release 2 with the same file starts from `board`'s record: it sends entry 3 only, which no
+  release stored before, does not exit 1, its end line counts 1 sent, `board`'s record ends at
+  `done` 3, and `audit`'s record is unchanged afterwards. Under D2 B (a scan on every read) the two
+  differing records would exit 1, so this line tells the two apart.
 - `differing_records_in_orphan_tables_exit_1_naming_the_tables` (same file; D3 A): release 1
   leaves the record in `audit`'s lease table; the test copies that table, its `lease` and `seed`
   rows, to the lease table of a component no fixture names (`retired`, its table named by
@@ -122,6 +124,12 @@ names each one's time. No new fixture. Each wait for a run's line or exit is bou
 - `an_orphan_record_under_another_holders_lease_is_read_not_moved` (kernel `postgres.rs`, D1 A):
   while another handle holds the orphan table's lease, as an old-release process would, the take
   of that lease fails, the record still reads, and neither table changes.
+- `a_move_out_of_an_orphan_table_whose_lease_another_holds_is_refused` (kernel `postgres.rs`, D1
+  A): handle A holds the first component's lease; handle B holds the orphan table's lease, as an
+  old-release process would; A attempts the move of the orphan table's record into the first
+  component's table; the move is refused naming the orphan table's lease, and both tables are
+  unchanged. Under D1 B (the first component's lease alone) the move would land, so this line tells
+  the two apart.
 - The `--seed` help (`crates/spindle-cli/src/cli.rs:555-575`, generated `cli.md:153`) and § A seed
   on PostgreSQL with a lease of `environment-and-admission.md` (`:307-336`) state the
   removed-component case in place of the link to this story (`cli.rs:569`, `:323`), and the page
