@@ -391,8 +391,9 @@ impl Listener {
     /// route has `404`; a served path under another method `405` with `Allow`, the method
     /// compared exactly; a path variable that does not decode `400`; a body sent with
     /// `Transfer-Encoding` `411`, since only one announced by `Content-Length` is read; a body
-    /// announced over [`BODY_LIMIT`] `413` before it is read; one that does not arrive within
-    /// [`BODY_READ`] `408`, and one that breaks off `400`. A head not sent within
+    /// announced over [`BODY_LIMIT`] `413` before it is read; one that does not arrive whole within
+    /// [`BODY_READ`], or pauses between two of its pieces for longer than the surface's
+    /// [`Limits::head_read`], `408`, and one that breaks off `400`. A head not sent within
     /// [`HEADER_READ`] closes the connection. A failed accept is retried, and the listener goes
     /// on. The surface's [`Limits`] bound the connections it holds, each head and each request's
     /// time ([`Surface::limited`]).
@@ -1115,28 +1116,30 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
     // Two bounds on the body read: the whole body within `BODY_READ`, and no pause between two of
     // its pieces longer than the head read time, so a body that stalls holds a place of the cap
     // no longer than an idle connection (adversary findings F4 of round 2 and of round 3) while
-    // one arriving steadily is read.
+    // one arriving steadily is read. A pause that would run past the whole body's deadline is
+    // refused as late, so the text does not depend on which timer fires first.
     let pause = served.surface.limits().head_read;
-    let read = tokio::time::timeout(
+    let read = paced(
+        Limited::new(request.into_body(), BODY_LIMIT),
+        pause,
         BODY_READ,
-        paced(Limited::new(request.into_body(), BODY_LIMIT), pause),
     )
     .await;
     let body = match read {
-        Ok(Ok(body)) => body,
-        Ok(Err(Unread::Broken(error))) => {
+        Ok(body) => body,
+        Err(Unread::Broken(error)) => {
             return refused(Answer::refusal(
                 400,
                 format!("the body could not be read: {error}"),
             ));
         }
-        Ok(Err(Unread::Paused)) => {
+        Err(Unread::Paused) => {
             return refused(Answer::refusal(
                 408,
                 format!("the body paused for longer than {pause:?}"),
             ));
         }
-        Err(_) => {
+        Err(Unread::Late) => {
             return refused(Answer::refusal(
                 408,
                 format!("the body did not arrive within {BODY_READ:?}"),
@@ -1171,24 +1174,36 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
 enum Unread {
     /// No piece of it arrived for longer than the pause allowed.
     Paused,
+    /// It did not arrive whole within the time allowed for the whole body.
+    Late,
     /// It broke off or ran over its limit, as the error says.
     Broken(String),
 }
 
 /// Every byte of `body`, each piece arriving within `pause` of the one before (of the head, for
-/// the first).
-async fn paced<B>(mut body: B, pause: Duration) -> Result<Vec<u8>, Unread>
+/// the first), and the whole within `whole`. A pause that would run past the whole body's
+/// deadline waits only to that deadline and is [`Unread::Late`], so which bound refused a body
+/// does not depend on which of two timers fires first.
+async fn paced<B>(mut body: B, pause: Duration, whole: Duration) -> Result<Vec<u8>, Unread>
 where
     B: hyper::body::Body<Data = Bytes> + Unpin,
     B::Error: std::fmt::Display,
 {
+    let deadline = tokio::time::Instant::now().checked_add(whole);
     let mut read = Vec::new();
     loop {
-        match tokio::time::timeout(pause, body.frame()).await {
-            Err(_) => return Err(Unread::Paused),
-            Ok(None) => return Ok(read),
-            Ok(Some(Err(error))) => return Err(Unread::Broken(error.to_string())),
-            Ok(Some(Ok(frame))) => {
+        let now = tokio::time::Instant::now();
+        let paused = now.checked_add(pause);
+        let (until, missed) = match (paused, deadline) {
+            (Some(paused), Some(deadline)) if paused < deadline => (Some(paused), Unread::Paused),
+            (Some(paused), None) => (Some(paused), Unread::Paused),
+            (_, deadline) => (deadline, Unread::Late),
+        };
+        match within(until, body.frame()).await {
+            None => return Err(missed),
+            Some(None) => return Ok(read),
+            Some(Some(Err(error))) => return Err(Unread::Broken(error.to_string())),
+            Some(Some(Ok(frame))) => {
                 if let Ok(data) = frame.into_data() {
                     read.extend_from_slice(&data);
                 }
