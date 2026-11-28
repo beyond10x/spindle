@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-11-28
+
 ### Added
 
 - A served `run` bounds its listener: `--max-connections` (512) connections at once, one over it

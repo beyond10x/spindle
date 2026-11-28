@@ -1,6 +1,6 @@
 # Wave 33
 
-**In progress.** Planned on the operator's pick of 2026-11-28 (D-W33 A, D-W33b A, relayed by the
+**Delivered.** Planned on the operator's pick of 2026-11-28 (D-W33 A, D-W33b A, relayed by the
 host operator). All stories serve `vision:spindle`.
 
 Integration branch `wave/33`, forked from `main` after release 0.27.0 lands (`main` is 276298bb
