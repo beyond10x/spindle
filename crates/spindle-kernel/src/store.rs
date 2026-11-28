@@ -343,6 +343,12 @@ pub enum StoreError {
     /// written, and the same request may be sent again (`story:new-leader-write-while-old-paused`).
     #[error("store: {0}")]
     Busy(String),
+    /// The store began to commit the write and cannot say whether it landed, as when its
+    /// deadline fired after COMMIT was sent: the write may have landed, so a caller reads before
+    /// it sends the same request again (`story:unknown-commit-answered-as-unknown`). Only the
+    /// PostgreSQL store returns it.
+    #[error("store: {0}")]
+    Unknown(String),
 }
 
 /// The port the kernel reads and commits instances through.

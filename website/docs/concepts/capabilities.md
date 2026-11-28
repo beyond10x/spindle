@@ -242,8 +242,11 @@ makes, as ESS's served application makes them, are `{"refused": "<why>"}`:
 A command the runtime cannot complete answers `501` with `{"refused", "committed"}`. A command
 whose PostgreSQL store did not answer within its deadline, as a write held behind a lock another
 database session holds, answers `503` with `{"refused", "committed": false}`: nothing was written,
-and the same request is safe to send again. A SQLite store reports no deadline: a command whose
-write it finds busy answers `501`. Outside a drain, a read held so is not answered `503`: a view
+and the same request is safe to send again. A command whose PostgreSQL commit has an unknown
+outcome, as when the store's deadline fired after COMMIT was sent, answers `500` with
+`{"refused", "committed": "unknown"}`: the write may have landed, so a caller reads before it sends
+the same request again. A SQLite store reports no deadline: a command whose write it finds busy
+answers `501`. Outside a drain, a read held so is not answered `503`: a view
 answers `501` `{"refused"}`, and `GET /api/events` and `GET /api/history` answer `500`
 `{"refused"}`; during a drain after SIGINT or SIGTERM, an events or history read still waiting for
 the store is cut off and answered `503`

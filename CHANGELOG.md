@@ -89,6 +89,15 @@ are Spindle's releases.
   undone behind it: no lease is kept and no record is lost. A removal from a current table that
   fails after the reset is printed naming that table.
   One schema holds one leased deployment (`story:seed-record-after-a-component-is-removed`).
+- A command whose PostgreSQL commit has an unknown outcome, because the store's deadline fired
+  after COMMIT was sent, answers `500` `{"refused", "committed": "unknown"}` where it answered
+  `501` with `committed: false`: the write may have landed, so a caller reads before it sends the
+  same request again. The request log records it `failed`, and a leased run that finds its lease
+  lost does not replace it with its `503`. eventlog's `UnknownCommit` reaches the ingress as the
+  new `spindle_kernel::StoreError::Unknown`, displayed `store: …` as before, answered by the new
+  `spindle_ingress::Answer::unknown`; a reset that meets it loses the store, as before. Only the
+  PostgreSQL store returns it; a store failure before COMMIT answers `503` or `501` as before
+  (`story:unknown-commit-answered-as-unknown`).
 
 ## [0.27.0] - 2026-11-28
 

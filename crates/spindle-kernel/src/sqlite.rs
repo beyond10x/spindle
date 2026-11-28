@@ -2956,12 +2956,14 @@ pub(crate) fn meta(request_hash: String) -> CommandMeta {
 }
 
 /// `error` as the store's: a fence's refusal by its code alone, which names what refused the
-/// write ([`LogStore::fence`]); a deadline, which eventlog returns only before a commit begins
-/// (after, `UnknownCommit`), as [`StoreError::Busy`].
+/// write ([`LogStore::fence`]); a deadline, which eventlog returns only before a commit begins,
+/// as [`StoreError::Busy`]; and a commit whose outcome is unknown, which eventlog returns once a
+/// deadline fired after COMMIT was sent, as [`StoreError::Unknown`].
 pub(crate) fn backend(error: EventLogError) -> StoreError {
     match error {
         EventLogError::GuardRefused { code } => StoreError::Backend(code),
         deadline @ EventLogError::Deadline { .. } => StoreError::Busy(deadline.to_string()),
+        unknown @ EventLogError::UnknownCommit => StoreError::Unknown(unknown.to_string()),
         other => StoreError::Backend(other.to_string()),
     }
 }
@@ -3012,7 +3014,6 @@ mod tests {
             "{refused:?}"
         );
         for other in [
-            EventLogError::UnknownCommit,
             EventLogError::Overloaded,
             EventLogError::Closed,
             EventLogError::Backend("down".to_owned()),
@@ -3029,6 +3030,20 @@ mod tests {
                 "{mapped:?}"
             );
         }
+    }
+
+    /// `story:unknown-commit-answered-as-unknown`, D3 A: eventlog's unknown commit, which it
+    /// returns once the deadline fired after COMMIT was sent, is the store's unknown error,
+    /// carrying eventlog's text and displayed as every other store error.
+    #[test]
+    fn an_unknown_commit_is_the_unknown_store_error() {
+        let text = EventLogError::UnknownCommit.to_string();
+        let unknown = backend(EventLogError::UnknownCommit);
+        assert!(
+            matches!(&unknown, StoreError::Unknown(detail) if *detail == text),
+            "{unknown:?}"
+        );
+        assert_eq!(unknown.to_string(), format!("store: {text}"));
     }
 
     fn change(identity: &str, expected: Option<u64>, state: &str) -> Change {
