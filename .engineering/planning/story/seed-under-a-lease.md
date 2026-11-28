@@ -107,6 +107,11 @@ Each test below is a PostgreSQL-lane test (`#[ignore]`, run by `task check:postg
   `:584`, `README.md:89-97`, the `--seed` help (`cli.rs:549-555`, generated `cli.md`) and
   `AGENTS.md:40` state the record instead of D5 A; the 0.26.0 entry of `CHANGELOG.md` stays, the
   change goes under `[Unreleased]`.
+- The unit's closing record names the time of one `task check:postgres` run before and after this
+  story's tests and the `pg_stat_activity` connection peak of the run after, sampled as
+  `story:postgres-lane-runs-locally` does; when the peak comes within 50 of the `max_connections`
+  in `scripts/postgres-lane.sh`, the same change raises that value in the script and in
+  `.github/workflows/ci.yml`, and the options check of `task check` stays green.
 
 ## Decided when scoped
 

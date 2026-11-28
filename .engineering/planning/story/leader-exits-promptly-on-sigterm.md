@@ -90,6 +90,11 @@ the 60 s bound.
   added with the stop D1 A introduces, so not red first: with a transaction held open by another
   session, an `events_placed_after` whose stop flag is set returns within 0.5 s.
 - `run --help` and the generated `website/docs/reference/cli.md` name the exit bound after a signal.
+- The unit's closing record names the time of one `task check:postgres` run before and after this
+  story's tests and the `pg_stat_activity` connection peak of the run after, sampled as
+  `story:postgres-lane-runs-locally` does; when the peak comes within 50 of the `max_connections`
+  in `scripts/postgres-lane.sh`, the same change raises that value in the script and in
+  `.github/workflows/ci.yml`, and the options check of `task check` stays green.
 
 ## Decided when scoped
 
