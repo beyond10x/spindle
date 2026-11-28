@@ -189,12 +189,13 @@ cases=$((cases + 1))
 printf '%s\n' "$lane" | awk '/--no-run/{built=1} /sh scripts\/within.sh [0-9]+ \{\{\.NEXTEST\}\}/{if (built) ok=1} END{exit !ok}' ||
     fail "check:postgres does not build with --no-run before its run under within.sh"
 
-# The within.sh bounds of check:postgres's runs sum to the step's 120 s at most.
+# check:postgres runs its tests in one call under within.sh, bounded within the step's 120 s: no
+# case runs alone after the rest (story:postgres-lane-margin).
 cases=$((cases + 1))
 bounds=$(printf '%s\n' "$lane" | grep -o 'sh scripts/within.sh [0-9][0-9]*' | awk '{sum += $3; n++} END{print n + 0, sum + 0}')
 set -- $bounds
-[ "$1" -ge 1 ] && [ "$2" -le 120 ] ||
-    fail "check:postgres runs $1 call(s) under within.sh whose bounds sum to $2 s, want at least one and at most 120 s"
+[ "$1" -eq 1 ] && [ "$2" -le 120 ] ||
+    fail "check:postgres runs $1 call(s) under within.sh whose bounds sum to $2 s, want one of at most 120 s"
 
 # Every within.sh call of check:postgres runs {{.NEXTEST}}, the package set its --no-run built: another
 # package set resolves other features and rebuilds inside the bound (a 2.9 s test took 26 s).
