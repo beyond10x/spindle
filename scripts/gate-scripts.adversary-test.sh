@@ -206,6 +206,12 @@ cases=$((cases + 1))
 printf '%s\n' "$lane" | grep -q 'test:slowest, vars: { NEXTEST_PROFILE: postgres }' ||
     fail "check:postgres does not print the ten slowest tests of its own profile"
 
+# After its run, check:postgres fails on any test over 15 s, read from that run's own JUnit report
+# (story:postgres-lane-margin-ci).
+cases=$((cases + 1))
+printf '%s\n' "$lane" | awk '/sh scripts\/within.sh [0-9]+ \{\{\.NEXTEST\}\}/{ran=1} /- sh scripts\/each-test-within.sh 15 target\/nextest\/postgres\/junit.xml$/{if (ran) ok=1} END{exit !ok}' ||
+    fail "check:postgres does not run each-test-within.sh 15 on target/nextest/postgres/junit.xml after its run"
+
 # The postgres profile kills a test at 60 s as the default does: it sets no timeout of its own.
 cases=$((cases + 1))
 awk '/^\[/{section=$0} /slow-timeout/{print section " " $0}' "$nextest_toml" >"$work/timeouts"
