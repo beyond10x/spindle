@@ -3,6 +3,7 @@
 //! beside the host's thread ([`super::Reader`]).
 
 use std::collections::BTreeMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 
 use serde_json::Value;
@@ -133,6 +134,33 @@ impl Reading for Gated {
     ) -> Result<Vec<(u64, Committed)>, StoreError> {
         let _passed = self.gate.enter();
         self.reading.events_placed_after(position, limit)
+    }
+
+    fn events_placed_after_unless_stopped(
+        &self,
+        position: u64,
+        limit: usize,
+        stop: &AtomicBool,
+    ) -> Result<Vec<(u64, Committed)>, StoreError> {
+        let _passed = self.gate.enter();
+        self.reading
+            .events_placed_after_unless_stopped(position, limit, stop)
+    }
+
+    fn events_after_unless_stopped(
+        &self,
+        position: u64,
+        limit: usize,
+        stop: &AtomicBool,
+    ) -> Result<Option<Vec<Committed>>, StoreError> {
+        let _passed = self.gate.enter();
+        self.reading
+            .events_after_unless_stopped(position, limit, stop)
+    }
+
+    fn events_head_unless_stopped(&self, stop: &AtomicBool) -> Result<Option<u64>, StoreError> {
+        let _passed = self.gate.enter();
+        self.reading.events_head_unless_stopped(stop)
     }
 
     fn events_head(&self) -> Result<u64, StoreError> {

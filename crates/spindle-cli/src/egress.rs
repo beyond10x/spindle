@@ -17,7 +17,9 @@
 //! own, and posts those bound to its call in order. A post that fails, or that is answered
 //! anything but `2xx`, is sent again after a pause that doubles from [`FIRST_PAUSE`] up to
 //! [`BACKOFF_CAP`], without end, and the lane's later events wait for it. A stopped lane
-//! leaves after the post under way. Once every bound event of a write was answered `2xx`, the
+//! leaves after the post under way, at most the call's `timeout_ms`, and gives up a read that
+//! waits for the store's feed ([`spindle_kernel::Reading::events_placed_after_unless_stopped`]).
+//! Once every bound event of a write was answered `2xx`, the
 //! write's position is the lane's cursor: the lane hands it to the run's
 //! thread, which saves it in the component's own log ([`spindle_kernel::Store::egress_posted`],
 //! a reserved `spindle:log` stream that is no published event) between two exchanges, and once
@@ -402,10 +404,13 @@ impl Delivery {
         while !self.stop.load(Ordering::SeqCst) {
             // The log's id is read once the page holds an event, so it names the log the
             // page's events were read from: a reset stops the lane before it creates the log
-            // again ([`Egress::pause`]).
+            // again ([`Egress::pause`]). The read gives up its wait for the feed once the lane
+            // is stopped, and answers an empty page: on PostgreSQL the feed withholds the
+            // cursor the run's thread saved while any older transaction on the server is open,
+            // and a stopped lane is joined at exit (`story:leader-exits-promptly-on-sigterm`).
             let read = self
                 .reading
-                .events_placed_after(cursor, PAGE)
+                .events_placed_after_unless_stopped(cursor, PAGE, &self.stop)
                 .and_then(|page| {
                     let log = if page.is_empty() {
                         0

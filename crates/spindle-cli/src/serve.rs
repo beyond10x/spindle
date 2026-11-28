@@ -857,12 +857,21 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             .write();
         }
     };
-    // Every answer handed back is written, and each request still queued is answered 503, before
-    // the run exits; readiness reads 503 meanwhile.
+    // The run ends in this order, within the bound `run --help` names after a signal
+    // (`story:leader-exits-promptly-on-sigterm`):
+    // 1. the listener writes every answer handed back and answers each request still queued
+    //    `503`, readiness reading `503` meanwhile;
+    // 2. the egress halts: each lane leaves after its post under way, at most the call's
+    //    `timeout_ms`, or gives up its read of the feed at once;
+    // 3. the cursors the lanes handed back are saved in the components' stores;
+    // 4. the host closes its stores;
+    // 5. the leases are released, each release waiting at most 1 s, so a standby takes over only
+    //    once nothing of this run writes, and posts nothing this run posted.
     stopping.store(true, Ordering::SeqCst);
     listener.close(CLOSE_GRACE);
-    // The lanes stop, each after its post under way, and the cursors they handed back are saved.
     drop(egress);
+    drop(host);
+    drop(kept);
     Ok(code)
 }
 
