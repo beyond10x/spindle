@@ -1692,5 +1692,123 @@ else
         fail "adversary_w34_u1_backfill_keeps_the_tag_runs_attestation: a backfill fails on the image's attestation from the tag run: $(grep -A3 'oci://' "$work/verify/summary" | tr '\n' ' ')"
 fi
 
+# --- adversary_w34_u1_r2 ---------------------------------------------------------------------
+# Round 2 of the adversarial cases for story:release-artifacts-signed (wave 34, unit U1), against
+# the fixes of round 1: the guard parser, the ref step and the commit rule.
+r2=$work/adversary-w34-u1-r2
+mkdir -p "$r2/gh"
+
+# adversary_w34_u1_r2_guard_continued_line: a plain YAML scalar goes on over the next, deeper
+# indented line, so
+#     if: ${{ github.event_name != 'pull_request' && ... }}
+#       && needs.provenance.result == 'success'
+# is one value, `${{ ... }} && needs...`: text outside ${{ }} makes the runner evaluate the if as
+# a format() string, which is never empty and so always true, on a pull_request event too. The
+# accepted guard forms say nothing may follow the closing }}; a copy of release.yml that wraps
+# sign's or image-manifest's if that way must fail adversary_id_token_only_on_signing_jobs.
+for r2_job in sign image-manifest; do
+    awk -v holder="$r2_job:" '
+        /^  [a-z][a-z0-9_-]*:$/ { job = $1 }
+        /^[^ ]/ { job = "" }
+        { print }
+        job == holder && /^    if:/ { print "      && needs.provenance.result == '"'"'success'"'"'" }
+    ' "$workflow" >"$r2/continued-$r2_job.yml"
+    cases=$((cases + 1))
+    if cmp -s "$workflow" "$r2/continued-$r2_job.yml"; then
+        fail "adversary_w34_u1_r2_guard_continued_line: the copy of $r2_job is release.yml unchanged"
+    elif id_token_breach "$r2/continued-$r2_job.yml" >/dev/null; then
+        fail "adversary_w34_u1_r2_guard_continued_line: a copy of release.yml whose $r2_job if goes on over a second line after its }} (always true, on a pull request too) passes adversary_id_token_only_on_signing_jobs"
+    fi
+done
+
+# adversary_w34_u1_r2_escaped_permission_key: a double-quoted YAML key or value may spell a
+# character as an escape; "id\x2dtoken" is the key id-token and "write\x2dall" the value
+# write-all. A copy of release.yml that gives the ui job, which runs on a pull request, either of
+# them must fail adversary_id_token_only_on_signing_jobs.
+for kind in key value; do
+    awk -v kind="$kind" '
+        { print }
+        kind == "key" && $0 == "  ui:" { print "    permissions:"; print "      contents: read"; print "      \"id\\x2dtoken\": write" }
+        kind == "value" && $0 == "  ui:" { print "    permissions: \"write\\x2dall\"" }
+    ' "$workflow" >"$r2/escaped-$kind.yml"
+    cases=$((cases + 1))
+    if cmp -s "$workflow" "$r2/escaped-$kind.yml"; then
+        fail "adversary_w34_u1_r2_escaped_permission_key: the copy '$kind' is release.yml unchanged"
+    elif id_token_breach "$r2/escaped-$kind.yml" >/dev/null; then
+        fail "adversary_w34_u1_r2_escaped_permission_key: a copy of release.yml whose ui job holds $(grep -F 'x2d' "$r2/escaped-$kind.yml" | tr -s ' ') passes adversary_id_token_only_on_signing_jobs"
+    fi
+done
+
+# adversary_w34_u1_r2_ref_step_always_runs: the step "A backfill runs the workflow from main"
+# stops a dispatch from another ref only if its failure fails provenance. A step-level if, a
+# continue-on-error on the step or on provenance lets the run go on to sign; none may be there.
+# The predicate is checked on release.yml and on a copy with each of the three.
+r2_ref_step_binds() {
+    first=$(sed -n '/^  provenance:$/,/^  [a-z][a-z-]*:$/p' "$1" | awk '
+        /^      - / { n++ }
+        n == 1 { print }
+        n > 1 { exit }
+    ')
+    [ "$(printf '%s\n' "$first" | head -n 1)" = "      - name: A backfill runs the workflow from main" ] || return 1
+    ! printf '%s\n' "$first" | grep -Eq '^        (if|continue-on-error):' || return 1
+    ! sed -n '/^  provenance:$/,/^  [a-z][a-z-]*:$/p' "$1" | grep -Eq '^    (if|continue-on-error):'
+}
+cases=$((cases + 1))
+r2_ref_step_binds "$workflow" ||
+    fail "adversary_w34_u1_r2_ref_step_always_runs: provenance's first step is not 'A backfill runs the workflow from main', or it or provenance carries an if or continue-on-error"
+for kind in step-if step-continue job-continue; do
+    awk -v kind="$kind" '
+        { print }
+        kind == "step-if" && $0 == "      - name: A backfill runs the workflow from main" { print "        if: ${{ github.event_name != '"'"'workflow_dispatch'"'"' }}" }
+        kind == "step-continue" && $0 == "      - name: A backfill runs the workflow from main" { print "        continue-on-error: true" }
+        kind == "job-continue" && $0 == "  provenance:" { print "    continue-on-error: true" }
+    ' "$workflow" >"$r2/ref-$kind.yml"
+    cases=$((cases + 1))
+    if cmp -s "$workflow" "$r2/ref-$kind.yml"; then
+        fail "adversary_w34_u1_r2_ref_step_always_runs: the copy '$kind' is release.yml unchanged"
+    elif r2_ref_step_binds "$r2/ref-$kind.yml"; then
+        fail "adversary_w34_u1_r2_ref_step_always_runs: a copy of release.yml with '$kind' passes"
+    fi
+done
+
+# adversary_w34_u1_r2_commit_rule_fails_closed: publish's verification fails a tag push whose
+# every other check passes when gh's JSON names no commit, is an empty list, is not a list of
+# attestations or does not parse; the same run with one attestation of the tagged commit passes.
+printf '#!%s\nreal=%s\njson=%s\n' "$shell" "$work/ghtools/gh" "$r2/gh/json" >"$r2/gh/gh"
+cat >>"$r2/gh/gh" <<'STUB'
+case "$1 $2" in
+    "attestation verify")
+        "$real" "$@" >/dev/null || exit $?
+        cat "$json"
+        ;;
+    *) exec "$real" "$@" ;;
+esac
+STUB
+chmod 755 "$r2/gh/gh"
+r2_verify_with() {
+    printf '%s\n' "$1" >"$r2/gh/json"
+    rm -rf "$work/verify"
+    mkdir -p "$work/verify"
+    (cd "$work/verify" && PATH="$r2/gh:$work/sigtools:$PATH" RUNNER_TEMP=$work/verify GH_REPO=beyond10x/spindle \
+        TAG=0.26.0 COMMIT=$tagged GITHUB_SHA=$tagged GITHUB_EVENT_NAME=push IMAGES_EXPECTED=true \
+        IMAGE=ghcr.io/beyond10x/spindle GITHUB_STEP_SUMMARY=$work/verify/summary bash "$work/steps/verify.sh" \
+        >"$work/verify/out" 2>&1)
+}
+cases=$((cases + 1))
+if ! on_page true; then
+    fail "adversary_w34_u1_r2_commit_rule_fails_closed: no signed release to put on the page: $(cat "$work/sign.out")"
+elif ! r2_verify_with "[{\"verificationResult\":{\"signature\":{\"certificate\":{\"sourceRepositoryDigest\":\"$tagged\"}}}}]"; then
+    fail "adversary_w34_u1_r2_commit_rule_fails_closed: a tag push with one attestation of the tagged commit fails: $(tail -n 3 "$work/verify/out" | tr '\n' ' ')"
+else
+    for json in '[]' 'null' '{}' '[{}]' 'not json' '' \
+        '[{"verificationResult":{"signature":{"certificate":{"sourceRepositoryDigest":null}}}}]' \
+        "{\"verificationResult\":{\"signature\":{\"certificate\":{\"sourceRepositoryDigest\":\"$tagged\"}}}}"; do
+        cases=$((cases + 1))
+        ! r2_verify_with "$json" ||
+            fail "adversary_w34_u1_r2_commit_rule_fails_closed: a tag push passes when gh attestation verify prints '$json'"
+    done
+fi
+echo "$tagged" >"$work/rec/attested-commit"
+
 echo "release-linux-binary-adversary: $cases cases, $failures failed"
 [ "$failures" -eq 0 ]
