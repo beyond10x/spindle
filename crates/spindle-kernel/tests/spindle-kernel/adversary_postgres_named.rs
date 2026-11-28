@@ -821,92 +821,57 @@ fn moved(path: &Path, database: &Database, component: &str, entity: &str) {
     lock.release().expect("the lock is released");
 }
 
-/// How many times [`adv3_a_scan_of_many_instances_costs_no_more_than_reading_the_log`] times each
-/// read.
-const TIMED: usize = 3;
-
-fn timed(store: &mut dyn Store, entity: &str) -> (Duration, Scan) {
-    let started = Instant::now();
-    let scan = store.scan(entity).expect("scans");
-    (started.elapsed(), scan)
+/// What one scan of `ALPHA` through a store opened on `database` answers, and the rows it read
+/// from `component`'s event table once the store's sessions, which carry the application name
+/// `tag`, have ended.
+fn scanned_with_reads(database: &Database, component: &str, tag: &str) -> (Scan, u64) {
+    let before = postgres_reads::events_read(&url(), SCHEMA, component, tag);
+    let scan = open(database, component).scan(ALPHA).expect("scans");
+    (
+        scan,
+        postgres_reads::events_read(&url(), SCHEMA, component, tag) - before,
+    )
 }
 
 /// What a scan of 1,000 and 10,000 live instances costs, one write per instance: on PostgreSQL
-/// by the entity's stream (this build), on the same log read whole (the scan before fix pass 2,
-/// reached through the mark), and on SQLite. The entity's stream should not be slower than
-/// reading the whole log when the log is nothing but that entity: then it reads every event the
-/// whole-log read does, and more statements.
+/// by the entity's stream (this build), and on the same log read whole (the scan before fix pass
+/// 2, reached through the mark). The entity's stream should cost no more than reading the whole
+/// log when the log is nothing but that entity: then it reads every event the whole-log read
+/// does. The cost is the rows PostgreSQL's statistics count as read from the event table, by a
+/// sequential scan or from an index; a scan by the stream reads about half the whole log's (the
+/// stream's events, then each instance's last event). The index scans are not compared: a lookup
+/// of an array of keys counts one scan per key, so they count rows, not statements.
 ///
-/// 10,000 is the largest size because the ratio already measures a cost per row there: the
-/// whole log reads in about 150 ms on a loopback PostgreSQL, about 10 ms of it the same at any
-/// size (24 ms at 1,000), so a read per instance (a round trip per row) is several times the
-/// whole-log read, and a constant cost is not. 50,000 measured the same ratio (1.7 at 10,000
-/// and at 50,000) for 30 s of the case's 42. SQLite takes the reference rows 1,000 writes to a
-/// group: one write per instance there cost 0.6 ms each, 35 s at the three sizes, and SQLite's
-/// time is printed, not compared.
-///
-/// Each read is timed [`TIMED`] times and the shortest compared: one of each, timed once beside
-/// the rest of the lane on a 4-CPU quota, read 10,000 instances in 697 ms by the stream and in
-/// 323 ms whole (`story:postgres-lane-margin`). `task check:postgres` runs this case alone, after
-/// the rest of the lane: a read by the stream makes more round trips than the whole-log read, so
-/// a loaded machine slows it more, and beside the lane it measured 2.0 to 2.5 times the other.
+/// The case timed each read three times and compared the shortest, 2 times the whole log's at
+/// most, alone after the rest of the lane: on 4 CPUs of 2 cores a read by the stream measured
+/// 2.1 to 2.5 times the other and failed 3 of 9 lanes. The table is analyzed after the writes,
+/// so both reads take the plan they would in service (`story:postgres-lane-margin`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv3_a_scan_of_many_instances_costs_no_more_than_reading_the_log() {
-    let database = database();
-    let mut slower = Vec::new();
+    let mut costlier = Vec::new();
     for count in [1_000, 10_000] {
         let component = fresh("many");
-        let mut store = open(&database, &component);
+        let mut database = database();
+        database.url = postgres_reads::tagged(&url(), &component);
+        drop(open(&database, &component));
         created_by_sql(&component, ALPHA, count);
-        let (first, by_stream) = timed(&mut store, ALPHA);
+        let (by_stream, named) = scanned_with_reads(&database, &component, &component);
         assert_eq!(by_stream.rows.len(), count);
         assert_eq!(by_stream.version, count as u64);
-        let mut named = first;
-        for _ in 1..TIMED {
-            let (took, warm) = timed(&mut store, ALPHA);
-            assert_eq!(warm, by_stream);
-            named = named.min(took);
-        }
         mark(&component);
-        let mut whole = Duration::MAX;
-        for _ in 0..TIMED {
-            let (took, by_log) = timed(&mut store, ALPHA);
-            assert!(by_log == by_stream, "both reads answer the same");
-            whole = whole.min(took);
-        }
-        let (_directory, mut reference) = sqlite();
-        let writes: Vec<Write> = by_stream
-            .rows
-            .iter()
-            .map(|(identity, stored)| {
-                Write::Commit(Change {
-                    entity: ALPHA.to_owned(),
-                    identity: identity.clone(),
-                    expected: None,
-                    row: stored.row.clone(),
-                    events: Vec::new(),
-                    scanned: Vec::new(),
-                })
-            })
-            .collect();
-        for chunk in writes.chunks(1_000) {
-            reference.commit_all(chunk).expect("SQLite takes it");
-        }
-        let (local, on_sqlite) = timed(&mut reference, ALPHA);
-        assert_eq!(on_sqlite.rows.len(), count);
-        eprintln!(
-            "{count} instances: PostgreSQL by stream {named:?} ({:.3} ms per row), whole log \
-             {whole:?}, SQLite {local:?}",
-            named.as_secs_f64() * 1000.0 / count as f64
-        );
-        if named > whole * 2 {
-            slower.push(format!("{count}: by stream {named:?}, whole log {whole:?}"));
+        let (by_log, whole) = scanned_with_reads(&database, &component, &component);
+        assert!(by_log == by_stream, "both reads answer the same");
+        eprintln!("{count} instances: by stream {named} rows, whole log {whole} rows");
+        if named > whole {
+            costlier.push(format!(
+                "{count}: by stream {named} rows, whole log {whole} rows"
+            ));
         }
     }
     assert!(
-        slower.is_empty(),
-        "the scan by the entity's stream is slower than reading the whole log: {slower:#?}"
+        costlier.is_empty(),
+        "the scan by the entity's stream read more rows than reading the whole log: {costlier:#?}"
     );
 }
 
