@@ -94,22 +94,26 @@ fn left_part_done_in_audit(
     part
 }
 
-/// A reset by a leased run of release 2 without a seed leaves no seed's entries done
-/// (`story:seed-under-a-lease`, D6 A: "a later start with a seed treats the store as one with no
-/// record"). While a standby of release 1 holds `audit`'s lease, the reset removes `board`'s rows
-/// and leaves the record in `audit`'s lease table (the unit's `forget_orphans`, a warning). Once
-/// that standby is gone, the next start of release 2 with the same seed finds no record in a
-/// current table, reads `audit`'s, takes the seed as already run, and sends nothing to the
-/// emptied store.
-#[test]
-#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
-fn a_reset_while_an_old_release_holds_the_removed_components_lease_leaves_the_seed_to_be_sent_again()
- {
-    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    let environment = environment(directory.path());
-    let seed = seed_file(directory.path(), "seed.json", &["s1", "s2"]);
-    let schema = super::super::schema();
-    let mut first = Replica::start(grown_seeded(&environment, &schema, &seed));
+/// Whether `audit`'s lease is free now: a process of release 1 takes it at once, and gives it back.
+/// A lease a reset took for the removal after it and kept would read as held.
+fn audit_is_free(schema: &str) -> bool {
+    let mut database = spindle_kernel::Database::new(super::super::owner_url());
+    database.schema = schema.to_owned();
+    let mut probe = spindle_kernel::Lease::connect(&database, Duration::from_secs(60))
+        .expect("the probe connects for its leases");
+    let Some(token) = probe.take("audit").expect("the lease is read") else {
+        return false;
+    };
+    probe
+        .release("audit", token)
+        .expect("the probe gives the lease back");
+    true
+}
+
+/// Release 1 seeds `s1` and `s2` and is stopped, its record in `audit`'s lease table. Answers
+/// that record.
+fn seeded_by_release_one(environment: &Path, schema: &str, seed: &Path) -> Value {
+    let mut first = Replica::start(grown_seeded(environment, schema, seed));
     assert!(
         first
             .line_by("ended: 2 sent, 2 applied", Instant::now() + super::ANSWER)
@@ -118,29 +122,130 @@ fn a_reset_while_an_old_release_holds_the_removed_components_lease_leaves_the_se
         first.printed()
     );
     first.stop();
-    assert!(recorded(&schema, "audit").is_some(), "the seed is recorded");
+    recorded(schema, "audit").expect("the seed is recorded")
+}
+
+/// Round 1's case, on the coordinator's decision: a reset by a leased run of release 2 without a
+/// seed, while a standby of release 1 holds `audit`'s lease, is refused `409` naming `audit`'s
+/// table, and empties nothing: `board`'s rows and `audit`'s record stay. Once that standby has
+/// ended, a reset that fails on its body and then a plain one each give `audit`'s lease back
+/// before they answer; the plain one removes the record, and the next start of release 2 with the
+/// same seed sends the whole seed to the emptied store (`story:seed-under-a-lease`, D6 A).
+/// About 6 s on the lane.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_reset_while_an_old_release_holds_the_removed_components_lease_is_refused_until_it_ends_then_the_seed_is_sent_again()
+ {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let seed = seed_file(directory.path(), "seed.json", &["s1", "s2"]);
+    let schema = super::super::schema();
+    let record = seeded_by_release_one(&environment, &schema, &seed);
+    let audit = lease_table(&schema, "audit");
 
     let (mut old, token) = old_release_holding_audit(&schema);
     let mut unseeded = Replica::start(super::run(&environment, &schema));
     unseeded.ready_by(Instant::now() + super::ANSWER);
     let (status, body) = super::super::call(unseeded.address, "POST", "/api/reset", None);
-    assert_eq!(status, 200, "{body}");
-    unseeded.stop();
-    let reset_printed = unseeded.printed();
+    assert_eq!(status, 409, "{body}");
+    let refused = body["refused"].as_str().unwrap_or_default();
+    assert!(
+        refused.contains(&audit) && refused.contains("another process holds"),
+        "the refusal names audit's table and its holder: {body}"
+    );
+    assert_eq!(task_ids(&unseeded), ["s1", "s2"], "no store was emptied");
+    assert_eq!(recorded(&schema, "audit"), Some(record.clone()));
+    assert_eq!(recorded(&schema, "board"), None);
     old.release("audit", token)
         .expect("the old release's standby ends");
     drop(old);
 
+    let (status, body) = super::super::call(
+        unseeded.address,
+        "POST",
+        "/api/reset",
+        Some(&json!({"rows": "not a list of rows"})),
+    );
+    assert!(
+        status != 200 && status != 409,
+        "a world that is no world is refused for itself: {status} {body}"
+    );
+    assert!(
+        audit_is_free(&schema),
+        "a reset that failed gave audit's lease back before it answered"
+    );
+    assert_eq!(task_ids(&unseeded), ["s1", "s2"]);
+    assert_eq!(recorded(&schema, "audit"), Some(record));
+
+    let (status, body) = super::super::call(unseeded.address, "POST", "/api/reset", None);
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        audit_is_free(&schema),
+        "the reset gave audit's lease back once the record was removed, while the run runs on"
+    );
+    assert_eq!(task_ids(&unseeded), Vec::<String>::new());
+    unseeded.stop();
+    assert_eq!(recorded(&schema, "audit"), None);
+    assert_eq!(recorded(&schema, "board"), None);
+
+    let mut next = Replica::start(seeded(&environment, &schema, &seed));
+    assert!(
+        next.line_by("ended: 2 sent, 2 applied", Instant::now() + super::ANSWER)
+            .is_some(),
+        "the whole seed is sent to the emptied store: {}",
+        next.printed()
+    );
+    next.ready_by(Instant::now() + super::ANSWER);
+    assert_eq!(task_ids(&next), ["s1", "s2"], "{}", next.printed());
+    next.stop();
+}
+
+/// The removal of `audit`'s record after a reset that emptied the stores fails, as it does where
+/// the lease the reset took for it was lost meanwhile (the unit's `forget_claimed`, a deposed
+/// removal) or its statement failed: here a trigger the owner puts on `audit`'s lease table
+/// refuses that one delete, and is dropped after. The reset answers and the stores are empty,
+/// with `audit`'s record left, so the next start of release 2 with the same seed reads that
+/// record, takes the seed as already run and sends nothing, against D6 A of
+/// `story:seed-under-a-lease` ("a later start with a seed treats the store as one with no
+/// record"). About 5 s on the lane.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_removal_of_the_old_record_that_fails_after_the_reset_leaves_the_seed_to_be_sent_again() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let seed = seed_file(directory.path(), "seed.json", &["s1", "s2"]);
+    let schema = super::super::schema();
+    seeded_by_release_one(&environment, &schema, &seed);
+    let audit = lease_table(&schema, "audit");
+    super::super::sql(&[
+        format!(
+            "CREATE FUNCTION {schema}.refuse_seed_removal() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN RAISE EXCEPTION 'the removal of the seed record failed'; END $$"
+        ),
+        format!(
+            "CREATE TRIGGER refuse_seed_removal BEFORE DELETE ON {audit} FOR EACH ROW WHEN \
+             (OLD.row_key = 'seed') EXECUTE FUNCTION {schema}.refuse_seed_removal()"
+        ),
+    ]);
+
+    let mut unseeded = Replica::start(super::run(&environment, &schema));
+    unseeded.ready_by(Instant::now() + super::ANSWER);
+    let (status, body) = super::super::call(unseeded.address, "POST", "/api/reset", None);
+    let tasks = task_ids(&unseeded);
+    unseeded.stop();
+    let reset_printed = unseeded.printed();
+    super::super::sql(&[format!("DROP TRIGGER refuse_seed_removal ON {audit}")]);
+
     let mut next = Replica::start(seeded(&environment, &schema, &seed));
     next.ready_by(Instant::now() + super::ANSWER);
-    let tasks = task_ids(&next);
+    let next_tasks = task_ids(&next);
     let printed = next.printed();
     next.stop();
-    assert_eq!(
-        tasks,
-        ["s1", "s2"],
-        "after the reset the whole seed is sent to the emptied store; audit's lease table still \
-         holds {:?}.\nreset run printed:\n{reset_printed}\nnext start printed:\n{printed}",
+    assert!(
+        tasks == ["s1", "s2"] || next_tasks == ["s1", "s2"],
+        "the reset answered {status} {body} and left {tasks:?}; audit's table holds {:?}; the \
+         next seeded start left {next_tasks:?}.\nreset run printed:\n{reset_printed}\nnext start \
+         printed:\n{printed}",
         recorded(&schema, "audit")
     );
 }
@@ -205,4 +310,114 @@ fn a_record_left_under_an_old_release_lease_is_written_to_the_first_table_and_wi
     assert_eq!(recorded(&schema, "audit"), Some(differing));
     old.release("audit", token)
         .expect("the old release's process ends");
+}
+
+/// `run` of release 2 without a seed, its state in `schema`, with a lease of 1 s: a reset that
+/// waits 1.4 s outlasts the lease it takes for `audit`'s table unless that lease is renewed.
+fn short_leased(environment: &Path, schema: &str) -> Command {
+    let url = super::super::owner_url();
+    let environment = environment.to_str().expect("a UTF-8 path");
+    super::super::spindle(
+        &[
+            "run",
+            super::SPEC,
+            "--http",
+            super::BINDING,
+            "--environment",
+            environment,
+        ],
+        &[
+            ("database_url", url.as_str()),
+            ("database_schema", schema),
+            ("database_lease", "1"),
+        ],
+    )
+}
+
+/// How many tasks the world of [`a_reset_that_outlasts_the_lease_keeps_the_removed_components_lease_and_removes_its_record`]
+/// loads: enough that writing them, one transaction each, outlasts a lease of 1 s.
+const WORLD_TASKS: usize = 1_500;
+
+/// The lease of `audit`'s table a reset takes before it empties anything is renewed while the
+/// reset runs (the unit's `Lease::renew_orphan` in the lease thread): a reset that outlasts the
+/// lease, here one loading a world of [`WORLD_TASKS`] tasks under a lease of 1 s, keeps it from a
+/// standby of release 1 asking for it all along, and removes the record. Without the renewal the
+/// standby takes the lease once its term ran out, the removal is deposed, and the record stays
+/// beside the emptied store. Green on the unit's head: it pins a guard no other case reaches.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_reset_that_outlasts_the_lease_keeps_the_removed_components_lease_and_removes_its_record() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let seed = seed_file(directory.path(), "seed.json", &["s1", "s2"]);
+    let schema = super::super::schema();
+    seeded_by_release_one(&environment, &schema, &seed);
+    let audit = lease_table(&schema, "audit");
+    let until = || -> f64 {
+        super::super::sql(&[format!(
+            "SELECT (body->>'until')::float8 - extract(epoch FROM clock_timestamp())::float8 \
+             FROM {audit} WHERE row_key = 'lease'"
+        )])
+        .first()
+        .and_then(|left| left.parse().ok())
+        .unwrap_or(f64::MIN)
+    };
+    assert!(
+        until() <= 0.0,
+        "release 1 gave audit's lease back as it stopped"
+    );
+
+    let mut unseeded = Replica::start(short_leased(&environment, &schema));
+    unseeded.ready_by(Instant::now() + super::ANSWER);
+    let rows: Vec<Value> = (0..WORLD_TASKS)
+        .map(|task| {
+            json!({
+                "entity": "tasks.board.Task",
+                "identity": format!("w{task}"),
+                "state": "Open",
+                "fields": {"title": format!("world {task}")},
+            })
+        })
+        .collect();
+    let world = json!({ "rows": rows });
+    let address = unseeded.address;
+    let began = Instant::now();
+    let reset = std::thread::spawn(move || {
+        let answer = super::super::call(address, "POST", "/api/reset", Some(&world));
+        (answer, began.elapsed())
+    });
+
+    let deadline = Instant::now() + super::ANSWER;
+    while until() <= 0.0 && !reset.is_finished() {
+        assert!(
+            Instant::now() < deadline,
+            "the reset never took audit's lease"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let mut database = spindle_kernel::Database::new(super::super::owner_url());
+    database.schema.clone_from(&schema);
+    let mut standby = spindle_kernel::Lease::connect(&database, Duration::from_secs(60))
+        .expect("the old release's standby connects for its leases");
+    let mut taken = None;
+    while !reset.is_finished() && taken.is_none() {
+        taken = standby.take("audit").expect("the lease is read");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let ((status, body), took) = reset.join().expect("the reset answers");
+    let printed = unseeded.printed();
+    let tasks = task_ids(&unseeded).len();
+    unseeded.stop();
+    assert_eq!(status, 200, "{body}\n{printed}");
+    assert!(tasks > 0, "the world is loaded");
+    assert!(
+        took > Duration::from_millis(1_500),
+        "the reset outlasts the lease of 1 s: it took {took:?}"
+    );
+    assert_eq!(
+        (taken, recorded(&schema, "audit")),
+        (None, None),
+        "the standby never took audit's lease while the reset ran {took:?}, and the record is \
+         gone:\n{printed}"
+    );
 }
