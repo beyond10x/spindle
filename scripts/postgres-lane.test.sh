@@ -14,6 +14,9 @@
 #   5. With SPINDLE_TEST_DATABASE_URL set, `lane` runs its command and starts no cluster.
 #   6. initdb runs with CI's en_US.UTF-8 where locale -a lists it; with a locale -a that lists only
 #      C.utf8, with C.utf8 and exactly one warning, naming en_US. (Run after case 4, on its log.)
+#   7. `lane` runs its command and its postmaster on 4 of this host's CPUs, as on CI's runner (all
+#      of them on a host of 4 or fewer), and on all of them with SPINDLE_PG_LANE_CPUS=0. Skipped
+#      without /proc or taskset.
 #
 # Without initdb or pg_ctl it fails, naming the missing binary.
 set -eu
@@ -223,6 +226,51 @@ cases=$((cases + 1))
 cases=$((cases + 1))
 if [ -d "$work/given/target" ] && [ -n "$(find "$work/given/target" -maxdepth 1 -name 'postgres-lane.*' 2>/dev/null)" ]; then
     fail "given: lane made $(find "$work/given/target" -maxdepth 1 -name 'postgres-lane.*')"
+fi
+
+# --- 7. lane runs its cluster and its command on CI's 4 CPUs -----------------------------------
+# count_cpus <list>: the CPUs a Cpus_allowed_list names.
+count_cpus() {
+    echo "$1" | awk '{
+        n = 0
+        parts = split($0, part, ",")
+        for (i = 1; i <= parts; i++) {
+            if (split(part[i], range, "-") == 2) n += range[2] - range[1] + 1
+            else n++
+        }
+        print n
+    }'
+}
+show_cpus='echo "command $(sed -n "s/^Cpus_allowed_list:[[:space:]]*//p" /proc/self/status)"
+for f in target/postgres-lane.*/data/postmaster.pid; do
+    echo "postmaster $(sed -n "s/^Cpus_allowed_list:[[:space:]]*//p" /proc/$(sed -n 1p "$f")/status)"
+done'
+host=$(sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' /proc/self/status 2>/dev/null || true)
+if [ -z "$host" ] || ! command -v taskset >/dev/null 2>&1; then
+    echo "postgres-lane-test: no /proc or taskset here: the 4-CPU case is skipped"
+else
+    own=$(count_cpus "$host")
+    want=4
+    [ "$own" -gt "$want" ] || want=$own
+    for setting in default 0; do
+        mkdir -p "$work/cpus-$setting"
+        status=0
+        if [ "$setting" = default ]; then
+            (cd "$work/cpus-$setting" && unset SPINDLE_TEST_DATABASE_URL SPINDLE_PG_LANE_CPUS && sh "$lane" lane -- sh -c "$show_cpus") >"$work/cpus-$setting.out" 2>&1 || status=$?
+            expect=$want
+        else
+            (cd "$work/cpus-$setting" && unset SPINDLE_TEST_DATABASE_URL && SPINDLE_PG_LANE_CPUS=0 sh "$lane" lane -- sh -c "$show_cpus") >"$work/cpus-$setting.out" 2>&1 || status=$?
+            expect=$own
+        fi
+        cases=$((cases + 1))
+        [ "$status" -eq 0 ] || fail "cpus-$setting: lane exited $status: $(cat "$work/cpus-$setting.out")"
+        for who in command postmaster; do
+            list=$(sed -n "s/^$who //p" "$work/cpus-$setting.out" | head -n 1)
+            cases=$((cases + 1))
+            [ -n "$list" ] && [ "$(count_cpus "$list")" -eq "$expect" ] ||
+                fail "cpus-$setting: the $who runs on CPUs '$list', want $expect of this host's $own: $(cat "$work/cpus-$setting.out")"
+        done
+    done
 fi
 
 if [ "$failures" -ne 0 ]; then

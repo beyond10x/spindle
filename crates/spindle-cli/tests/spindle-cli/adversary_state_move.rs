@@ -612,11 +612,44 @@ fn an_escaped_or_identity_only_nul_and_extreme_numbers_move_and_scan_alike() {
 // every table of the schema, the schema's lock on every way a move ends, and a serving role whose
 // connection limit is its stores' share.
 
+/// `url` with the application name `tag`, which every session opened through it carries in
+/// `pg_stat_activity`.
+fn tagged(url: &str, tag: &str) -> String {
+    let joint = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{joint}application_name={tag}")
+}
+
+/// Waits until no session carrying the application name `tag` ([`tagged`]) is left on the
+/// server. From PostgreSQL 15 a session hands its statistics over before it leaves
+/// `pg_stat_activity`; before 15 a collector process takes them up to half a second later, so
+/// the wait adds 2.5 s there. A fixed 2.5 s for every server made the case wait 7.5 s
+/// (`story:postgres-lane-margin`).
+fn sessions_ended(tag: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while sql(&[format!(
+        "SELECT count(*) FROM pg_stat_activity WHERE application_name = '{tag}'"
+    )])[0]
+        != "0"
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the sessions of {tag} did not end within 10 s"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let version: u32 = sql(&["SHOW server_version_num".to_owned()])[0]
+        .parse()
+        .expect("a version number");
+    if version < 150_000 {
+        std::thread::sleep(std::time::Duration::from_millis(2500));
+    }
+}
+
 /// Every table of `schema`, each with its row count and the rows PostgreSQL's statistics count
 /// inserted, updated or deleted in it: a write rolled back or undone still counts there. Waits
-/// for the sessions of a process that just ended to report.
-fn every_table(schema: &str) -> BTreeMap<String, (u64, u64)> {
-    std::thread::sleep(std::time::Duration::from_millis(2500));
+/// for the sessions carrying the application name `tag` to end and report first.
+fn every_table(schema: &str, tag: &str) -> BTreeMap<String, (u64, u64)> {
+    sessions_ended(tag);
     let listed = sql(&[format!(
         "SELECT coalesce(string_agg(table_name, ',' ORDER BY table_name), '') FROM \
          information_schema.tables WHERE table_schema = '{schema}'"
@@ -659,17 +692,20 @@ fn a_refused_move_leaves_every_table_of_the_schema_as_it_found_it() {
     let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
     one_row_each(directory.path());
     let schema = Schema::new("every");
-    let url = owner_url();
+    let tag = &schema.0;
+    let url = tagged(&owner_url(), tag);
     let settings = [
         ("database_url", url.as_str()),
         ("database_schema", &schema.0),
     ];
     migrate(&settings);
-    PostgresStore::open(&database(&schema.0), "rally-player-west", 1)
+    let mut writer = database(&schema.0);
+    writer.url.clone_from(&url);
+    PostgresStore::open(&writer, "rally-player-west", 1)
         .expect("the store opens")
         .commit(&change(&json!("already-here"), None, BTreeMap::new()))
         .expect("a row is written");
-    let before = every_table(&schema.0);
+    let before = every_table(&schema.0, tag);
     assert!(
         before.len() >= 3 * 10,
         "every prefix's tables are there: {before:?}"
@@ -677,7 +713,7 @@ fn a_refused_move_leaves_every_table_of_the_schema_as_it_found_it() {
     let refused = state_move(directory.path(), &settings);
     assert_eq!(refused.status.code(), Some(1), "{}", text(&refused));
     assert_eq!(
-        every_table(&schema.0),
+        every_table(&schema.0, tag),
         before,
         "(rows, rows written) per table after a move refused for a held prefix: {}",
         text(&refused)
@@ -699,7 +735,7 @@ fn a_refused_move_leaves_every_table_of_the_schema_as_it_found_it() {
         text(&waited)
     );
     assert_eq!(
-        every_table(&schema.0),
+        every_table(&schema.0, tag),
         before,
         "(rows, rows written) per table after a move refused for the lock: {}",
         text(&waited)
@@ -714,19 +750,22 @@ fn a_refused_move_into_an_unmigrated_loopback_schema_creates_no_tables() {
     let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
     one_row_each(directory.path());
     let schema = Schema::new("unmig");
-    let url = owner_url();
+    let tag = &schema.0;
+    let url = tagged(&owner_url(), tag);
     let settings = [
         ("database_url", url.as_str()),
         ("database_schema", &schema.0),
     ];
-    PostgresStore::open(&database(&schema.0), "rally-table", 1)
+    let mut writer = database(&schema.0);
+    writer.url.clone_from(&url);
+    PostgresStore::open(&writer, "rally-table", 1)
         .expect("the store opens")
         .commit(&change(&json!("already-here"), None, BTreeMap::new()))
         .expect("a row is written");
-    let before: Vec<String> = every_table(&schema.0).into_keys().collect();
+    let before: Vec<String> = every_table(&schema.0, tag).into_keys().collect();
     let refused = state_move(directory.path(), &settings);
     assert_eq!(refused.status.code(), Some(1), "{}", text(&refused));
-    let after: Vec<String> = every_table(&schema.0).into_keys().collect();
+    let after: Vec<String> = every_table(&schema.0, tag).into_keys().collect();
     assert_eq!(
         after,
         before,

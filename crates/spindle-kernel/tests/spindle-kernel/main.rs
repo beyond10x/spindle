@@ -93,6 +93,8 @@ mod mint;
 mod placement;
 #[cfg(feature = "postgres")]
 mod postgres;
+#[cfg(feature = "postgres")]
+mod postgres_reads;
 #[cfg(all(unix, feature = "sqlite"))]
 mod private_state;
 mod provides;

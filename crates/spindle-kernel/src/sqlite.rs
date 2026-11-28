@@ -3487,6 +3487,34 @@ mod tests {
              made {scan}: the feed is read once per entity"
         );
     }
+
+    /// A scan by the entity's stream reads the instances' rows in batches of up to
+    /// [`READ_BATCH`], never with a call of the event store per instance: on PostgreSQL each call
+    /// is a statement. The PostgreSQL lane counts the rows such a scan reads
+    /// (`adv3_a_scan_of_many_instances_costs_no_more_than_reading_the_log`), which a statement
+    /// per instance does not raise; this case counts the calls (`story:postgres-lane-margin`).
+    #[test]
+    fn a_scan_by_the_stream_reads_many_instances_in_few_calls() {
+        const INSTANCES: usize = 2_500;
+        let mut store = store();
+        for group in 0..INSTANCES / 250 {
+            let writes = (0..250)
+                .map(|index| {
+                    Write::Commit(change(&format!("t-{}", group * 250 + index), None, "Open"))
+                })
+                .collect::<Vec<_>>();
+            store.commit_all(&writes).expect("the rows land");
+        }
+        let before = log_calls();
+        let scan = store.scan_named(TASK).expect("scans");
+        let calls = log_calls() - before;
+        assert_eq!(scan.rows.len(), INSTANCES);
+        assert!(
+            calls <= 8,
+            "a scan of {INSTANCES} instances by the entity's stream made {calls} calls of the \
+             event store"
+        );
+    }
 }
 
 #[cfg(all(test, feature = "postgres"))]
