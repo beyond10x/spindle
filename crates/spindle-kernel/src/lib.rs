@@ -184,7 +184,9 @@ pub struct Executed {
     pub response: Option<Map<String, Value>>,
 }
 
-/// Why a command did not execute. Nothing was written.
+/// Why a command did not execute. Nothing was written, except where the store cannot say whether
+/// the command's commit landed ([`ExecuteError::Store`] with [`StoreError::Unknown`]): that write
+/// may have landed (`story:unknown-commit-answered-as-unknown`).
 #[derive(Debug, thiserror::Error)]
 pub enum ExecuteError {
     /// The model declares no command of that name.
@@ -248,7 +250,8 @@ pub enum ExecuteError {
         /// instance already holds: that outcome and entity. `None` for every other refusal.
         held: Option<HeldIdentity>,
     },
-    /// The store could not read or commit.
+    /// The store could not read or commit; with [`StoreError::Unknown`], it cannot say whether
+    /// the commit landed, so the command's effect may have been written.
     #[error(transparent)]
     Store(#[from] StoreError),
     /// The command was sent as an actor whose `may:` does not name it, or as an actor the model

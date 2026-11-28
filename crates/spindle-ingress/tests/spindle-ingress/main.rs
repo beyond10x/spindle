@@ -47,6 +47,7 @@ mod stopped_reads;
 mod tls;
 mod token_router;
 mod topology;
+mod unknown_commit;
 mod unknown_refusal;
 mod unpublished_event;
 mod view_paging;

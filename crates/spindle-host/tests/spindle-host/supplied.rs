@@ -69,6 +69,32 @@ impl Store for Shared {
     }
 }
 
+/// What eventlog's `UnknownCommit` reads, as the PostgreSQL store's deadline fires after COMMIT.
+const UNKNOWN_COMMIT: &str =
+    "commit outcome unknown; reconnect and resolve the same command identity";
+
+/// A [`Shared`] store whose every removal ends with its outcome unknown
+/// (`story:unknown-commit-answered-as-unknown`).
+struct UnknownRemoval(Shared);
+
+impl Store for UnknownRemoval {
+    fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
+        self.0.load(entity, identity)
+    }
+
+    fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
+        self.0.commit(change)
+    }
+
+    fn remove(&mut self, _removal: &Removal) -> Result<(), StoreError> {
+        Err(StoreError::Unknown(UNKNOWN_COMMIT.to_owned()))
+    }
+
+    fn scan(&mut self, entity: &str) -> Result<spindle_kernel::Scan, StoreError> {
+        self.0.scan(entity)
+    }
+}
+
 fn object(value: Value) -> Map<String, Value> {
     match value {
         Value::Object(fields) => fields,
@@ -123,6 +149,53 @@ fn a_supplied_store_keeps_the_state_and_a_reset_empties_it() {
         1,
         "the host still writes to the store it was given"
     );
+}
+
+/// `story:unknown-commit-answered-as-unknown`: a removal whose outcome is unknown may have changed
+/// rows, so a reset that meets one loses the supplied store, as any other store error does, and
+/// every later command fails naming it lost in a reset.
+#[test]
+fn a_reset_whose_commit_is_unknown_still_loses_the_store() {
+    let ir = spindle_spec::load(&fixture())
+        .expect("the notebooks fixture compiles")
+        .ir;
+    let shared = Shared::default();
+    let stores = Stores::from([(
+        "desk".to_owned(),
+        Box::new(UnknownRemoval(shared.clone())) as Box<dyn Store>,
+    )]);
+    let mut host = Host::supplied(ir, &elsewhere(), Arc::new(ManualClock::new()), None, stores)
+        .unwrap_or_else(|error| panic!("the host opens on the supplied store: {error}"));
+    host.submit(
+        "desk.notebooks.OpenNotebook",
+        object(json!({"title": "Field notes"})),
+    )
+    .expect("OpenNotebook runs");
+    assert_eq!(shared.held().len(), 1, "a notebook for the reset to remove");
+
+    let reset = host.reset().expect_err("the removal's outcome is unknown");
+    assert!(
+        matches!(
+            &reset,
+            HostError::Reset { component, error, restored: false }
+                if component == "desk" && error.contains(UNKNOWN_COMMIT)
+        ),
+        "the reset loses the store, naming the unknown outcome: {reset:?}"
+    );
+
+    let later = host
+        .submit(
+            "desk.notebooks.OpenNotebook",
+            object(json!({"title": "Second notes"})),
+        )
+        .expect_err("the store was lost in the reset");
+    assert!(
+        later
+            .to_string()
+            .contains("desk's store was lost in a reset"),
+        "{later}"
+    );
+    assert_eq!(shared.held().len(), 1, "nothing more reached the store");
 }
 
 #[test]
