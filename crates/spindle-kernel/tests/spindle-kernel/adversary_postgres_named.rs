@@ -282,7 +282,7 @@ fn scans(store: &mut dyn Store) -> Vec<Result<Scan, String>> {
 }
 
 /// The groups [`adv3_drawn_command_sequences_scan_as_sqlite_does`] draws.
-const DRAWN_GROUPS: usize = 1_500;
+const DRAWN_GROUPS: usize = 1_350;
 
 /// The events one page of a read of a stream holds: `ALPHA`'s stream outgrows it.
 const PAGE: u64 = 1_000;
@@ -297,14 +297,19 @@ const PAGE_EDGE: u64 = 10;
 /// `BETA` alike (rows, versions, the entity's version) after every twentieth group, after every
 /// group that leaves `ALPHA`'s version within [`PAGE_EDGE`] of a multiple of [`PAGE`], and after
 /// the last; a PostgreSQL store opened anew every 200 groups scans them alike too. `ALPHA`'s
-/// stream outgrows one page (version 1,148 after the last group).
+/// stream outgrows one page (version 1,032 after the last group).
 ///
 /// A scan of the PostgreSQL store reads `ALPHA`'s whole stream, so a scan after every one of
 /// 2,400 groups made the case quadratic in that stream: 46 of its 61 s. The groups are the
-/// first 1,500 of the same seed's 2,400. A stored state that parts from SQLite's between two
+/// first 1,350 of the same seed's 2,400. A stored state that parts from SQLite's between two
 /// scans is still apart at the next one, and the next group's outcome is compared after every
 /// group, its expected versions drawn from SQLite's scan after every group; the page edge, where
 /// a read could part for a few versions only, is scanned after every group.
+///
+/// Each group is committed to both stores at once: of the case's 23.5 s alone at 1,500 groups,
+/// the commits took 7.9 s on SQLite and 11.2 s on PostgreSQL, one after the other, and the case
+/// took 29 to 36 s beside the lane on a 4-CPU quota. 1,350 groups still take `ALPHA` across the
+/// page edge and past it, and land 1,180 (`story:postgres-lane-margin`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv3_drawn_command_sequences_scan_as_sqlite_does() {
@@ -320,8 +325,11 @@ fn adv3_drawn_command_sequences_scan_as_sqlite_does() {
     let mut landed = 0;
     for step in 0..DRAWN_GROUPS {
         let (writes, after) = group(&mut rng, step, &pool, &model, &versions);
-        let on_sqlite = reference.commit_all(&writes);
-        let on_postgres = postgres.commit_all(&writes);
+        let (on_sqlite, on_postgres) = std::thread::scope(|scope| {
+            let on_sqlite = scope.spawn(|| reference.commit_all(&writes));
+            let on_postgres = postgres.commit_all(&writes);
+            (on_sqlite.join().expect("the SQLite commit"), on_postgres)
+        });
         if on_sqlite.is_ok() != on_postgres.is_ok() {
             diverged.push(format!(
                 "step {step}: SQLite {on_sqlite:?}, PostgreSQL {on_postgres:?}, writes {writes:?}"
@@ -363,6 +371,39 @@ fn adv3_drawn_command_sequences_scan_as_sqlite_does() {
     assert!(diverged.is_empty(), "{}", diverged.join("\n"));
     assert!(landed > 1_000, "only {landed} groups landed");
     assert!(versions[ALPHA] > PAGE, "ALPHA's stream stays in one page");
+}
+
+/// Each identity of [`identities`] written once, in a store of the schema [`database`] creates:
+/// both stores scan them alike. The short case of this module that
+/// `adversary_w31_u1::adv_w31_the_once_modules_pass_one_process_per_case_on_postgres` starts as
+/// many processes side by side on a fresh database.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn adv3_each_escaped_identity_scans_as_on_sqlite() {
+    let database = database();
+    let mut postgres = open(&database, &fresh("escaped"));
+    let (_directory, mut reference) = sqlite();
+    let writes: Vec<Write> = identities()
+        .iter()
+        .map(|identity| {
+            Write::Commit(Change {
+                entity: ALPHA.to_owned(),
+                identity: identity.clone(),
+                expected: None,
+                row: row("open", 0, identity),
+                events: Vec::new(),
+                scanned: Vec::new(),
+            })
+        })
+        .collect();
+    reference.commit_all(&writes).expect("SQLite lands them");
+    postgres.commit_all(&writes).expect("PostgreSQL lands them");
+    let expected = scans(&mut reference);
+    assert_eq!(
+        expected[0].as_ref().map(|scan| scan.rows.len()),
+        Ok(identities().len())
+    );
+    assert_eq!(scans(&mut postgres), expected);
 }
 
 /// A scan while another process commits a fixed script of groups (creations, updates,
@@ -525,50 +566,46 @@ fn adv3_one_write_of_many_instances_and_one_instance_written_many_times() {
 }
 
 /// A command whose set outcome writes every instance of an entity commits them as one group
-/// (`execute/set.rs`, no bound on its members). One group of 1,000, 5,000 and 20,000 writes
-/// lands on SQLite; it lands on PostgreSQL too, rather than outlast the 10 s eventlog allows
-/// one store transaction.
+/// (`execute/set.rs`, no bound on its members). One group of 20,000 writes lands on SQLite; it
+/// lands on PostgreSQL too, rather than outlast the 10 s eventlog allows one store transaction.
+/// Groups of 1,000 and 5,000 writes, which the case wrote first, are within the time 20,000
+/// take, and added a quarter of its cost; the two stores are written at once
+/// (`story:postgres-lane-margin`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv3_one_group_of_many_writes_lands_as_on_sqlite() {
+    const COUNT: usize = 20_000;
     let database = database();
-    let mut refused = Vec::new();
-    for count in [1_000, 5_000, 20_000] {
-        let component = fresh("group");
-        let mut postgres = open(&database, &component);
-        let (_directory, mut reference) = sqlite();
-        let writes: Vec<Write> = (0..count)
-            .map(|index| {
-                let identity = json!(format!("m{index}"));
-                Write::Commit(Change {
-                    entity: ALPHA.to_owned(),
-                    identity: identity.clone(),
-                    expected: None,
-                    row: row("open", 0, &identity),
-                    events: Vec::new(),
-                    scanned: Vec::new(),
-                })
+    let mut postgres = open(&database, &fresh("group"));
+    let (_directory, mut reference) = sqlite();
+    let writes: Vec<Write> = (0..COUNT)
+        .map(|index| {
+            let identity = json!(format!("m{index}"));
+            Write::Commit(Change {
+                entity: ALPHA.to_owned(),
+                identity: identity.clone(),
+                expected: None,
+                row: row("open", 0, &identity),
+                events: Vec::new(),
+                scanned: Vec::new(),
             })
-            .collect();
+        })
+        .collect();
+    let timed_commit = |store: &mut dyn Store| {
         let started = Instant::now();
-        let on_sqlite = reference
-            .commit_all(&writes)
-            .map_err(|error| error.to_string());
-        let local = started.elapsed();
-        let started = Instant::now();
-        let on_postgres = postgres
-            .commit_all(&writes)
-            .map_err(|error| error.to_string());
-        let remote = started.elapsed();
-        eprintln!(
-            "{count} writes: SQLite {local:?} {on_sqlite:?}, PostgreSQL {remote:?} {on_postgres:?}"
-        );
-        assert_eq!(on_sqlite, Ok(()));
-        if on_postgres.is_err() {
-            refused.push(format!("{count}: {on_postgres:?} after {remote:?}"));
-        }
-    }
-    assert!(refused.is_empty(), "{refused:#?}");
+        let outcome = store.commit_all(&writes).map_err(|error| error.to_string());
+        (outcome, started.elapsed())
+    };
+    let ((on_sqlite, local), (on_postgres, remote)) = std::thread::scope(|scope| {
+        let on_sqlite = scope.spawn(|| timed_commit(&mut reference));
+        let on_postgres = timed_commit(&mut postgres);
+        (on_sqlite.join().expect("the SQLite commit"), on_postgres)
+    });
+    eprintln!(
+        "{COUNT} writes: SQLite {local:?} {on_sqlite:?}, PostgreSQL {remote:?} {on_postgres:?}"
+    );
+    assert_eq!(on_sqlite, Ok(()));
+    assert_eq!(on_postgres, Ok(()), "{COUNT} writes after {remote:?}");
 }
 
 /// Appends `count` creations of `entity` in `component`'s log as one write each would, each
@@ -590,18 +627,31 @@ fn created_by_sql(component: &str, entity: &str, count: usize) {
     ));
 }
 
-/// Appends events `from + 1 ..= to` of another entity to `component`'s log.
+/// The events one transaction of [`noise`] appends: eventlog's feed hides a commit until every
+/// older write transaction on the server has ended, so one statement of all 400,000 rows a case
+/// appended held back every egress test of the lane while it ran (`story:postgres-lane-margin`).
+const NOISE_CHUNK: usize = 10_000;
+
+/// Appends events `from + 1 ..= to` of another entity to `component`'s log, [`NOISE_CHUNK`] to a
+/// transaction, each instance named by its number padded to nine digits: the names ascend as
+/// they are appended, so each lands at the end of the table's index.
 fn noise(component: &str, from: usize, to: usize) {
     let table = table(component);
-    sql(&format!(
-        "INSERT INTO {table} (tenant_id, stream_type, stream_id, version, event_id, \
-         event_name, event_schema_version, occurred_at, recorded_at, subject, actor, \
-         request_id, trace_id, data) SELECT 'local', 'adv3.noise.Noise', 'n' || g, 1, \
-         gen_random_uuid(), 'spindle.row', 1, now(), now(), 'a', 'a', 'a', 'a', \
-         '{{\"state\":\"open\",\"fields\":{{\"id\":\"noise\"}}}}'::jsonb \
-         FROM generate_series({}, {to}) g; ANALYZE {table}",
-        from + 1,
-    ));
+    let mut statements = String::new();
+    for first in (from + 1..=to).step_by(NOISE_CHUNK) {
+        let last = (first + NOISE_CHUNK - 1).min(to);
+        statements.push_str(&format!(
+            "BEGIN; INSERT INTO {table} (tenant_id, stream_type, stream_id, version, event_id, \
+             event_name, event_schema_version, occurred_at, recorded_at, subject, actor, \
+             request_id, trace_id, data) SELECT 'local', 'adv3.noise.Noise', \
+             lpad(g::text, 9, '0'), 1, \
+             gen_random_uuid(), 'spindle.row', 1, now(), now(), 'a', 'a', 'a', 'a', \
+             '{{\"state\":\"open\",\"fields\":{{\"id\":\"noise\"}}}}'::jsonb \
+             FROM generate_series({first}, {last}) g; COMMIT; "
+        ));
+    }
+    statements.push_str(&format!("ANALYZE {table}"));
+    sql(&statements);
 }
 
 /// The mark `state move` is to write before it copies writes that name no instances.
@@ -711,6 +761,10 @@ fn moved(path: &Path, database: &Database, component: &str, entity: &str) {
     lock.release().expect("the lock is released");
 }
 
+/// How many times [`adv3_a_scan_of_many_instances_costs_no_more_than_reading_the_log`] times each
+/// read.
+const TIMED: usize = 3;
+
 fn timed(store: &mut dyn Store, entity: &str) -> (Duration, Scan) {
     let started = Instant::now();
     let scan = store.scan(entity).expect("scans");
@@ -730,6 +784,10 @@ fn timed(store: &mut dyn Store, entity: &str) -> (Duration, Scan) {
 /// and at 50,000) for 30 s of the case's 42. SQLite takes the reference rows 1,000 writes to a
 /// group: one write per instance there cost 0.6 ms each, 35 s at the three sizes, and SQLite's
 /// time is printed, not compared.
+///
+/// Each read is timed [`TIMED`] times and the shortest compared: one of each, timed once beside
+/// the rest of the lane on a 4-CPU quota, read 10,000 instances in 697 ms by the stream and in
+/// 323 ms whole (`story:postgres-lane-margin`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv3_a_scan_of_many_instances_costs_no_more_than_reading_the_log() {
@@ -739,14 +797,22 @@ fn adv3_a_scan_of_many_instances_costs_no_more_than_reading_the_log() {
         let component = fresh("many");
         let mut store = open(&database, &component);
         created_by_sql(&component, ALPHA, count);
-        let (named, by_stream) = timed(&mut store, ALPHA);
+        let (first, by_stream) = timed(&mut store, ALPHA);
         assert_eq!(by_stream.rows.len(), count);
         assert_eq!(by_stream.version, count as u64);
-        let (_, warm) = timed(&mut store, ALPHA);
-        assert_eq!(warm, by_stream);
+        let mut named = first;
+        for _ in 1..TIMED {
+            let (took, warm) = timed(&mut store, ALPHA);
+            assert_eq!(warm, by_stream);
+            named = named.min(took);
+        }
         mark(&component);
-        let (whole, by_log) = timed(&mut store, ALPHA);
-        assert!(by_log == by_stream, "both reads answer the same");
+        let mut whole = Duration::MAX;
+        for _ in 0..TIMED {
+            let (took, by_log) = timed(&mut store, ALPHA);
+            assert!(by_log == by_stream, "both reads answer the same");
+            whole = whole.min(took);
+        }
         let (_directory, mut reference) = sqlite();
         let writes: Vec<Write> = by_stream
             .rows
@@ -785,9 +851,13 @@ fn adv3_a_scan_of_many_instances_costs_no_more_than_reading_the_log() {
 /// A log moved from a state directory 0.10.0 wrote, whose entity's stream holds a schema-1
 /// `spindle.written` naming no instances. Were it copied as it is, every later scan of that
 /// entity would read the whole log under eventlog's publication lock, as before fix pass 2:
-/// once the log has grown to 400,000 events, a scan takes seconds, and another process's
+/// once the log has grown to 200,000 events, a scan takes seconds, and another process's
 /// commits on the same tables during it wait on that lock. The file is moved by `state move`
 /// ([`moved`]), which copies each such event naming the instances its write left.
+///
+/// The whole-log scan took 5.4 s at 400,000 events, about 13.5 µs an event, with another
+/// process's commit failing at its 2 s lock wait: 200,000 events still take it past both the
+/// case's 1 s and that 2 s. 400,000 made the case 10 s of CPU alone (`story:postgres-lane-margin`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv3_an_entity_moved_from_0_10_0_scans_without_reading_the_whole_log() {
@@ -812,7 +882,7 @@ fn adv3_an_entity_moved_from_0_10_0_scans_without_reading_the_whole_log() {
             })
             .expect("written since the move");
     }
-    noise(&component, 0, 400_000);
+    noise(&component, 0, 200_000);
     let started = Instant::now();
     let scanned = store
         .scan(ALPHA)
@@ -848,7 +918,7 @@ fn adv3_an_entity_moved_from_0_10_0_scans_without_reading_the_whole_log() {
         stop.store(true, Ordering::SeqCst);
         failed
     });
-    eprintln!("scan of the moved entity over 400,051 events: {elapsed:?}, {scanned:?}");
+    eprintln!("scan of the moved entity over 200,051 events: {elapsed:?}, {scanned:?}");
     assert!(
         scanned == Ok(51) && failed.is_empty() && elapsed < Duration::from_secs(1),
         "scan {scanned:?} after {elapsed:?}; commits of another process failed: {failed:#?}"

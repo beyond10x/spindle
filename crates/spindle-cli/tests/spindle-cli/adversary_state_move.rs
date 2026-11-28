@@ -735,8 +735,9 @@ fn a_refused_move_into_an_unmigrated_loopback_schema_creates_no_tables() {
     );
 }
 
-/// A directory whose rally-table file holds `groups` writes of three rows each: a move of it
-/// takes long enough to be ended while it copies.
+/// A directory whose rally-table file holds `groups` writes of three rows each, a move of it
+/// held mid-copy by [`HeldTable`]. 1,500 groups once made the move long enough to end while it
+/// copied, which took up to 60 s of a 4-CPU runner (`story:postgres-lane-margin`).
 fn long_directory(directory: &Path, groups: u64) {
     one_row_each(directory);
     let mut table = SqliteStore::open(&file(directory, "rally-table")).expect("opens");
@@ -802,12 +803,61 @@ fn start_move(directory: &Path, settings: &[(&str, &str)]) -> std::process::Chil
     .expect("state move starts")
 }
 
-/// Waits until rally-table's tables in `schema` hold an event: the move is copying.
+/// rally-table's event table in a schema, locked `IN SHARE MODE` by a transaction of its own until
+/// dropped: every append to it waits, so a move that copied the players and appends rally-table's
+/// first group stays mid-copy for as long as the case holds it. The transaction writes nothing,
+/// so it holds back no feed read. Rolled back on drop.
+struct HeldTable {
+    runtime: tokio::runtime::Runtime,
+    client: tokio_postgres::Client,
+}
+
+impl HeldTable {
+    fn hold(schema: &str) -> Self {
+        let table = format!("{}_events", spindle_kernel::postgres_prefix("rally-table"));
+        let runtime = runtime();
+        let client = runtime.block_on(async {
+            let (client, connection) = tokio_postgres::connect(&owner_url(), tokio_postgres::NoTls)
+                .await
+                .expect("the test database accepts its owner");
+            tokio::spawn(connection);
+            client
+                .batch_execute(&format!("BEGIN; LOCK TABLE {schema}.{table} IN SHARE MODE"))
+                .await
+                .expect("rally-table's event table is locked");
+            client
+        });
+        Self { runtime, client }
+    }
+}
+
+impl Drop for HeldTable {
+    fn drop(&mut self) {
+        let _ = self.runtime.block_on(self.client.batch_execute("ROLLBACK"));
+    }
+}
+
+/// Waits until the move copied both players and its append to rally-table's event table waits on
+/// [`HeldTable`]: the move is copying, and stays so while the table is held.
 fn copying(schema: &str) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    while events(schema, "rally-table") == 0 {
-        assert!(std::time::Instant::now() < deadline, "the move copies");
-        std::thread::sleep(std::time::Duration::from_millis(5));
+    let table = format!("{}_events", spindle_kernel::postgres_prefix("rally-table"));
+    let waiting = format!(
+        "SELECT count(*)::text FROM pg_locks WHERE relation = '{schema}.{table}'::regclass \
+         AND mode = 'RowExclusiveLock' AND NOT granted"
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let players = ["rally-player-east", "rally-player-west"]
+            .iter()
+            .all(|player| events(schema, player) > 0);
+        if players && sql(std::slice::from_ref(&waiting))[0] != "0" {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the move copied both players and waits to append rally-table's first group"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 
@@ -817,7 +867,7 @@ fn copying(schema: &str) {
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn a_move_whose_lock_session_ends_while_it_copies_exits_1_saying_so() {
     let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    long_directory(directory.path(), 1500);
+    long_directory(directory.path(), 40);
     let schema = Schema::new("lost");
     let url = owner_url();
     let settings = [
@@ -825,12 +875,14 @@ fn a_move_whose_lock_session_ends_while_it_copies_exits_1_saying_so() {
         ("database_schema", &schema.0),
     ];
     migrate(&settings);
+    let held = HeldTable::hold(&schema.0);
     let mut moving = start_move(directory.path(), &settings);
     let holder = lock_holder(&schema.0, std::time::Duration::from_secs(60))
         .expect("the move takes the schema's lock");
     copying(&schema.0);
     sql(&[format!("SELECT pg_terminate_backend({holder})")]);
     let running = moving.try_wait().expect("the move is waited on").is_none();
+    drop(held);
     let ended = moving.wait_with_output().expect("the move ends");
     assert!(running, "the lock session ended while the move ran");
     assert_eq!(ended.status.code(), Some(1), "{}", text(&ended));
@@ -855,7 +907,7 @@ fn a_move_whose_lock_session_ends_while_it_copies_exits_1_saying_so() {
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn a_move_ended_by_a_signal_releases_the_schema() {
     let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    long_directory(directory.path(), 1500);
+    long_directory(directory.path(), 40);
     // Not SIGINT: a shell without job control starts a command run in the background with
     // SIGINT ignored, and the move inherits that, so whether SIGINT ends it depends on how the
     // suite was started.
@@ -867,12 +919,14 @@ fn a_move_ended_by_a_signal_releases_the_schema() {
             ("database_schema", &schema.0),
         ];
         migrate(&settings);
+        let held = HeldTable::hold(&schema.0);
         let moving = start_move(directory.path(), &settings);
         lock_holder(&schema.0, std::time::Duration::from_secs(60))
             .expect("the move takes the schema's lock");
         copying(&schema.0);
         rustix::process::kill_process(rustix::process::Pid::from_child(&moving), signal)
             .expect("the signal is sent");
+        drop(held);
         let ended = moving.wait_with_output().expect("the move ends");
         assert_ne!(ended.status.code(), Some(0), "{signal:?}: {}", text(&ended));
         // A move still held off by the lock would be refused naming another state move.
