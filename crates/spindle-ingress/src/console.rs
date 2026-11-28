@@ -10,6 +10,7 @@ use spindle_host::{
     Attempted, Cursor, Failed, History, HistoryCursor, Host, HostError, Page, Published, Reader,
     Replayed, Revision, Undelivered, World,
 };
+use spindle_kernel::StoreError;
 
 use crate::answer::Answer;
 use crate::surface::{Surface, form_decoded};
@@ -567,8 +568,12 @@ pub fn carries_world(body: &[u8]) -> bool {
 /// body that is not JSON, a run with no `worlds`, and a world `worlds` or the host refuses are
 /// refused `400` before any store is emptied, a world whose `clock` is before the host's clock
 /// included. A world that carries `clock` on a host without a stepping clock
-/// ([`Host::stepping`]) is refused `409`, before any store is emptied. A store that could not be
-/// emptied or written is refused `500`, naming why.
+/// ([`Host::stepping`]) is refused `409`, before any store is emptied. A store that did not
+/// answer within its deadline ([`StoreError::Busy`]) is kept: while the reset has changed no row
+/// ([`Host::reset_changed_rows`]) it answers `503` with `{"refused", "committed": false}`
+/// ([`Answer::busy`]), and once it has, `500`, saying that the store is kept and that the reset
+/// can be sent again (`story:reset-on-a-busy-store-keeps-the-store`). Any other store that could
+/// not be emptied or written is refused `500`, naming why.
 pub fn reset(host: &mut Host, body: &[u8], worlds: Option<Worlds<'_>>) -> Answer {
     let world = if carries_world(body) {
         let read = serde_json::from_slice::<Value>(body)
@@ -592,6 +597,18 @@ pub fn reset(host: &mut Host, body: &[u8], worlds: Option<Worlds<'_>>) -> Answer
         },
         Err(error @ HostError::World(_)) => Answer::refusal(400, error.to_string()),
         Err(error @ HostError::Clock(_)) => Answer::refusal(409, error.to_string()),
+        Err(error @ HostError::Store(StoreError::Busy(_))) if !host.reset_changed_rows() => {
+            Answer::busy(format!(
+                "{error}; nothing was reset, and the reset can be sent again"
+            ))
+        }
+        Err(error @ HostError::Store(StoreError::Busy(_))) => Answer::refusal(
+            500,
+            format!(
+                "{error}; the reset changed rows before the store was busy, and the store is \
+                 kept as the reset left it: the reset can be sent again"
+            ),
+        ),
         Err(error) => Answer::refusal(500, error.to_string()),
     }
 }

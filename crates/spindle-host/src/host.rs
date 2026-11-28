@@ -341,7 +341,8 @@ pub enum HostError {
     /// A channel failed.
     #[error(transparent)]
     Channel(#[from] ChannelError),
-    /// A store could not be opened or read.
+    /// A store could not be opened or read; or [`Host::reset`] found a store the host was given
+    /// busy ([`StoreError::Busy`]), naming the component and the step, and kept that store.
     #[error(transparent)]
     Store(#[from] StoreError),
     /// No component accepts the command.
@@ -404,7 +405,9 @@ pub enum HostError {
         /// The declared error.
         error: Box<DeclaredError>,
     },
-    /// [`Host::reset`] could not empty a component's store.
+    /// [`Host::reset`] could not empty a component's store. A store the host was given that was
+    /// busy ([`StoreError::Busy`]) is not reported here: the reset answers [`HostError::Store`]
+    /// and keeps it.
     #[error(
         "resetting {component}: {error}; {}",
         if *restored {
@@ -1100,10 +1103,13 @@ impl Host {
     /// answered by `decider`, where one is given, as [`Host::deciding`] answers it.
     ///
     /// A reset empties a supplied store by removing every instance it holds, each with the version
-    /// it holds; the store stays the one supplied. Where a removal fails, the reset answers
-    /// [`HostError::Reset`] (`restored: false`) and every read and write of that component fails
-    /// from then on, naming why. A store left over in `stores`, of a component
-    /// that does not run here or whose state is bound to `memory` or `sqlite`, is dropped.
+    /// it holds; the store stays the one supplied. Where the store is busy at a step of the reset
+    /// ([`StoreError::Busy`]), the reset answers that error as [`HostError::Store`], naming the
+    /// component and the step, and keeps the store, the rows removed before that step removed.
+    /// Where a step fails otherwise, the reset answers [`HostError::Reset`] (`restored: false`)
+    /// and every read and write of that component fails from then on, naming why. A store left
+    /// over in `stores`, of a component that does not run here or whose state is bound to
+    /// `memory` or `sqlite`, is dropped.
     ///
     /// # Errors
     /// As [`Host::new`], and [`HostError::Unsupported`] for a component whose state is bound to
@@ -1847,8 +1853,11 @@ impl Host {
     /// [`HostError::Reset`] when a component's files cannot be moved aside or the empty store
     /// cannot be opened. Its files are moved back and its store reopened as it was
     /// (`restored: true`); where even that fails, every read and write of that component fails
-    /// from then on, naming why (`restored: false`). A store the host was given that cannot be
-    /// emptied, or cannot record that its events are forgotten, is lost alike
+    /// from then on, naming why (`restored: false`). A store the host was given that is busy
+    /// ([`StoreError::Busy`]) while it is emptied or records that its events are forgotten is
+    /// kept, the rows removed before then removed, and the reset answers
+    /// [`HostError::Store`] naming the component and the step; whether it changed rows before
+    /// then is [`Host::reset_changed_rows`]. One that fails otherwise is lost alike
     /// (`restored: false`). The components emptied before it stay empty, their events forgotten
     /// with them; the others keep theirs.
     pub fn reset(&mut self) -> Result<Vec<String>, HostError> {
@@ -1873,9 +1882,11 @@ impl Host {
     /// # Errors
     /// [`HostError::Clock`] for a world that carries a clock on a host without a stepping clock
     /// ([`Host::stepping`]), and [`HostError::World`] for one whose clock is before the
-    /// clock's civil time or a row that does not pass, each before anything changed; then as
-    /// [`Host::reset`], and as [`Host::establish`] for a row a store did not take, the rows
-    /// before it written and the answers, mint and clock of the last world kept.
+    /// clock's civil time or a row that does not pass, each before anything changed, but
+    /// [`HostError::Store`] where a store was busy ([`StoreError::Busy`]) while a row was read
+    /// from it, also before anything changed; then as [`Host::reset`], and as
+    /// [`Host::establish`] for a row a store did not take, the rows before it written and the
+    /// answers, mint and clock of the last world kept.
     pub fn reset_to(&mut self, world: World) -> Result<Vec<String>, HostError> {
         self.reset_rows = false;
         if let Some(at) = world.clock {
@@ -1901,11 +1912,18 @@ impl Host {
             }
             store_of(&mut self.components, &owner)?
                 .load(&seed.entity, &seed.identity)
-                .map_err(|error| {
-                    HostError::World(format!(
+                .map_err(|error| match error {
+                    // A busy store refused the read before anything changed: the world is not
+                    // at fault, and the reset can be sent again
+                    // (`story:reset-on-a-busy-store-keeps-the-store`).
+                    StoreError::Busy(detail) => HostError::Store(StoreError::Busy(format!(
+                        "resetting {owner}: reading row {index}, {} {}: {detail}",
+                        seed.entity, seed.identity
+                    ))),
+                    error => HostError::World(format!(
                         "row {index}: {owner}'s store cannot hold {} {}: {error}",
                         seed.entity, seed.identity
-                    ))
+                    )),
                 })?;
             owners.push(owner);
         }
@@ -1938,7 +1956,8 @@ impl Host {
     /// ([`Host::reset_changed_rows`]); the store is kept.
     fn load(&mut self, rows: Vec<Seed>, owners: Vec<String>) -> Result<Vec<String>, HostError> {
         let emptied = self.empty()?;
-        for (seed, owner) in rows.into_iter().zip(owners) {
+        for (index, (seed, owner)) in rows.into_iter().zip(owners).enumerate() {
+            let step = format!("writing row {index}, {} {}", seed.entity, seed.identity);
             store_of(&mut self.components, &owner)?
                 .commit(&Change {
                     entity: seed.entity,
@@ -1948,9 +1967,17 @@ impl Host {
                     events: Vec::new(),
                     scanned: Vec::new(),
                 })
-                .inspect_err(|error| {
-                    if matches!(error, StoreError::Unknown(_)) {
-                        self.reset_rows = true;
+                .map_err(|error| match error {
+                    // A busy write names the component and the step, as every busy step of a
+                    // reset does (`story:reset-on-a-busy-store-keeps-the-store`, D2 A).
+                    StoreError::Busy(detail) => {
+                        StoreError::Busy(format!("resetting {owner}: {step}: {detail}"))
+                    }
+                    error => {
+                        if matches!(error, StoreError::Unknown(_)) {
+                            self.reset_rows = true;
+                        }
+                        error
                     }
                 })?;
             self.reset_rows = true;
@@ -1967,9 +1994,20 @@ impl Host {
                         component
                             .store
                             .forget_events()
-                            .map_err(|error| format!("forgetting its events: {error}"))
+                            .map_err(|error| ("forgetting its events".to_owned(), error))
                     });
-                if let Err(error) = forgotten {
+                if let Err((step, error)) = forgotten {
+                    // A busy store refused the step before it began to commit, so it holds what
+                    // it held before that step: it is kept, and the reset can be sent again
+                    // (`story:reset-on-a-busy-store-keeps-the-store`). Any other error loses it.
+                    let error = match error {
+                        StoreError::Busy(detail) => {
+                            return Err(HostError::Store(StoreError::Busy(format!(
+                                "resetting {name}: {step}: {detail}"
+                            ))));
+                        }
+                        error => format!("{step}: {error}"),
+                    };
                     component.store.replace(Box::new(Lost(format!(
                         "{name}'s store was lost in a reset: {error}"
                     ))));
@@ -2045,10 +2083,13 @@ impl Host {
     /// Whether the last [`Host::reset_to`] changed the rows of any store: removed or wrote a row,
     /// or emptied or lost a store kept in a file or in memory. `false` after a reset refused
     /// before it emptied anything, as for its world or its clock, and after one whose stores
-    /// refused its first removal, as a store whose lease another process took refuses every write;
-    /// forgetting a store's events alone changes no row. A removal or a world row whose outcome is
-    /// unknown ([`StoreError::Unknown`]) may have landed, so it counts as one that did: `true`
-    /// (`story:unknown-commit-answered-as-unknown`). Where it is `false`, a caller that
+    /// refused its first removal, as a store whose lease another process took refuses every write,
+    /// or was busy at it; forgetting a store's events alone changes no row. A removal or a world
+    /// row whose outcome is unknown ([`StoreError::Unknown`]) may have landed, so it counts as one
+    /// that did: `true` (`story:unknown-commit-answered-as-unknown`). A reset a busy store held
+    /// ([`StoreError::Busy`]) keeps that store whichever this answers: `false`, nothing was
+    /// reset; `true`, the rows changed before it stay changed and the reset can be sent again
+    /// (`story:reset-on-a-busy-store-keeps-the-store`). Where it is `false`, a caller that
     /// removed something beside the stores for the reset puts it back
     /// (`story:seed-record-after-a-component-is-removed`).
     pub fn reset_changed_rows(&self) -> bool {
@@ -3023,15 +3064,19 @@ pub(crate) fn merged(committed: Vec<(String, Vec<Committed>)>) -> Vec<Published>
 }
 
 /// Removes every instance `store` holds of every entity `ir` declares, each at the version it
-/// holds, so that the store answers as an empty one does; the reason otherwise. Sets `removed`
-/// once a removal landed, or one whose outcome is unknown ([`StoreError::Unknown`]), which may
-/// have.
-fn removed_all(ir: &EssIr, store: &mut dyn Store, removed: &mut bool) -> Result<(), String> {
+/// holds, so that the store answers as an empty one does; otherwise the step that failed and the
+/// store's error, which tells a busy store from one that failed otherwise. Sets `removed` once a
+/// removal landed, or one whose outcome is unknown ([`StoreError::Unknown`]), which may have.
+fn removed_all(
+    ir: &EssIr,
+    store: &mut dyn Store,
+    removed: &mut bool,
+) -> Result<(), (String, StoreError)> {
     for entity in ir.entities().keys() {
         let entity = entity.to_string();
         let held = store
             .scan(&entity)
-            .map_err(|error| format!("reading {entity}: {error}"))?;
+            .map_err(|error| (format!("reading {entity}"), error))?;
         for (identity, stored) in held {
             store
                 .remove(&spindle_kernel::Removal {
@@ -3045,7 +3090,7 @@ fn removed_all(ir: &EssIr, store: &mut dyn Store, removed: &mut bool) -> Result<
                     if matches!(error, StoreError::Unknown(_)) {
                         *removed = true;
                     }
-                    format!("removing {entity} {identity}: {error}")
+                    (format!("removing {entity} {identity}"), error)
                 })?;
             *removed = true;
         }
