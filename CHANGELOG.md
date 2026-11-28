@@ -81,14 +81,18 @@ are Spindle's releases.
   that table's lease and the old table's own, which the run takes for it and releases after
   (`take_orphan`, `gather_orphan_seed`, `release_orphan`); while another process holds the old
   table's lease the record is read and not moved, and a line says so. A reset by a leased run
-  without a seed removes the record from those tables too, first, before it empties any store,
-  under each one's lease, which it keeps until it answers (`forget_orphan_seed`, `renew_orphan`);
-  while another process holds one the reset is refused `409` naming the table, and where a
-  record cannot be removed `500` naming the table, and either changes nothing, since a store
-  emptied with the old record left would read as seeded at the next start. A reset then refused
-  for its body puts the records back (`record_orphan_seed`). A removal from a current table that
-  fails after the reset is printed naming that table. One schema holds one leased deployment
-  (`story:seed-record-after-a-component-is-removed`).
+  without a seed removes the record from those tables too, before it empties any store: it
+  refuses a body that is not a world, or a world clock it cannot take, before it touches a record;
+  then it takes every such table's lease, which it keeps until it answers (`renew_orphan`), and
+  removes every record in one transaction (`forget_orphan_seeds`). While another process holds
+  one lease the reset is refused `409` naming the table and no record is touched; where a record
+  cannot be removed it is refused `500` naming the table and none is removed. Either changes
+  nothing, since a store emptied with the old record left would read as seeded at the next start.
+  A reset then refused for a row of its world puts the records back in one transaction
+  (`record_orphan_seeds`), and where that fails answers `500` naming the tables whose record was
+  lost. A claim the run stopped waiting for is undone behind it: no lease is kept and no record is
+  lost. A removal from a current table that fails after the reset is printed naming that table.
+  One schema holds one leased deployment (`story:seed-record-after-a-component-is-removed`).
 
 ## [0.26.0] - 2026-11-28
 

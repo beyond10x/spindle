@@ -624,3 +624,47 @@ fn a_removal_that_fails_after_the_reset_names_the_table_whose_row_was_left() {
     assert_eq!(recorded(&schema, "board"), None);
     assert_eq!(recorded(&schema, "ledger"), Some(record));
 }
+
+/// Adversary round 3 of wave 33 U3: a world whose rows the reset refuses `400` (two rows one
+/// instance) is refused only after the record in `audit`'s lease table was removed for it, so
+/// the record is put back. Where that put-back fails (a trigger the owner puts on `audit`'s table
+/// refuses the write of the row `seed`), the reset answers `500` naming `audit`'s table and the
+/// refusal of the world, not a plain `400`: the part-done record is lost while no store was
+/// emptied.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_reset_refused_after_the_claim_whose_put_back_fails_answers_500_naming_the_table() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let whole = seed_file(directory.path(), "seed.json", &["s1", "s2", "s3"]);
+    let schema = super::super::schema();
+    left_part_done_in_audit(directory.path(), &environment, &schema, &whole);
+    let audit = lease_table(&schema, "audit");
+    super::super::sql(&[
+        format!(
+            "CREATE FUNCTION {schema}.refuse_put_back() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN RAISE EXCEPTION 'the write of the seed record failed'; END $$"
+        ),
+        format!(
+            "CREATE TRIGGER refuse_put_back BEFORE INSERT OR UPDATE ON {audit} FOR EACH ROW WHEN \
+             (NEW.row_key = 'seed') EXECUTE FUNCTION {schema}.refuse_put_back()"
+        ),
+    ]);
+    let row = json!({"entity": "tasks.board.Task", "identity": "w1", "state": "Open",
+        "fields": {"title": "twice"}});
+
+    let mut unseeded = Replica::start(super::run(&environment, &schema));
+    unseeded.ready_by(Instant::now() + super::ANSWER);
+    let world = json!({"rows": [row.clone(), row]});
+    let (status, body) = super::call(unseeded.address, "POST", "/api/reset", Some(&world));
+    let tasks = super::task_ids(&unseeded);
+    unseeded.stop();
+    super::super::sql(&[format!("DROP TRIGGER refuse_put_back ON {audit}")]);
+    let refused = body["refused"].as_str().unwrap_or_default();
+    assert_eq!(status, 500, "{body}\n{}", unseeded.printed());
+    assert!(
+        refused.contains(&audit) && refused.contains("already a row of this world"),
+        "the refusal names audit's table and the world's refusal: {body}"
+    );
+    assert_eq!(tasks, ["s1"], "no store was emptied");
+}

@@ -993,58 +993,128 @@ impl Lease {
         self.gathered((&table, to, to_token), &sources, body)
     }
 
-    /// Writes `body` as the row `seed` of `table`, one [`Lease::orphan_tables`] listed, only while
-    /// its lease row names `token` and this connection's session, as [`Lease::record_seed`] does a
-    /// component's: what puts back a record removed for a reset that then emptied nothing.
+    /// Removes the row `seed` of each table of `held`, each one [`Lease::orphan_tables`] listed
+    /// with the token its lease is held at ([`Lease::take_orphan`]), in one transaction that
+    /// commits only where every lease row names its token and this connection's session: where one
+    /// does not, or a removal fails, no row is removed
+    /// (`story:seed-record-after-a-component-is-removed`, adversary round 3).
     ///
     /// # Errors
-    /// [`StoreError::Backend`] where `table` is not a lease table of the schema, where the row
-    /// cannot be written, and, naming the lease, where the lease row names another token or
-    /// session.
-    pub fn record_orphan_seed(
-        &mut self,
-        table: &str,
-        token: u64,
-        body: &serde_json::Value,
-    ) -> Result<(), StoreError> {
-        self.orphan(table)?;
-        let tenant = crate::sqlite::TENANT;
-        let held = i64::try_from(token).unwrap_or(i64::MAX);
-        let text = body.to_string();
-        let statement = SEED_WRITE.replace("{table}", table);
-        let written = self.seed_statement(
-            table,
-            &statement,
-            &[&tenant, &LEASE_ROW, &held, &SEED_ROW, &text],
-            false,
-        )?;
-        match written {
-            Some(_) => Ok(()),
-            None => Err(deposed(table, token, "write")),
-        }
+    /// [`StoreError::Backend`] where a table is not a lease table of the schema, where a row
+    /// cannot be removed, naming its table, and, naming the lease, where a lease row names another
+    /// token or session.
+    pub fn forget_orphan_seeds(&mut self, held: &[(&str, u64)]) -> Result<(), StoreError> {
+        let seeds: Vec<(&str, u64, Option<String>)> = held
+            .iter()
+            .map(|(table, token)| (*table, *token, None))
+            .collect();
+        self.orphan_seeds(&seeds)
     }
 
-    /// Removes the row `seed` of `table`, one [`Lease::orphan_tables`] listed, where there is
-    /// one, only while its lease row names `token` and this connection's session.
+    /// Writes each record of `records` as the row `seed` of its table, each one
+    /// [`Lease::orphan_tables`] listed with the token its lease is held at, in one transaction
+    /// that commits only where every lease row names its token and this connection's session, as
+    /// [`Lease::forget_orphan_seeds`] removes them: what puts back the records removed for a reset
+    /// that then emptied nothing, all of them or none.
     ///
     /// # Errors
-    /// [`StoreError::Backend`] where `table` is not a lease table of the schema, where the row
-    /// cannot be removed, and, naming the lease, where the lease row names another token or
-    /// session.
-    pub fn forget_orphan_seed(&mut self, table: &str, token: u64) -> Result<(), StoreError> {
-        self.orphan(table)?;
+    /// As [`Lease::forget_orphan_seeds`], for a row that cannot be written.
+    pub fn record_orphan_seeds(
+        &mut self,
+        records: &[(&str, u64, &serde_json::Value)],
+    ) -> Result<(), StoreError> {
+        let seeds: Vec<(&str, u64, Option<String>)> = records
+            .iter()
+            .map(|(table, token, body)| (*table, *token, Some(body.to_string())))
+            .collect();
+        self.orphan_seeds(&seeds)
+    }
+
+    /// Runs, in one transaction on the lease connection, for each of `seeds` the write of its
+    /// body, JSON text, as the row `seed` of its table ([`SEED_WRITE`]), or with none the removal
+    /// of that row ([`SEED_FORGET`]), each only while the table's lease row names its token and
+    /// this session; commits only where each did.
+    fn orphan_seeds(&mut self, seeds: &[(&str, u64, Option<String>)]) -> Result<(), StoreError> {
+        for (table, _, _) in seeds {
+            self.orphan(table)?;
+        }
+        if seeds.is_empty() {
+            return Ok(());
+        }
+        if let Err(error) = self.connected() {
+            self.trouble = Some(error.to_string());
+            return Err(error);
+        }
         let tenant = crate::sqlite::TENANT;
-        let held = i64::try_from(token).unwrap_or(i64::MAX);
-        let statement = SEED_FORGET.replace("{table}", table);
-        let removed = self.seed_statement(
-            table,
-            &statement,
-            &[&tenant, &LEASE_ROW, &held, &SEED_ROW],
-            false,
-        )?;
-        match removed {
-            Some(_) => Ok(()),
-            None => Err(deposed(table, token, "remove")),
+        let runtime = &self.runtime;
+        let client = self
+            .client
+            .as_mut()
+            .ok_or_else(|| StoreError::Backend("no connection for the lease".to_owned()))?;
+        let all = seeds
+            .iter()
+            .map(|(table, _, _)| *table)
+            .collect::<Vec<_>>()
+            .join(" and ");
+        let ran: Result<(), Unchanged> = runtime.block_on(async {
+            let transaction = client
+                .transaction()
+                .await
+                .map_err(|error| Unchanged::Refused(all.clone(), error))?;
+            for (table, token, body) in seeds {
+                let held = i64::try_from(*token).unwrap_or(i64::MAX);
+                let answered = match body {
+                    Some(text) => {
+                        let statement = SEED_WRITE.replace("{table}", table);
+                        transaction
+                            .query_opt(&statement, &[&tenant, &LEASE_ROW, &held, &SEED_ROW, text])
+                            .await
+                    }
+                    None => {
+                        let statement = SEED_FORGET.replace("{table}", table);
+                        transaction
+                            .query_opt(&statement, &[&tenant, &LEASE_ROW, &held, &SEED_ROW])
+                            .await
+                    }
+                };
+                // Dropping the transaction rolls back what it did before.
+                match answered {
+                    Ok(Some(_)) => {}
+                    Ok(None) => return Err(Unchanged::Deposed((*table).to_owned(), *token)),
+                    Err(error) => return Err(Unchanged::Refused((*table).to_owned(), error)),
+                }
+            }
+            transaction
+                .commit()
+                .await
+                .map_err(|error| Unchanged::Refused(all.clone(), error))
+        });
+        let what = if seeds.iter().any(|(_, _, body)| body.is_some()) {
+            "write"
+        } else {
+            "remove"
+        };
+        match ran {
+            Ok(()) => {
+                self.trouble = None;
+                Ok(())
+            }
+            Err(Unchanged::Deposed(table, token)) => {
+                self.trouble = None;
+                Err(deposed(&table, token, what))
+            }
+            Err(Unchanged::Refused(table, error)) => {
+                let failed = self.failed(&error, &table);
+                let closed = self
+                    .client
+                    .as_ref()
+                    .is_some_and(tokio_postgres::Client::is_closed);
+                if closed || dropped(&error) {
+                    self.client = None;
+                    self.trouble = Some(failed.to_string());
+                }
+                Err(failed)
+            }
         }
     }
 
@@ -1117,6 +1187,14 @@ fn deposed(component: &str, token: u64, what: &str) -> StoreError {
         "fenced: the lease of {component} no longer names token {token} and this session, so \
          this process does not {what} the seed record in its tables"
     ))
+}
+
+/// Why [`Lease::orphan_seeds`] changed no row.
+enum Unchanged {
+    /// The lease row of the table named no longer names the token and this session.
+    Deposed(String, u64),
+    /// PostgreSQL refused a statement on the table, or the tables, named.
+    Refused(String, tokio_postgres::Error),
 }
 
 /// The seed record `row` holds, of the lease table a refusal calls `named`.

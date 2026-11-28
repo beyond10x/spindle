@@ -297,15 +297,55 @@ pub(crate) fn forget_row(row: &crate::database::SeedRow) {
     }
 }
 
+/// The refusal [`spindle_ingress::console::reset`] gives `body` before it empties any store, for
+/// the world it carries or its clock, where it gives one: `400` for a body that is not JSON or not
+/// a world of the model, or a clock before the host's; `409` for a clock on a host without a
+/// stepping clock. A leased run without a seed checks these before [`claimed`] touches any seed
+/// record (`story:seed-record-after-a-component-is-removed`, adversary round 3); the checks of a
+/// world's rows against the stores come after it, in the reset.
+pub(crate) fn refused_world(
+    host: &Host,
+    body: &[u8],
+    worlds: spindle_ingress::console::Worlds<'_>,
+) -> Option<spindle_ingress::Answer> {
+    if !spindle_ingress::console::carries_world(body) {
+        return None;
+    }
+    let world = serde_json::from_slice::<Value>(body)
+        .map_err(|error| format!("the reset body is not JSON: {error}"))
+        .and_then(|value| worlds(host.ir(), &value));
+    let at = match world {
+        Ok(world) => world.clock?,
+        Err(why) => return Some(spindle_ingress::Answer::refusal(400, why)),
+    };
+    match host.clock_at() {
+        Err(error @ HostError::Clock(_)) => {
+            Some(spindle_ingress::Answer::refusal(409, error.to_string()))
+        }
+        Err(error) => Some(spindle_ingress::Answer::refusal(500, error.to_string())),
+        Ok(stands) if at < stands => Some(spindle_ingress::Answer::refusal(
+            400,
+            HostError::World(format!(
+                "clock: the clock stands at {}; a world moves it forward only",
+                spindle_host::rfc3339(stands).unwrap_or_default()
+            ))
+            .to_string(),
+        )),
+        Ok(_) => None,
+    }
+}
+
 /// Before a reset by a leased run without a seed empties anything, takes the leases of the lease
-/// tables of components the specification no longer has that hold a seed record, and removes the
-/// records under them (`story:seed-under-a-lease`, D6 A;
-/// `story:seed-record-after-a-component-is-removed`, adversary rounds 1 and 2): [`forget_row`]
+/// tables of components the specification no longer has that hold a seed record, then removes
+/// the records under them in one transaction (`story:seed-under-a-lease`, D6 A;
+/// `story:seed-record-after-a-component-is-removed`, adversary rounds 1 to 3): [`forget_row`]
 /// removes those of the current tables once the reset emptied the store. Answers the refusal of
 /// the reset where that cannot be done: `409` naming the table whose lease another process holds,
-/// as a process of an earlier release still running may, with nothing removed; `500` naming the
+/// as a process of an earlier release still running may, with no record touched; `500` naming the
 /// table that could not be read, whose lease could not be taken or whose record could not be
-/// removed. No store is emptied then, and no lease is kept.
+/// removed, with none removed, and also where the lease thread did not answer in time. No store
+/// is emptied then, no lease is kept and no record is lost: a claim the lease thread ends after
+/// the answer is undone behind it.
 pub(crate) fn claimed(row: &crate::database::SeedRow) -> Option<spindle_ingress::Answer> {
     match row.claim() {
         Ok(None) => None,
@@ -330,18 +370,48 @@ pub(crate) fn claimed(row: &crate::database::SeedRow) -> Option<spindle_ingress:
     }
 }
 
-/// Releases the leases [`claimed`] took, once the reset has answered; with `untouched`, as after
-/// a reset refused before it emptied any store, puts back first the records [`claimed`] removed,
-/// so a reset that changed nothing leaves them too. A failure is printed on stderr; the leases
-/// run out by their time.
-pub(crate) fn unclaimed(row: &crate::database::SeedRow, untouched: bool) {
-    if let Err(error) = row.unclaim(untouched) {
-        log::warn(format!(
-            "the leases taken for the reset were not released; they run out by their time: \
-             {error:#}"
-        ))
-        .field("error", format!("{error:#}"))
-        .write();
+/// Releases the leases [`claimed`] took once the reset answered `answer`, and answers what the
+/// reset answers then. With `untouched`, as after a reset refused before it emptied any store,
+/// the records [`claimed`] removed are put back first, in one transaction, so a reset that
+/// changed nothing leaves them too; where that fails, the reset's refusal becomes a `500` that
+/// names the tables whose record was lost, and says what was refused. Any other failure is
+/// printed on stderr; the leases run out by their time.
+pub(crate) fn unclaimed(
+    row: &crate::database::SeedRow,
+    answer: spindle_ingress::Answer,
+    untouched: bool,
+) -> spindle_ingress::Answer {
+    match row.unclaim(untouched) {
+        Ok(()) => answer,
+        Err(error) if untouched => {
+            let refused = answer
+                .body
+                .as_ref()
+                .and_then(|body| body.get("refused"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned();
+            spindle_ingress::Answer::refusal(
+                500,
+                format!(
+                    "the reset is refused before any store is emptied ({} {refused}), yet the \
+                     seed record removed for it from the lease table of a component this \
+                     specification no longer has is lost: {error:#}; a start with that seed may \
+                     take the store as seeded and skip its entries, so reset the store before such \
+                     a start",
+                    answer.status
+                ),
+            )
+        }
+        Err(error) => {
+            log::warn(format!(
+                "the leases taken for the reset were not released; they run out by their time: \
+                 {error:#}"
+            ))
+            .field("error", format!("{error:#}"))
+            .write();
+            answer
+        }
     }
 }
 

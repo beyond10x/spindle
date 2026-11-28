@@ -1389,3 +1389,74 @@ fn a_move_out_of_an_orphan_table_whose_lease_another_holds_is_refused() {
     );
     assert_eq!(mover.seed_record(&first).expect("read"), None);
 }
+
+/// Adversary round 3: the records of two orphan tables are removed, and put back, in one
+/// transaction under both tables' leases. Given a token the second table's lease row does not
+/// name, each is refused naming that table's lease, and neither table changes: the first table's
+/// row is not removed, or written, alone.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn orphan_seed_records_are_removed_and_put_back_all_or_none() {
+    let database = database();
+    let recorded = json!({"digest": "sha256:ac", "done": 1, "rejected": []});
+    let tables: Vec<String> = ["removed", "retired"]
+        .into_iter()
+        .map(|component| {
+            let component = fresh(component);
+            left_by_an_earlier_release(&database, &component, &recorded);
+            lease_table(&database, &component)
+        })
+        .collect();
+    let mut lease = Lease::connect(&database, Duration::from_secs(1)).expect("a run connects");
+    let tokens: Vec<u64> = tables
+        .iter()
+        .map(|table| {
+            lease
+                .take_orphan(table)
+                .expect("the lease is read")
+                .expect("no process holds the lease")
+        })
+        .collect();
+    let records = |lease: &mut Lease| -> Vec<Option<Value>> {
+        tables
+            .iter()
+            .map(|table| lease.orphan_seed_record(table).expect("read"))
+            .collect()
+    };
+    let wrong = [
+        (tables[0].as_str(), tokens[0]),
+        (tables[1].as_str(), tokens[1] + 1),
+    ];
+    let refused = lease
+        .forget_orphan_seeds(&wrong)
+        .expect_err("a removal under a token the lease row does not name is refused")
+        .to_string();
+    assert!(refused.contains(&tables[1]), "{refused}");
+    assert_eq!(records(&mut lease), vec![Some(recorded.clone()); 2]);
+
+    let held = [
+        (tables[0].as_str(), tokens[0]),
+        (tables[1].as_str(), tokens[1]),
+    ];
+    lease
+        .forget_orphan_seeds(&held)
+        .expect("both records are removed");
+    assert_eq!(records(&mut lease), vec![None; 2]);
+
+    let refused = lease
+        .record_orphan_seeds(&[
+            (tables[0].as_str(), tokens[0], &recorded),
+            (tables[1].as_str(), tokens[1] + 1, &recorded),
+        ])
+        .expect_err("a put-back under a token the lease row does not name is refused")
+        .to_string();
+    assert!(refused.contains(&tables[1]), "{refused}");
+    assert_eq!(records(&mut lease), vec![None; 2]);
+    lease
+        .record_orphan_seeds(&[
+            (tables[0].as_str(), tokens[0], &recorded),
+            (tables[1].as_str(), tokens[1], &recorded),
+        ])
+        .expect("both records are put back");
+    assert_eq!(records(&mut lease), vec![Some(recorded); 2]);
+}

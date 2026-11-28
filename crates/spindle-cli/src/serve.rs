@@ -770,9 +770,15 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             // A record in the lease table of a component this specification no longer has is
             // removed first, under that table's lease, taken before any store is emptied and kept
             // until the reset has answered: where another process holds it, or the record cannot
-            // be removed, the reset is refused and no store is emptied; a reset that is then
-            // refused before it empties a store puts the record back
-            // (`story:seed-record-after-a-component-is-removed`, adversary rounds 1 and 2).
+            // be removed, the reset is refused and no store is emptied. The refusals of the world
+            // body and its clock come before any record is touched; a reset refused after, by a
+            // row of the world, puts the record back, or answers `500` naming the table whose
+            // record was lost (`story:seed-record-after-a-component-is-removed`, adversary rounds
+            // 1 to 3).
+            if let Some(refusal) = crate::seed::refused_world(&host, exchange.body(), &worlds) {
+                exchange.respond(refusal);
+                continue;
+            }
             let row = held.seed_row();
             if let Some(refusal) = crate::seed::claimed(&row) {
                 exchange.respond(refusal);
@@ -790,7 +796,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             } else if crate::database::Kept::fenced().is_some() {
                 answer = Answer::refusal(503, LEASE_LOST);
             }
-            crate::seed::unclaimed(&row, untouched);
+            let answer = crate::seed::unclaimed(&row, answer, untouched);
             exchange.respond(answer);
             continue;
         }
