@@ -383,29 +383,40 @@ impl Misfit {
     }
 }
 
-/// Writes through to a formatter with each line break written `\n` and each carriage return
-/// `\r`, so whatever text a misfit names (an invariant's statement, a state read from a stored
-/// row) keeps its line one line.
+/// Writes through to a formatter so that whatever text a misfit names (an invariant's statement,
+/// a state read from a stored row) keeps its line one line, holds no control character but a
+/// tab, and two texts never print alike: a backslash is written `\\`, a line break `\n`, a
+/// carriage return `\r`, every other control character ([`char::is_control`]) and the line and
+/// paragraph separators U+2028 and U+2029 as `\u{..}` in hexadecimal; a tab as it is.
 struct OneLine<'a, 'b>(&'a mut fmt::Formatter<'b>);
 
 impl fmt::Write for OneLine<'_, '_> {
     fn write_str(&mut self, text: &str) -> fmt::Result {
-        let mut rest = text;
-        while let Some(at) = rest.find(['\n', '\r']) {
-            self.0.write_str(&rest[..at])?;
-            self.0.write_str(if rest[at..].starts_with('\n') {
-                "\\n"
-            } else {
-                "\\r"
-            })?;
-            rest = &rest[at + 1..];
+        let mut plain = 0;
+        for (at, character) in text.char_indices() {
+            let named = match character {
+                '\\' => Some("\\\\"),
+                '\n' => Some("\\n"),
+                '\r' => Some("\\r"),
+                _ => None,
+            };
+            let coded = character != '\t'
+                && (character.is_control() || matches!(character, '\u{2028}' | '\u{2029}'));
+            if named.is_none() && !coded {
+                continue;
+            }
+            self.0.write_str(&text[plain..at])?;
+            match named {
+                Some(named) => self.0.write_str(named)?,
+                None => write!(self.0, "\\u{{{:x}}}", u32::from(character))?,
+            }
+            plain = at + character.len_utf8();
         }
-        self.0.write_str(rest)
+        self.0.write_str(&text[plain..])
     }
 }
 
-/// One line for each misfit: a line break or carriage return in a text it names is written
-/// `\n` or `\r` ([`OneLine`]).
+/// One line for each misfit, each text it names written apart from any other ([`OneLine`]).
 impl fmt::Display for Misfit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use fmt::Write as _;

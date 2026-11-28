@@ -827,13 +827,16 @@ fn a_row_breaking_two_invariants_misfits_once_per_invariant() {
     }
 }
 
-/// Round 1 of the adversary, as a class: every text a misfit line names (an entity, a field, a
-/// state read from a stored row, a component, an invariant's statement) may hold a line break or
-/// a carriage return, and each misfit stays one line, the break written `\n` and the return `\r`.
+/// Rounds 1 and 2 of the adversary, as a class: every text a misfit line names (an entity, a
+/// field, a state read from a stored row, a component, an invariant's statement) may hold any
+/// character, and each misfit stays one line with no control character but a tab, written so
+/// that two texts never print alike: a backslash `\\`, a line break `\n`, a carriage return `\r`,
+/// every other control character and U+2028 and U+2029 `\u{..}`, a tab as it is.
 /// The `match` names every variant, so a new one does not compile until it is listed here.
 #[test]
 fn every_misfit_is_one_line_whatever_text_it_names() {
-    let text = "a\nb\rc";
+    let text = "a\nb\rc\\d\u{b}e\u{c}f\u{85}g\u{2028}h\u{2029}i\u{1b}j\u{7}k\u{8}l\u{0}m\u{9b}n\to";
+    let escaped = "a\\nb\\rc\\\\d\\u{b}e\\u{c}f\\u{85}g\\u{2028}h\\u{2029}i\\u{1b}j\\u{7}k\\u{8}l\\u{0}m\\u{9b}n\to";
     let every = [
         Misfit::Entity {
             entity: text.to_owned(),
@@ -882,12 +885,33 @@ fn every_misfit_is_one_line_whatever_text_it_names() {
         }
         let line = misfit.to_string();
         assert!(
-            !line.contains('\n') && !line.contains('\r'),
-            "one line: {line:?}"
+            line.chars()
+                .all(|c| (!c.is_control() || c == '\t') && c != '\u{2028}' && c != '\u{2029}'),
+            "one line, no control character but a tab: {line:?}"
         );
         assert!(
-            line.contains("a\\nb\\rc") && line.ends_with(": 1"),
+            line.contains(escaped) && line.ends_with(": 1"),
             "the text is written escaped: {line:?}"
+        );
+    }
+    let apart = |text: &str| {
+        Misfit::Invariant {
+            entity: BOOK.to_owned(),
+            invariant: text.to_owned(),
+            rows: 1,
+        }
+        .to_string()
+    };
+    for (one, other) in [
+        ("a\nb", "a\\nb"),
+        ("a\rb", "a\\rb"),
+        ("a\u{1b}b", "a\\u{1b}b"),
+        ("a\\b", "a\\\\b"),
+    ] {
+        assert_ne!(
+            apart(one),
+            apart(other),
+            "{one:?} and {other:?} print apart"
         );
     }
 }
