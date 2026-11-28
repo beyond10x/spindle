@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-11-28
+
 ### Added
 
 - Each release asset (every archive, the SBOM, `IMAGES` and `SHA256SUMS`) carries a cosign keyless
