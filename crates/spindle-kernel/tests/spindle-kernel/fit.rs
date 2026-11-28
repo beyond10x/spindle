@@ -826,3 +826,99 @@ fn a_row_breaking_two_invariants_misfits_once_per_invariant() {
         );
     }
 }
+
+/// Round 1 of the adversary, as a class: every text a misfit line names (an entity, a field, a
+/// state read from a stored row, a component, an invariant's statement) may hold a line break or
+/// a carriage return, and each misfit stays one line, the break written `\n` and the return `\r`.
+/// The `match` names every variant, so a new one does not compile until it is listed here.
+#[test]
+fn every_misfit_is_one_line_whatever_text_it_names() {
+    let text = "a\nb\rc";
+    let every = [
+        Misfit::Entity {
+            entity: text.to_owned(),
+            rows: 1,
+        },
+        Misfit::Moved {
+            entity: text.to_owned(),
+            component: text.to_owned(),
+            rows: 1,
+        },
+        Misfit::Removed {
+            entity: text.to_owned(),
+            field: text.to_owned(),
+            rows: 1,
+        },
+        Misfit::Retyped {
+            entity: text.to_owned(),
+            field: text.to_owned(),
+            rows: 1,
+        },
+        Misfit::Required {
+            entity: text.to_owned(),
+            field: text.to_owned(),
+            rows: 1,
+        },
+        Misfit::State {
+            entity: text.to_owned(),
+            state: text.to_owned(),
+            rows: 1,
+        },
+        Misfit::Invariant {
+            entity: text.to_owned(),
+            invariant: text.to_owned(),
+            rows: 1,
+        },
+    ];
+    for misfit in &every {
+        match misfit {
+            Misfit::Entity { .. }
+            | Misfit::Moved { .. }
+            | Misfit::Removed { .. }
+            | Misfit::Retyped { .. }
+            | Misfit::Required { .. }
+            | Misfit::State { .. }
+            | Misfit::Invariant { .. } => {}
+        }
+        let line = misfit.to_string();
+        assert!(
+            !line.contains('\n') && !line.contains('\r'),
+            "one line: {line:?}"
+        );
+        assert!(
+            line.contains("a\\nb\\rc") && line.ends_with(": 1"),
+            "the text is written escaped: {line:?}"
+        );
+    }
+}
+
+/// A row resting in a state whose name holds a line break, the state removed: the misfit read from
+/// the store stays one line.
+#[test]
+fn a_removed_state_named_with_a_line_break_misfits_on_one_line() {
+    let scratch = scratch();
+    let mut store = holding(&scratch.path().join("state.sqlite"), &[]);
+    put(
+        &mut store,
+        BOOK,
+        "b1",
+        "Lent\nout",
+        json!({"title": "Dune", "weight": 3}),
+    );
+    let mut after = before();
+    after.digest = "another".to_owned();
+    let misfits = after
+        .misfits(&before(), &mut store)
+        .expect("the store is read");
+    assert_eq!(
+        misfits,
+        vec![Misfit::State {
+            entity: BOOK.to_owned(),
+            state: "Lent\nout".to_owned(),
+            rows: 1,
+        }]
+    );
+    let line = misfits[0].to_string();
+    assert_eq!(line.lines().count(), 1, "one line: {line:?}");
+    assert!(line.contains("Lent\\nout"), "{line:?}");
+}

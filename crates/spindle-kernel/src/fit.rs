@@ -383,8 +383,33 @@ impl Misfit {
     }
 }
 
+/// Writes through to a formatter with each line break written `\n` and each carriage return
+/// `\r`, so whatever text a misfit names (an invariant's statement, a state read from a stored
+/// row) keeps its line one line.
+struct OneLine<'a, 'b>(&'a mut fmt::Formatter<'b>);
+
+impl fmt::Write for OneLine<'_, '_> {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        let mut rest = text;
+        while let Some(at) = rest.find(['\n', '\r']) {
+            self.0.write_str(&rest[..at])?;
+            self.0.write_str(if rest[at..].starts_with('\n') {
+                "\\n"
+            } else {
+                "\\r"
+            })?;
+            rest = &rest[at + 1..];
+        }
+        self.0.write_str(rest)
+    }
+}
+
+/// One line for each misfit: a line break or carriage return in a text it names is written
+/// `\n` or `\r` ([`OneLine`]).
 impl fmt::Display for Misfit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use fmt::Write as _;
+        let f = &mut OneLine(f);
         match self {
             Self::Entity { entity, rows } => {
                 write!(
