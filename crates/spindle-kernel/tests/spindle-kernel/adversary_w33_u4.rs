@@ -620,3 +620,347 @@ fn adv2_invariant_field_and_state_misfits_match_sqlite_on_postgres() {
         "the record is unchanged"
     );
 }
+
+// Round 3: the escape every misfit line is written through, as a property over every variant and
+// every text, and an invariant that reads what a row at rest binds beside its fields.
+
+/// The escape the documentation of `OneLine` (`fit.rs`) states, written here apart from it: a
+/// backslash `\\`, a line break `\n`, a carriage return `\r`, every other control character but a
+/// tab and U+2028 and U+2029 `\u{..}` in lower-case hexadecimal, everything else as it is.
+fn escaped(text: &str) -> String {
+    let mut out = String::new();
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push('\t'),
+            c if c.is_control() || c == '\u{2028}' || c == '\u{2029}' => {
+                out.push_str(&format!("\\u{{{:x}}}", u32::from(c)));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// The inverse of [`escaped`]: `None` where `line` is no escape's output, so a text read back
+/// equal to the one written proves the escape loses nothing.
+fn unescaped(line: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next()? {
+            '\\' => out.push('\\'),
+            'n' => out.push('\n'),
+            'r' => out.push('\r'),
+            'u' => {
+                if chars.next()? != '{' {
+                    return None;
+                }
+                let mut hex = String::new();
+                loop {
+                    match chars.next()? {
+                        '}' => break,
+                        digit => hex.push(digit),
+                    }
+                }
+                out.push(char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?);
+            }
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+/// Every text of every variant, each built with `text` there and `x` in the variant's other
+/// texts: the variant's and the text's name, and the misfit.
+fn every_text(text: &str) -> Vec<(&'static str, Misfit)> {
+    let x = || "x".to_owned();
+    let t = || text.to_owned();
+    vec![
+        (
+            "Entity.entity",
+            Misfit::Entity {
+                entity: t(),
+                rows: 1,
+            },
+        ),
+        (
+            "Moved.entity",
+            Misfit::Moved {
+                entity: t(),
+                component: x(),
+                rows: 1,
+            },
+        ),
+        (
+            "Moved.component",
+            Misfit::Moved {
+                entity: x(),
+                component: t(),
+                rows: 1,
+            },
+        ),
+        (
+            "Removed.entity",
+            Misfit::Removed {
+                entity: t(),
+                field: x(),
+                rows: 1,
+            },
+        ),
+        (
+            "Removed.field",
+            Misfit::Removed {
+                entity: x(),
+                field: t(),
+                rows: 1,
+            },
+        ),
+        (
+            "Retyped.entity",
+            Misfit::Retyped {
+                entity: t(),
+                field: x(),
+                rows: 1,
+            },
+        ),
+        (
+            "Retyped.field",
+            Misfit::Retyped {
+                entity: x(),
+                field: t(),
+                rows: 1,
+            },
+        ),
+        (
+            "Required.entity",
+            Misfit::Required {
+                entity: t(),
+                field: x(),
+                rows: 1,
+            },
+        ),
+        (
+            "Required.field",
+            Misfit::Required {
+                entity: x(),
+                field: t(),
+                rows: 1,
+            },
+        ),
+        (
+            "State.entity",
+            Misfit::State {
+                entity: t(),
+                state: x(),
+                rows: 1,
+            },
+        ),
+        (
+            "State.state",
+            Misfit::State {
+                entity: x(),
+                state: t(),
+                rows: 1,
+            },
+        ),
+        (
+            "Invariant.entity",
+            Misfit::Invariant {
+                entity: t(),
+                invariant: x(),
+                rows: 1,
+            },
+        ),
+        (
+            "Invariant.invariant",
+            Misfit::Invariant {
+                entity: x(),
+                invariant: t(),
+                rows: 1,
+            },
+        ),
+    ]
+}
+
+/// Kept, a property (fixed seed): for drawn texts over backslashes, `u`, braces, hexadecimal
+/// digits, `n`, `r`, every line break, controls, a tab, a backtick and characters of 2, 3 and 4
+/// bytes, each text of each of the 7 variants prints as the variant prints a placeholder with
+/// the placeholder replaced by [`escaped`], [`unescaped`] reads the text back, the line holds no
+/// control character but a tab, and no two drawn texts print one line.
+#[test]
+fn adv3_every_text_of_every_misfit_is_written_by_one_reversible_escape() {
+    const PLACEHOLDER: &str = "\u{e000}";
+    let alphabet = [
+        '\\',
+        'u',
+        '{',
+        '}',
+        '1',
+        'b',
+        'n',
+        'r',
+        '0',
+        'a',
+        '`',
+        ' ',
+        '\n',
+        '\r',
+        '\t',
+        '\u{0}',
+        '\u{7}',
+        '\u{8}',
+        '\u{b}',
+        '\u{c}',
+        '\u{1b}',
+        '\u{7f}',
+        '\u{85}',
+        '\u{9b}',
+        '\u{2028}',
+        '\u{2029}',
+        'é',
+        '€',
+        '\u{1d11e}',
+        '\u{feff}',
+        '\u{202e}',
+    ];
+    let mut seed: u64 = 0x5EED_0033_0403;
+    let mut draw = |below: usize| {
+        seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        usize::try_from(seed >> 33).expect("31 bits") % below
+    };
+    let mut texts: Vec<String> = vec![String::new(), "\\u{1b}".to_owned(), "\u{1b}".to_owned()];
+    for _ in 0..3000 {
+        let length = draw(9);
+        texts.push(
+            (0..length)
+                .map(|_| alphabet[draw(alphabet.len())])
+                .collect(),
+        );
+    }
+    texts.sort();
+    texts.dedup();
+    let templates: Vec<(&str, String)> = every_text(PLACEHOLDER)
+        .into_iter()
+        .map(|(name, misfit)| (name, misfit.to_string()))
+        .collect();
+    for (name, template) in &templates {
+        assert_eq!(
+            template.matches(PLACEHOLDER).count(),
+            1,
+            "{name}: {template:?}"
+        );
+    }
+    let mut seen: Vec<BTreeMap<String, String>> = vec![BTreeMap::new(); templates.len()];
+    for text in &texts {
+        let written = escaped(text);
+        assert_eq!(
+            unescaped(&written).as_deref(),
+            Some(text.as_str()),
+            "{text:?}"
+        );
+        for (index, (name, misfit)) in every_text(text).into_iter().enumerate() {
+            let line = misfit.to_string();
+            assert_eq!(
+                line,
+                templates[index].1.replacen(PLACEHOLDER, &written, 1),
+                "{name} of {text:?}"
+            );
+            assert!(
+                line.chars()
+                    .all(|c| (!c.is_control() || c == '\t') && c != '\u{2028}' && c != '\u{2029}'),
+                "{name}: {line:?}"
+            );
+            if let Some(other) = seen[index].insert(line.clone(), text.clone()) {
+                panic!("{name}: {other:?} and {text:?} print one line: {line:?}");
+            }
+        }
+    }
+}
+
+/// Kept, exhaustive: every scalar value, written between two letters into an entity's name,
+/// prints as [`escaped`] writes it and reads back.
+#[test]
+fn adv3_every_character_is_written_by_the_escape_and_reads_back() {
+    const TAIL: &str = ": the entity is removed; stored rows of it: 1";
+    for c in (0..=0x10_FFFF_u32).filter_map(char::from_u32) {
+        let text = format!("a{c}b");
+        let line = Misfit::Entity {
+            entity: text.clone(),
+            rows: 1,
+        }
+        .to_string();
+        let Some(written) = line.strip_suffix(TAIL) else {
+            panic!("{c:?}: {line:?}");
+        };
+        assert_eq!(written, escaped(&text), "{c:?}");
+        assert_eq!(unescaped(written).as_deref(), Some(text.as_str()), "{c:?}");
+    }
+}
+
+/// The books `b0`, `b1` and `b2`, resting in `Shelved`, under `model`: the identities `at_rest`
+/// refuses, and the store's misfits.
+fn judged_by_at_rest(model: &spindle_spec::EssIr) -> (Vec<Value>, Vec<Misfit>) {
+    let scratch = scratch();
+    let recorded = Shapes::of(&ir(BEFORE));
+    let mut store = holding(
+        &scratch.path().join("state.sqlite"),
+        &recorded,
+        &[json!({}), json!({}), json!({})],
+    );
+    let refused = store
+        .scan(BOOK)
+        .expect("the books are read")
+        .into_iter()
+        .filter(|(identity, stored)| {
+            spindle_kernel::at_rest(model, BOOK, identity, &stored.row).is_err()
+        })
+        .map(|(identity, _)| identity)
+        .collect();
+    let misfits = Shapes::of(model)
+        .misfits(&recorded, &mut store)
+        .expect("the store is read");
+    (refused, misfits)
+}
+
+/// Kept: an invariant over the identity is judged with the stored row's identity bound, as
+/// `at_rest` binds it (`Facts::row`): `id != 'b1'` breaks one of three books. The unit's cases and
+/// rounds 1 and 2 read only fields, so facts built without the identity (`&Value::Null` in place
+/// of `&identity` in `Held::of`) stay green there.
+#[test]
+fn adv3_an_invariant_over_the_identity_is_judged_as_at_rest_judges_it() {
+    let (refused, misfits) = judged_by_at_rest(&guarded("      - \"id != 'b1'\"\n"));
+    assert_eq!(refused, vec![json!("b1")], "at_rest refuses b1");
+    assert_eq!(
+        misfits,
+        vec![Misfit::Invariant {
+            entity: BOOK.to_owned(),
+            invariant: "id != 'b1'".to_owned(),
+            rows: 1,
+        }]
+    );
+}
+
+/// Kept: an invariant over the state is judged with the stored row's state bound, as `at_rest`
+/// binds it: `state != 'Shelved'` breaks all three books.
+#[test]
+fn adv3_an_invariant_over_the_state_is_judged_as_at_rest_judges_it() {
+    let (refused, misfits) = judged_by_at_rest(&guarded("      - \"state != 'Shelved'\"\n"));
+    assert_eq!(refused.len(), 3, "at_rest refuses every book: {refused:?}");
+    assert_eq!(
+        misfits,
+        vec![Misfit::Invariant {
+            entity: BOOK.to_owned(),
+            invariant: "state != 'Shelved'".to_owned(),
+            rows: 3,
+        }]
+    );
+}
