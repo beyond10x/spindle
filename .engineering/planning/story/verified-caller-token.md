@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:verified-caller-token
 kind: story
-status: active
+status: implemented
 title: A served run verifies a signed caller token itself
 summary: Each request's OIDC/JWT token is verified against the issuer's JWKS and its claims mapped to the actor and caller attributes.
 tags:
@@ -58,10 +58,11 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 14
+revision: 15
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
 - {from: "proposed", to: "active", at: "2026-11-27T13:07:33Z", actor: "human:operator", revision: 14, decided_on: {"recorded":{"review_outcome":4}}}
+- {from: "active", to: "implemented", at: "2026-11-28T01:33:46Z", actor: "human:operator", revision: 15, decided_on: {"recorded":{"test_result":1,"review_outcome":7}}}
 ---
 # A served run verifies a signed caller token itself
 
