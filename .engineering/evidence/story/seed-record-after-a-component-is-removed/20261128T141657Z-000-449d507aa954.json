@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-28T14:16:57Z",
+  "actor": "human:operator",
+  "artifact": "story:seed-record-after-a-component-is-removed",
+  "kind": "story",
+  "revision": 18,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/46151826826 (PR 107 Gate, PostgreSQL, macOS green on 18715a80; merged bbd8d109cb5b28f1ac52adfcbab61a8b2c65565c)"
+  }
+}
