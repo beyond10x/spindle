@@ -162,3 +162,7 @@ Critics of round 1: scope approved; acceptance, design and parallel safety asked
 - U1 gains the stub case `adversary_backfill_verifies_at_main`: the verification step passes an identity at `@refs/heads/main` on `workflow_dispatch` and at `@refs/tags/<tag>` on a tag push.
 - U1's `adversary_id_token_only_on_signing_jobs` checks that each job holding `id-token: write` has an `if:` false on a `pull_request` event, by a named list of accepted guard forms, not a fixed prefix.
 - This page: U3 no longer reads U2's branch before its last round (merge order U1, U2, U3 kept); U2's surface gains `supplied.rs`, shared with U3 by distinct case names; U3's surface gains `serve.rs` (comment only) and `rows.rs`.
+
+## Revision round 2
+
+- The acceptance critic of round 2 found that `a_reset_whose_first_step_is_busy_keeps_the_supplied_store` put a busy `forget_events` on a store holding a row, which `Host::empty` removes first; that leg now runs on a store holding no row (U3).

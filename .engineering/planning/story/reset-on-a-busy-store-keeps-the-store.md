@@ -29,7 +29,7 @@ scope:
   path: website/docs/concepts/capabilities.md
 - confidence: cited
   path: website/docs/concepts/environment-and-admission.md
-revision: 20
+revision: 22
 ---
 ## Outcome
 
@@ -71,10 +71,11 @@ test time to the step and no test to the PostgreSQL lane.
   removed: a reset held by a busy store answers `503` with `committed: false`, and once the store
   answers again the command `study.desk.OpenDesk` answers `202` `opened`.
 - `a_reset_whose_first_step_is_busy_keeps_the_supplied_store` (new, in
-  `crates/spindle-host/tests/spindle-host/supplied.rs`; D2 A): on a supplied store holding one row,
-  with a busy `scan`, a busy first `remove` and a busy `forget_events` in turn, `Host::reset`
+  `crates/spindle-host/tests/spindle-host/supplied.rs`; D2 A): with a busy `scan` and a busy first
+  `remove` on a supplied store holding one row, and a busy `forget_events` on a supplied store
+  holding no row (removals run before `forget_events`, `host.rs:1955-1960`), each in turn: `Host::reset`
   returns `HostError::Store(StoreError::Busy(..))` whose text names the component and the failed
-  step, `Host::reset_changed_rows()` is `false`, the row is still read, and a command then commits
+  step, `Host::reset_changed_rows()` is `false`, the row (where the store held one) is still read, and a command then commits
   on the same store.
 - `a_reset_busy_after_a_removal_landed_answers_500_and_keeps_the_store` (new, in
   `crates/spindle-ingress/tests/spindle-ingress/busy_store.rs`; D1 A): on a store holding two rows
