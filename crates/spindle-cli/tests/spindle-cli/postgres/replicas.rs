@@ -549,57 +549,20 @@ fn accepted(webhook: &super::super::egress::Webhook, count: usize) {
     }
 }
 
-/// The local TCP ports of the sockets process `pid` holds open: its connections to the database
-/// among them, which `pg_stat_activity` names by `client_port`.
-fn ports_of(pid: u32) -> Vec<u16> {
-    let mut inodes = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(format!("/proc/{pid}/fd")) {
-        for entry in entries.flatten() {
-            if let Ok(target) = std::fs::read_link(entry.path())
-                && let Some(inode) = target
-                    .to_str()
-                    .and_then(|target| target.strip_prefix("socket:["))
-                    .and_then(|rest| rest.strip_suffix(']'))
-            {
-                inodes.push(inode.to_owned());
-            }
-        }
-    }
-    let mut ports = Vec::new();
-    for table in ["/proc/net/tcp", "/proc/net/tcp6"] {
-        let Ok(text) = std::fs::read_to_string(table) else {
-            continue;
-        };
-        for line in text.lines().skip(1) {
-            let fields: Vec<&str> = line.split_whitespace().collect();
-            if fields.len() > 9 && inodes.iter().any(|inode| inode == fields[9]) {
-                let port = fields[1]
-                    .rsplit(':')
-                    .next()
-                    .and_then(|port| u16::from_str_radix(port, 16).ok());
-                ports.extend(port);
-            }
-        }
-    }
-    ports
-}
-
-/// Whether a database session of process `pid` is inside a write transaction, between two of its
-/// statements, holding what it wrote or locked (it has a transaction id), for at least 150 ms.
-fn inside_a_transaction(pid: u32) -> bool {
-    let ports = ports_of(pid);
-    if ports.is_empty() {
-        return false;
-    }
-    let list = ports
-        .iter()
-        .map(u16::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
+/// Whether a database session writing to `schema`'s tables is inside a write transaction, between
+/// two of its statements, holding what it wrote or locked (it has a transaction id), for at least
+/// 150 ms. The session is found by the locks it holds on the tables of `schema`, which only the
+/// leader writes in a case, so the lookup holds wherever the database runs, a cluster on this host
+/// or a container behind a port mapping, which shows the server other client ports than this
+/// host's sockets have.
+fn inside_a_transaction(schema: &str) -> bool {
     super::sql(&[format!(
-        "SELECT count(*) FROM pg_stat_activity WHERE client_port IN ({list}) \
-         AND state = 'idle in transaction' AND backend_xid IS NOT NULL \
-         AND xact_start < now() - interval '150 ms'"
+        "SELECT count(*) FROM pg_stat_activity activity WHERE activity.state = \
+         'idle in transaction' AND activity.backend_xid IS NOT NULL \
+         AND activity.xact_start < now() - interval '150 ms' \
+         AND EXISTS (SELECT 1 FROM pg_locks held JOIN pg_class class ON class.oid = held.relation \
+         JOIN pg_namespace space ON space.oid = class.relnamespace \
+         WHERE held.pid = activity.pid AND space.nspname = '{schema}')"
     )])[0]
         != "0"
 }
@@ -652,12 +615,11 @@ fn a_leader_paused_inside_a_write_is_taken_over_whole_within_the_lease_and_the_i
         }
         answers
     });
-    let pid = leader.child.id();
     let mut inside = false;
     for _ in 0..60 {
         leader.signal(rustix::process::Signal::STOP);
         std::thread::sleep(Duration::from_millis(200));
-        if inside_a_transaction(pid) {
+        if inside_a_transaction(&schema) {
             inside = true;
             break;
         }

@@ -1654,50 +1654,31 @@ mod postgres {
     }
 
     /// Whether the leader process `pid` has a database session inside a transaction that was
-    /// given a transaction id over 150 ms ago, found by the client ports of its sockets.
+    /// given a transaction id over 150 ms ago. The session is found by the locks it holds on the
+    /// tables of the leader's schema, read from the process's environment
+    /// (`SPINDLE_SETTING_DATABASE_SCHEMA`), which only the leader writes in a case: the lookup
+    /// holds wherever the database runs, a cluster on this host or a container behind a port
+    /// mapping, which shows the server other client ports than this host's sockets have.
     fn inside_a_write(pid: u32) -> bool {
-        let mut inodes = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(format!("/proc/{pid}/fd")) {
-            for entry in entries.flatten() {
-                if let Ok(target) = std::fs::read_link(entry.path())
-                    && let Some(inode) = target
-                        .to_str()
-                        .and_then(|target| target.strip_prefix("socket:["))
-                        .and_then(|rest| rest.strip_suffix(']'))
-                {
-                    inodes.push(inode.to_owned());
-                }
-            }
-        }
-        let mut ports = Vec::new();
-        for table in ["/proc/net/tcp", "/proc/net/tcp6"] {
-            let Ok(text) = std::fs::read_to_string(table) else {
-                continue;
-            };
-            for line in text.lines().skip(1) {
-                let fields: Vec<&str> = line.split_whitespace().collect();
-                if fields.len() > 9 && inodes.iter().any(|inode| inode == fields[9]) {
-                    ports.extend(
-                        fields[1]
-                            .rsplit(':')
-                            .next()
-                            .and_then(|port| u16::from_str_radix(port, 16).ok()),
-                    );
-                }
-            }
-        }
-        if ports.is_empty() {
+        let Ok(environ) = std::fs::read(format!("/proc/{pid}/environ")) else {
             return false;
-        }
-        let list = ports
-            .iter()
-            .map(u16::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
+        };
+        let Some(schema) = environ
+            .split(|byte| *byte == 0)
+            .filter_map(|entry| std::str::from_utf8(entry).ok())
+            .find_map(|entry| entry.strip_prefix("SPINDLE_SETTING_DATABASE_SCHEMA="))
+            .map(str::to_owned)
+        else {
+            return false;
+        };
         sql_value(&format!(
-            "SELECT count(*) FROM pg_stat_activity WHERE client_port IN ({list}) \
-             AND state = 'idle in transaction' AND backend_xid IS NOT NULL \
-             AND xact_start < now() - interval '150 ms'"
+            "SELECT count(*) FROM pg_stat_activity activity WHERE activity.state = \
+             'idle in transaction' AND activity.backend_xid IS NOT NULL \
+             AND activity.xact_start < now() - interval '150 ms' \
+             AND EXISTS (SELECT 1 FROM pg_locks held JOIN pg_class class \
+             ON class.oid = held.relation JOIN pg_namespace space \
+             ON space.oid = class.relnamespace \
+             WHERE held.pid = activity.pid AND space.nspname = '{schema}')"
         ))
         .as_deref()
             != Some("0")
