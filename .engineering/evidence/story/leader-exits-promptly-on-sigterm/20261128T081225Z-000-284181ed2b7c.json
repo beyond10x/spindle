@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-28T08:12:25Z",
+  "actor": "human:operator",
+  "artifact": "story:leader-exits-promptly-on-sigterm",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "Exit after SIGTERM with another session's transaction open: 8.0 s on the base, 40-141 ms after; with an events read under way 6.04 s -> 71 ms. 20 of 20 separate nextest runs of a_leader_exits_within_the_bound_under_an_open_transaction green (each about 9.4 s, standby took the lease 97-199 ms after the exit). Lane before 42.1 s (144 tests), after 37.4 s (147), final round 38.1 s (152); pg_stat_activity peak 70, then 84, of 300."
+  }
+}
