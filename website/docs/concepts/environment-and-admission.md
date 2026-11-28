@@ -631,8 +631,12 @@ naming the lease, and the rows stay as the new leader left them. A leader paused
 lease row, which the write locked, until the store's idle timeout of 10 s ends its transaction:
 the takeover comes at most one `database_lease` plus 10 s after the pause, and one ask of the
 standby. Until then the locks it holds may also hold up the new leader's writes, as where it was
-paused before it locked the row. A store's operations keep their own 10 s deadline whatever the
-lease. Before it runs a request, a
+paused before it locked the row, or inside a read of its published events, which holds the lock
+every write of the component's tables waits for. A write to the new leader held behind them
+answers `503` with `{"refused", "committed": false}` once it has waited out the store's lock wait
+(2 s), until the paused leader's session ends, at most 10 s after the pause: nothing was written,
+the same request is safe to send again, and the new leader keeps leading. A store's operations
+keep their own 10 s deadline whatever the lease. Before it runs a request, a
 leader whose last renewal began two thirds of the lease ago or longer, as after a pause, waits
 until it has renewed its leases or found one taken. A write the check refuses counts as a lease
 found taken, as when the session holding the lease ended and another process took it before the

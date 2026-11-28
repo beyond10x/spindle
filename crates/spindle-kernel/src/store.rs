@@ -338,6 +338,11 @@ pub enum StoreError {
     /// The backing implementation failed.
     #[error("store: {0}")]
     Backend(String),
+    /// The store did not answer within its deadline, as a write held behind a lock another
+    /// session holds waits out its lock wait, before the write began to commit: nothing was
+    /// written, and the same request may be sent again (`story:new-leader-write-while-old-paused`).
+    #[error("store: {0}")]
+    Busy(String),
 }
 
 /// The port the kernel reads and commits instances through.

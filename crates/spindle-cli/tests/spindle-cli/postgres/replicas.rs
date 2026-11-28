@@ -1522,3 +1522,108 @@ fn a_reset_by_a_run_without_a_seed_deletes_the_record() {
         "the reset removed the record"
     );
 }
+
+/// The advisory key eventlog 0.10.0 hashes every coordinate of an owner with (`ADVISORY_KEY`,
+/// `eventlog-postgres/src/lib.rs`), `$1` the coordinate, read in a session whose `search_path`
+/// is the store's schema, as each of eventlog's sessions is.
+const ADVISORY_KEY: &str =
+    "hashtextextended(current_database() || ':' || current_schema() || $1,0)";
+
+/// A session outside spindle holding `component`'s publication lock exclusive in `schema`, as
+/// eventlog's feed read takes it (`publication_gate`: `pg_advisory_xact_lock` on the coordinate
+/// `["<prefix>","publication"]`), until [`PublicationLock::end`], or for 20 s.
+struct PublicationLock {
+    end: mpsc::Sender<()>,
+    thread: std::thread::JoinHandle<()>,
+}
+
+impl PublicationLock {
+    fn hold(schema: &str, component: &str) -> Self {
+        let url = owner_url();
+        let set = format!("SET search_path TO {schema}");
+        let coordinate = serde_json::to_string(&[
+            spindle_kernel::postgres_prefix(component).as_str(),
+            "publication",
+        ])
+        .expect("the coordinate");
+        let (held, holding) = mpsc::channel();
+        let (end, ending) = mpsc::channel::<()>();
+        let thread = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("a runtime");
+            let (mut client, connection) = runtime
+                .block_on(tokio_postgres::connect(&url, tokio_postgres::NoTls))
+                .expect("a connection of the test's own");
+            let driver = runtime.spawn(connection);
+            runtime
+                .block_on(client.batch_execute(&set))
+                .expect("the schema is set");
+            let transaction = runtime
+                .block_on(client.transaction())
+                .expect("a transaction");
+            runtime
+                .block_on(transaction.query_one(
+                    &format!("SELECT pg_advisory_xact_lock({ADVISORY_KEY})::text"),
+                    &[&coordinate],
+                ))
+                .expect("the publication lock is taken");
+            held.send(()).expect("the test waits");
+            let _ = ending.recv_timeout(Duration::from_secs(20));
+            runtime
+                .block_on(transaction.commit())
+                .expect("the transaction ends");
+            drop(client);
+            let _ = runtime.block_on(driver);
+        });
+        holding.recv().expect("the publication lock is held");
+        Self { end, thread }
+    }
+
+    fn end(self) {
+        let _ = self.end.send(());
+        self.thread.join().expect("the lock ends");
+    }
+}
+
+/// `story:new-leader-write-while-old-paused`: a write held behind the publication lock a session
+/// outside spindle holds, as a paused former leader holds it inside a feed read, waits out the
+/// store's lock wait (2 s) and answers `503` with `committed: false`, a store that did not answer
+/// within its deadline, not `501`. The leader keeps leading: it reads ready, the standby takes
+/// nothing, and once the session ends the same command answers `201`.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_write_behind_the_publication_lock_answers_503() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let schema = schema();
+    let (leader, standby) = leader_and_standby(&environment, &schema);
+    let (status, answer) = leader.open("t1");
+    assert_eq!(status, 201, "{answer}");
+
+    let lock = PublicationLock::hold(&schema, "board");
+    let sent = Instant::now();
+    let (status, body) = leader.open("t2");
+    let took = sent.elapsed();
+    let printed = format!(
+        "t2 answered {status} after {took:?}: {body}\nleader:\n{}",
+        leader.printed()
+    );
+    eprintln!("{printed}");
+    assert_eq!(status, 503, "{printed}");
+    assert_eq!(body["committed"], false, "{printed}");
+    assert!(body["refused"].is_string(), "{printed}");
+    assert!(took < Duration::from_secs(5), "{printed}");
+    let (status, ready) = leader.ready();
+    assert_eq!(status, 200, "the leader still leads: {ready}\n{printed}");
+    lock.end();
+
+    let (status, answer) = leader.open("t2");
+    assert_eq!(status, 201, "{answer}\n{printed}");
+    assert!(
+        standby.line_by(TOOK, Instant::now()).is_none(),
+        "{}",
+        standby.printed()
+    );
+}

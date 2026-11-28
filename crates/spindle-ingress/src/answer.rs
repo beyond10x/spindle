@@ -11,7 +11,7 @@ use ess_http::{
 };
 use serde_json::{Map, Value, json};
 use spindle_host::{Failed, Host, HostError, Listed, Reader};
-use spindle_kernel::{DeclaredError, Event, ExecuteError, Provenance, Sender};
+use spindle_kernel::{DeclaredError, Event, ExecuteError, Provenance, Sender, StoreError};
 
 use crate::observe::{Answered, RefusedBound};
 use crate::surface::{Caller, ECHOED, Route, Unserved, may_read, may_run, same_value};
@@ -89,6 +89,18 @@ impl Answer {
             headers: Vec::new(),
         }
     }
+
+    /// The `503` of a command whose store did not answer within its deadline
+    /// ([`StoreError::Busy`]), as behind a lock another database session holds: nothing was
+    /// written, so `committed` is `false`, and the same request may be sent again
+    /// (`story:new-leader-write-while-old-paused`).
+    pub fn busy(detail: impl Into<String>) -> Self {
+        Self {
+            status: 503,
+            body: Some(json!({"refused": detail.into(), "committed": false})),
+            headers: Vec::new(),
+        }
+    }
 }
 
 /// Answers one request for `route`, whose path carries `carried`, whose query string (after the
@@ -130,9 +142,10 @@ impl Answer {
 /// refuses the read.
 ///
 /// A body that is not a JSON object, or input the kernel refuses, is refused `400`. A command the
-/// kernel does not run answers `501` with `committed: false`; one whose effect was written and
-/// whose consequences could not be carried answers `501` with `committed: true`. A view the host
-/// cannot answer is refused `501`, naming what it does not read.
+/// kernel does not run answers `501` with `committed: false`; one whose store did not answer
+/// within its deadline answers `503` with `committed: false` ([`Answer::busy`]); one whose effect
+/// was written and whose consequences could not be carried answers `501` with `committed: true`. A
+/// view the host cannot answer is refused `501`, naming what it does not read.
 ///
 /// A command is sent as the route's fixed caller ([`Route::caller`]), else as no caller. The grant
 /// is checked first, as ESS's served surface checks it, before the body, the query string or the
@@ -568,6 +581,7 @@ fn run(
                 Answer::refusal(400, format!("invalid input: {detail}"))
             }
             ExecuteError::NotGranted { actor } => Answer::not_granted(&actor),
+            busy @ ExecuteError::Store(StoreError::Busy(_)) => Answer::busy(busy.to_string()),
             other => Answer::unfinished(other.to_string(), false),
         },
         Err(error @ HostError::NotAccepted(_)) => Answer::unfinished(error.to_string(), false),
