@@ -1079,3 +1079,266 @@ fn no_command_is_both_handed_and_refused_at_a_tight_request_time() {
         "every command is accounted for"
     );
 }
+
+// Round 4: against the paced body read (`paced` in the listener): each piece within the head read
+// time of the one before, the whole body within `BODY_READ`.
+
+/// The head of a `desk` command whose body is announced as `length`, written as is.
+fn announced(address: SocketAddr, method: &str, path: &str, length: &str) -> String {
+    format!(
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\
+         Content-Type: application/json\r\nContent-Length: {length}\r\n\r\n"
+    )
+}
+
+/// Takes each request `listener` hands until `client` ends or `within` passes, answering `201`;
+/// whether one was handed.
+fn take_until<T>(listener: &Listener, client: &thread::JoinHandle<T>, within: Duration) -> bool {
+    let until = Instant::now() + within;
+    let mut handed = false;
+    while !client.is_finished() && Instant::now() < until {
+        if let Some(exchange) = listener.next(Duration::from_millis(20)) {
+            handed = true;
+            exchange.respond(Answer {
+                status: 201,
+                body: Some(json!({"opened": true})),
+                headers: Vec::new(),
+            });
+        }
+    }
+    handed
+}
+
+/// The pause bound runs from the last piece, not from the head, and refuses `408` at the head
+/// read time. With a head read time of 1 s, a body sent in six pieces 300 ms apart (1.5 s in
+/// all, longer than the pause bound) and then stopped short of its length is refused `408`
+/// between 0.8 s and 1.6 s after its last piece. A pause bound doubled, a pause answered `400`,
+/// or one bound run over the whole body each turns this red; the stall case of round 2 holds
+/// only the place (2.5 s) and `grants.rs` meets the pause only at 10 s, where `BODY_READ` fires
+/// first.
+#[test]
+fn a_body_that_pauses_past_the_head_read_time_is_refused_408_from_its_last_piece() {
+    let limits = Limits {
+        head_read: Duration::from_secs(1),
+        ..Limits::DEFAULT
+    };
+    let (surface, method, path) = desk(limits);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let mut stream = connect(address);
+    stream
+        .write_all(announced(address, &method, &path, "100").as_bytes())
+        .expect("the head is written");
+    for _ in 0..6 {
+        thread::sleep(Duration::from_millis(300));
+        stream.write_all(b"xxxxx").expect("a piece is written");
+    }
+    let last = Instant::now();
+    let answered = plain_answer(&mut stream, DUE);
+    let took = last.elapsed();
+    assert_eq!(
+        answered.as_ref().map(|(status, _)| *status),
+        Some(408),
+        "a body that paused after 30 of 100 bytes: {answered:?} after {took:?}"
+    );
+    assert!(
+        took >= Duration::from_millis(800) && took <= Duration::from_millis(1600),
+        "the 408 came {took:?} after the last piece (head read time 1 s)"
+    );
+}
+
+/// `Listener::bind` says a body "that breaks off `400`". A client that announces 100 bytes,
+/// sends 11 and shuts its side of the connection is answered `400`, not left without an answer.
+#[test]
+fn a_body_that_ends_before_its_announced_length_is_refused_400() {
+    let (surface, method, path) = desk(Limits::DEFAULT);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let mut stream = connect(address);
+    let mut sent = announced(address, &method, &path, "100");
+    sent.push_str("{\"desk_id\":");
+    stream
+        .write_all(sent.as_bytes())
+        .expect("the request is written");
+    stream
+        .shutdown(std::net::Shutdown::Write)
+        .expect("the client's side is shut");
+    let started = Instant::now();
+    let answered = plain_answer(&mut stream, DUE);
+    assert_eq!(
+        answered.as_ref().map(|(status, _)| *status),
+        Some(400),
+        "a body that ended after 11 of 100 bytes, {:?} on: {answered:?}",
+        started.elapsed()
+    );
+}
+
+/// An empty body, announced `Content-Length: 0` or not announced, is read at once at a head read
+/// time of 200 ms: the pause bound never runs for a body that has no piece.
+#[test]
+fn an_empty_body_is_handed_at_a_short_head_read_time() {
+    let limits = Limits {
+        head_read: Duration::from_millis(200),
+        ..Limits::DEFAULT
+    };
+    let (surface, method, path) = desk(limits);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    for head in [
+        announced(address, &method, &path, "0"),
+        format!("{method} {path} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n"),
+    ] {
+        let sent = head.clone();
+        let client = thread::spawn(move || {
+            let mut stream = connect(address);
+            stream
+                .write_all(sent.as_bytes())
+                .expect("the head is written");
+            plain_answer(&mut stream, DUE)
+        });
+        let handed = take_until(&listener, &client, DUE);
+        let answered = client.join().expect("the client ends");
+        assert!(
+            handed && answered.as_ref().map(|(status, _)| *status) == Some(201),
+            "an empty body after {head:?} (handed: {handed}): {answered:?}"
+        );
+    }
+}
+
+/// A body of exactly `BODY_LIMIT` bytes arriving steadily, 16 pieces 100 ms apart at a head read
+/// time of 1 s, is read whole and handed; the limit is not refused as over it.
+#[test]
+fn a_body_of_exactly_the_limit_arriving_steadily_is_handed() {
+    const PIECES: usize = 16;
+    let limits = Limits {
+        head_read: Duration::from_secs(1),
+        ..Limits::DEFAULT
+    };
+    let (surface, method, path) = desk(limits);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let shell = json!({"desk_id": "limit", "holder": "ada", "pad": ""}).to_string();
+    let pad = spindle_ingress::BODY_LIMIT - shell.len();
+    let body = json!({"desk_id": "limit", "holder": "ada", "pad": "x".repeat(pad)}).to_string();
+    assert_eq!(body.len(), spindle_ingress::BODY_LIMIT);
+    let head = announced(address, &method, &path, &body.len().to_string());
+    let client = thread::spawn(move || {
+        let mut stream = connect(address);
+        stream
+            .write_all(head.as_bytes())
+            .expect("the head is written");
+        let bytes = body.into_bytes();
+        for chunk in bytes.chunks(bytes.len().div_ceil(PIECES)) {
+            thread::sleep(Duration::from_millis(100));
+            if stream.write_all(chunk).is_err() {
+                break;
+            }
+        }
+        plain_answer(&mut stream, DUE)
+    });
+    let handed = take_until(&listener, &client, Duration::from_secs(5));
+    let answered = client.join().expect("the client ends");
+    assert!(
+        handed && answered.as_ref().map(|(status, _)| *status) == Some(201),
+        "a body of exactly {} bytes arriving steadily (handed: {handed}): {answered:?}",
+        spindle_ingress::BODY_LIMIT
+    );
+}
+
+/// A chunked body is refused `411` before it is read; a client that goes on sending one-byte
+/// chunks every 50 ms after it does not hold its place. With a cap of 1 and a head read time of
+/// 1 s (never reached: the chunks never pause), a second client is answered within 2.5 s.
+#[test]
+fn tiny_chunks_sent_after_the_411_do_not_hold_the_cap() {
+    let limits = Limits {
+        connections: 1,
+        head_read: Duration::from_secs(1),
+        ..Limits::DEFAULT
+    };
+    let (surface, method, path) = desk(limits);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let mut chunked = connect(address);
+    write!(
+        chunked,
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\n\
+         Transfer-Encoding: chunked\r\n\r\n1\r\n{{\r\n"
+    )
+    .expect("a head and one chunk are written");
+    let mut trickling = chunked.try_clone().expect("the socket clones");
+    let trickle = thread::spawn(move || {
+        let until = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < until {
+            if trickling.write_all(b"1\r\nx\r\n").is_err() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        false
+    });
+    let refused = plain_answer(&mut chunked, DUE);
+    assert_eq!(
+        refused.as_ref().map(|(status, _)| *status),
+        Some(411),
+        "a chunked body: {refused:?}"
+    );
+    let started = Instant::now();
+    let mut waiting = connect(address);
+    waiting
+        .write_all(get(address, LIVE).as_bytes())
+        .expect("the request is written");
+    let answered = plain_answer(&mut waiting, DUE);
+    let took = started.elapsed();
+    assert!(
+        answered.as_ref().map(|(status, _)| *status) == Some(200)
+            && took < Duration::from_millis(2500),
+        "a client sending chunks past its 411 held the only place for {took:?}: {answered:?}"
+    );
+    assert!(
+        trickle.join().expect("the trickle ends"),
+        "the chunked connection was closed"
+    );
+}
+
+/// At a head read time over `BODY_READ` the pause bound never fires first: a body that pauses
+/// is refused `408` at 10 s in all, between 9.5 s and 11.5 s after its head, and its place is
+/// then free (cap 1, head read time 12 s). Takes about 10 s.
+#[test]
+fn at_a_head_read_time_over_ten_seconds_a_paused_body_is_refused_at_ten_seconds() {
+    let limits = Limits {
+        connections: 1,
+        head_read: Duration::from_secs(12),
+        ..Limits::DEFAULT
+    };
+    let (surface, method, path) = desk(limits);
+    let listener = Listener::bind(0, surface).expect("the listener binds");
+    let address = listener.local_addr();
+    let mut stream = connect(address);
+    let mut sent = announced(address, &method, &path, "100");
+    sent.push_str("{\"desk_id\":");
+    stream
+        .write_all(sent.as_bytes())
+        .expect("the request is written");
+    let started = Instant::now();
+    let answered = plain_answer(&mut stream, Duration::from_secs(13));
+    let took = started.elapsed();
+    assert_eq!(
+        answered.as_ref().map(|(status, _)| *status),
+        Some(408),
+        "a body paused at a head read time of 12 s: {answered:?} after {took:?}"
+    );
+    assert!(
+        took >= Duration::from_millis(9500) && took <= Duration::from_millis(11_500),
+        "the 408 came {took:?} after the head (BODY_READ 10 s, head read time 12 s)"
+    );
+    let mut waiting = connect(address);
+    waiting
+        .write_all(get(address, LIVE).as_bytes())
+        .expect("the request is written");
+    let next = plain_answer(&mut waiting, DUE);
+    assert_eq!(
+        next.as_ref().map(|(status, _)| *status),
+        Some(200),
+        "the place after the 408: {next:?}"
+    );
+}
