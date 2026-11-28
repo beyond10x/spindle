@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-28T18:24:28Z",
+  "actor": "human:operator",
+  "artifact": "story:release-artifacts-signed",
+  "kind": "story",
+  "revision": 9,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/46163635395 (PR 110 Gate, PostgreSQL, macOS green on b546d6d2; merged f08d1e4cb2f9c63f4b951fd6dd0f487b3a0fe81a)"
+  }
+}

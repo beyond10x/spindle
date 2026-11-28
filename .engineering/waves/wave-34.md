@@ -1,6 +1,6 @@
 # Wave 34
 
-**In progress.** Planned on the operator's pick of 2026-11-28 (D-W34 A, relayed by the host operator;
+**Delivered.** Planned on the operator's pick of 2026-11-28 (D-W34 A, relayed by the host operator;
 the owner's yes of 11:08 CET for the workflow permissions). All stories serve `vision:spindle`.
 
 Integration branch `wave/34`, forked from `main` after wave 33 (PR 107) lands. Release 0.28.0
