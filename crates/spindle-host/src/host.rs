@@ -347,7 +347,9 @@ pub enum HostError {
     /// No component accepts the command.
     #[error("no component accepts {0}")]
     NotAccepted(String),
-    /// A command [`Host::submit`] was asked to run did not execute.
+    /// A command [`Host::submit`] was asked to run did not execute. Nothing was written, except
+    /// where its store cannot say whether the commit landed ([`ExecuteError::Store`] with
+    /// [`StoreError::Unknown`]): its effect may have been written.
     #[error("{component} did not run {command}: {error}")]
     Execute {
         /// The component.
@@ -1931,18 +1933,26 @@ impl Host {
         Ok(emptied)
     }
 
-    /// Empties every store, then writes each row of a world into the store of its owner.
+    /// Empties every store, then writes each row of a world into the store of its owner. A row
+    /// whose outcome is unknown ([`StoreError::Unknown`]) may have landed, so it counts as written
+    /// ([`Host::reset_changed_rows`]); the store is kept.
     fn load(&mut self, rows: Vec<Seed>, owners: Vec<String>) -> Result<Vec<String>, HostError> {
         let emptied = self.empty()?;
         for (seed, owner) in rows.into_iter().zip(owners) {
-            store_of(&mut self.components, &owner)?.commit(&Change {
-                entity: seed.entity,
-                identity: seed.identity,
-                expected: None,
-                row: seed.row,
-                events: Vec::new(),
-                scanned: Vec::new(),
-            })?;
+            store_of(&mut self.components, &owner)?
+                .commit(&Change {
+                    entity: seed.entity,
+                    identity: seed.identity,
+                    expected: None,
+                    row: seed.row,
+                    events: Vec::new(),
+                    scanned: Vec::new(),
+                })
+                .inspect_err(|error| {
+                    if matches!(error, StoreError::Unknown(_)) {
+                        self.reset_rows = true;
+                    }
+                })?;
             self.reset_rows = true;
         }
         Ok(emptied)
@@ -2036,7 +2046,9 @@ impl Host {
     /// or emptied or lost a store kept in a file or in memory. `false` after a reset refused
     /// before it emptied anything, as for its world or its clock, and after one whose stores
     /// refused its first removal, as a store whose lease another process took refuses every write;
-    /// forgetting a store's events alone changes no row. Where it is `false`, a caller that
+    /// forgetting a store's events alone changes no row. A removal or a world row whose outcome is
+    /// unknown ([`StoreError::Unknown`]) may have landed, so it counts as one that did: `true`
+    /// (`story:unknown-commit-answered-as-unknown`). Where it is `false`, a caller that
     /// removed something beside the stores for the reset puts it back
     /// (`story:seed-record-after-a-component-is-removed`).
     pub fn reset_changed_rows(&self) -> bool {
@@ -3012,7 +3024,8 @@ pub(crate) fn merged(committed: Vec<(String, Vec<Committed>)>) -> Vec<Published>
 
 /// Removes every instance `store` holds of every entity `ir` declares, each at the version it
 /// holds, so that the store answers as an empty one does; the reason otherwise. Sets `removed`
-/// once a removal landed.
+/// once a removal landed, or one whose outcome is unknown ([`StoreError::Unknown`]), which may
+/// have.
 fn removed_all(ir: &EssIr, store: &mut dyn Store, removed: &mut bool) -> Result<(), String> {
     for entity in ir.entities().keys() {
         let entity = entity.to_string();
@@ -3028,7 +3041,12 @@ fn removed_all(ir: &EssIr, store: &mut dyn Store, removed: &mut bool) -> Result<
                     events: Vec::new(),
                     scanned: Vec::new(),
                 })
-                .map_err(|error| format!("removing {entity} {identity}: {error}"))?;
+                .map_err(|error| {
+                    if matches!(error, StoreError::Unknown(_)) {
+                        *removed = true;
+                    }
+                    format!("removing {entity} {identity}: {error}")
+                })?;
             *removed = true;
         }
     }

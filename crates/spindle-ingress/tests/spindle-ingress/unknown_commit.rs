@@ -10,6 +10,7 @@
 //! `study.desk.OpenDesk`. Its store is a memory store whose every write fails with an unknown
 //! outcome.
 
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
@@ -20,10 +21,11 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use spindle_capability::Environment;
-use spindle_host::{Host, ManualClock, Stores};
+use spindle_host::{Host, ManualClock, Seed, Stores, World};
+use spindle_ingress::console::Worlds;
 use spindle_ingress::{Answer, Exchange, Listener, Surface};
 use spindle_kernel::{
-    Change, MemoryStore, Reading, Removal, Scan, Store, StoreError, Stored, Write as Written,
+    Change, MemoryStore, Reading, Removal, Row, Scan, Store, StoreError, Stored, Write as Written,
 };
 
 const COMPONENT: &str = "desk";
@@ -211,6 +213,60 @@ fn an_unknown_commit_answers_500_with_committed_unknown() {
         .unwrap_or_else(|| panic!("the command is recorded: {log}"));
     assert_eq!(record["status"], 500, "{log}");
     assert_eq!(record["class"], "failed", "{log}");
+}
+
+/// A reset whose world row ends with its outcome unknown keeps the store and answers `500`
+/// naming the unknown outcome, as before (the coordinator's decision D-U2-r1): the next command
+/// reaches the same store rather than one lost in the reset.
+#[test]
+fn a_reset_whose_world_row_is_unknown_answers_500_and_keeps_the_store() {
+    let (mut host, _listener, _open, commits) = served();
+    let world: Worlds<'_> = &|_, _| {
+        Ok(World {
+            rows: vec![Seed {
+                entity: "study.desk.Desk".to_owned(),
+                identity: json!("desk-1"),
+                row: Row {
+                    state: "Free".to_owned(),
+                    fields: BTreeMap::from([("holder".to_owned(), json!("a reader"))]),
+                },
+            }],
+            answers: None,
+            mint: None,
+            clock: None,
+        })
+    };
+
+    let answer = spindle_ingress::console::reset(&mut host, b"{}", Some(world));
+    let body = answer.body.unwrap_or_default();
+    assert_eq!(answer.status, 500, "{body}");
+    assert!(
+        body["refused"]
+            .as_str()
+            .is_some_and(|refused| refused.contains("outcome unknown")),
+        "the refusal names the outcome as unknown: {body}"
+    );
+    assert_eq!(
+        commits.load(Ordering::SeqCst),
+        1,
+        "the world row reached the store"
+    );
+
+    let Value::Object(input) = desk() else {
+        unreachable!("the desk input is an object")
+    };
+    let next = host
+        .submit(OPEN, input)
+        .expect_err("the store's every write ends unknown");
+    assert_eq!(
+        commits.load(Ordering::SeqCst),
+        2,
+        "the store was kept: {next}"
+    );
+    assert!(
+        !next.to_string().contains("lost in a reset"),
+        "the store was kept: {next}"
+    );
 }
 
 /// A run whose lease is found lost replaces an answer that committed nothing with its `503`

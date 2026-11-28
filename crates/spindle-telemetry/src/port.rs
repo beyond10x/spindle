@@ -93,7 +93,8 @@ pub enum Failure {
     BrokenInvariant,
     /// The model declares no outcome for the request.
     Undeclared,
-    /// The store could not read or commit.
+    /// The store could not read or commit; where it cannot say whether the commit landed
+    /// (`spindle_kernel::StoreError::Unknown`), the command's effect may have been written.
     Store,
     /// The actor it was sent as holds no grant for it.
     NotGranted,

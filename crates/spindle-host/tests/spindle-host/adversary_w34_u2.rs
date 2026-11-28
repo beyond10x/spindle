@@ -7,8 +7,8 @@
 //!   caller that removed something beside the stores for the reset puts it back when it reads
 //!   `false` (`spindle-cli`'s leased reset puts the seed records back). A removal or a world row
 //!   whose outcome is unknown may have changed rows, so it reads `true`.
-//! - The CHANGELOG bullet of the story says "a reset that meets it loses the store, as before";
-//!   a world row whose commit outcome is unknown is met by the reset too.
+//! - A world row whose commit outcome is unknown keeps the store (the coordinator's decision
+//!   D-U2-r1); only a removal or forgetting events loses it, as the CHANGELOG bullet says.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value, json};
 use spindle_capability::Environment;
-use spindle_host::{Host, ManualClock, Seed, Stores, World};
+use spindle_host::{Host, HostError, ManualClock, Seed, Stores, World};
 use spindle_kernel::{Change, MemoryStore, Removal, Store, StoreError, Stored};
 
 const NOTEBOOK: &str = "desk.notebooks.Notebook";
@@ -104,10 +104,7 @@ fn host(store: &LandsThenUnknown) -> Host {
     let ir = spindle_spec::load(&fixture())
         .expect("the notebooks fixture compiles")
         .ir;
-    let stores = Stores::from([(
-        "desk".to_owned(),
-        Box::new(store.clone()) as Box<dyn Store>,
-    )]);
+    let stores = Stores::from([("desk".to_owned(), Box::new(store.clone()) as Box<dyn Store>)]);
     Host::supplied(ir, &elsewhere(), Arc::new(ManualClock::new()), None, stores)
         .unwrap_or_else(|error| panic!("the host opens on the supplied store: {error}"))
 }
@@ -176,10 +173,12 @@ fn a_reset_whose_world_row_is_unknown_may_have_changed_rows() {
     );
 }
 
-/// The CHANGELOG bullet of the story: "a reset that meets it loses the store, as before". A
-/// world row whose commit outcome is unknown is met by the reset, and the store stays in use.
+/// The coordinator's decision D-U2-r1: a world row whose commit outcome is unknown keeps the
+/// store, as before, and the reset fails with the store's unknown error, which
+/// `spindle_ingress::console::reset` answers `500` naming the unknown outcome. Only a removal or
+/// forgetting events loses the store (the CHANGELOG bullet of the story).
 #[test]
-fn a_reset_whose_world_row_is_unknown_loses_the_store() {
+fn a_reset_whose_world_row_is_unknown_keeps_the_store() {
     let seed = a_notebook_row();
     let store = LandsThenUnknown::default();
     let mut host = host(&store);
@@ -193,15 +192,19 @@ fn a_reset_whose_world_row_is_unknown_loses_the_store() {
             clock: None,
         })
         .expect_err("the world row's outcome is unknown");
-
-    let later = host.submit(OPEN, object(json!({"title": "Second notes"})));
     assert!(
-        later
-            .as_ref()
-            .is_err_and(|error| error.to_string().contains("lost in a reset")),
-        "a reset that met an unknown outcome ({reset}) loses the store, as the CHANGELOG says; \
-         the next command answered {:?} and the store holds {} rows",
-        later.map(|report| report.ran.len()),
-        store.held().len()
+        matches!(&reset, HostError::Store(StoreError::Unknown(detail)) if detail == UNKNOWN),
+        "the reset fails with the store's unknown error: {reset:?}"
+    );
+    assert_eq!(reset.to_string(), format!("store: {UNKNOWN}"));
+
+    let later = host
+        .submit(OPEN, object(json!({"title": "Second notes"})))
+        .unwrap_or_else(|error| panic!("the store was kept, so the next command runs: {error}"));
+    assert_eq!(later.ran[0].executed.outcome, "opened");
+    assert_eq!(
+        store.held().len(),
+        2,
+        "the world row that landed and the next command's notebook"
     );
 }

@@ -66,7 +66,9 @@ pub enum Key {
         /// The outcome.
         outcome: String,
     },
-    /// `command.<Command>.failed.<kind>`: the command did not execute.
+    /// `command.<Command>.failed.<kind>`: the command did not execute. Under `failed.store` with
+    /// a commit whose outcome is unknown (`spindle_kernel::StoreError::Unknown`), its effect may
+    /// have been written.
     Failed {
         /// The command.
         command: String,
