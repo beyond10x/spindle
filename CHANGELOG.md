@@ -81,10 +81,13 @@ are Spindle's releases.
   that table's lease and the old table's own, which the run takes for it and releases after
   (`take_orphan`, `gather_orphan_seed`, `release_orphan`); while another process holds the old
   table's lease the record is read and not moved, and a line says so. A reset by a leased run
-  without a seed removes the record from those tables too, under each one's lease, taken before
-  any store is emptied (`renew_orphan`, `forget_orphan_seed`); while another process holds one,
-  the reset is refused `409` naming the table and changes nothing, since a store emptied with the
-  old record left would read as seeded at the next start. One schema holds one leased deployment
+  without a seed removes the record from those tables too, first, before it empties any store,
+  under each one's lease, which it keeps until it answers (`forget_orphan_seed`, `renew_orphan`);
+  while another process holds one the reset is refused `409` naming the table, and where a
+  record cannot be removed `500` naming the table, and either changes nothing, since a store
+  emptied with the old record left would read as seeded at the next start. A reset then refused
+  for its body puts the records back (`record_orphan_seed`). A removal from a current table that
+  fails after the reset is printed naming that table. One schema holds one leased deployment
   (`story:seed-record-after-a-component-is-removed`).
 
 ## [0.26.0] - 2026-11-28

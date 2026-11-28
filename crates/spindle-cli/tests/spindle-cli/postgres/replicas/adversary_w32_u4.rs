@@ -562,3 +562,65 @@ fn a_reset_while_a_removed_components_lease_is_held_is_refused_and_changes_nothi
     old.release("audit", token)
         .expect("the old release's process ends");
 }
+
+/// Adversary round 2 of wave 33 U3: where the removal of a record after a reset fails, the line
+/// names the table whose row was left, not the first component's. Release 1 is the ingress
+/// fixture, its record in `board`'s and `ledger`'s lease tables alike; another session holds
+/// `ledger`'s row `seed` locked while the reset runs, so its removal waits out its lock timeout,
+/// which `board`'s removal does not meet.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_removal_that_fails_after_the_reset_names_the_table_whose_row_was_left() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let seed = seed_file(directory.path(), "seed.json", &["s1"]);
+    let schema = super::super::schema();
+    let record = super::recorded_twice(&environment, &schema, &seed, None);
+    let board = lease_table(&schema, "board");
+    let ledger = lease_table(&schema, "ledger");
+
+    let mut unseeded = Replica::start(super::run(&environment, &schema));
+    unseeded.ready_by(Instant::now() + super::ANSWER);
+    let url = super::super::owner_url();
+    let statement = format!("SELECT 1 FROM {ledger} WHERE row_key = 'seed' FOR UPDATE");
+    let (locked, row) = std::sync::mpsc::channel();
+    let (answered, release) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        let (mut client, connection) = runtime
+            .block_on(tokio_postgres::connect(&url, tokio_postgres::NoTls))
+            .expect("a second connection");
+        let driver = runtime.spawn(connection);
+        let transaction = runtime
+            .block_on(client.transaction())
+            .expect("a transaction");
+        runtime
+            .block_on(transaction.simple_query(&statement))
+            .expect("ledger's row `seed` is locked");
+        locked.send(()).expect("the test waits");
+        let _ = release.recv_timeout(super::ANSWER);
+        runtime
+            .block_on(transaction.commit())
+            .expect("the lock is let go");
+        drop(client);
+        let _ = runtime.block_on(driver);
+    });
+    row.recv().expect("ledger's row `seed` is locked");
+    let (status, body) = super::call(unseeded.address, "POST", "/api/reset", None);
+    let _ = answered.send(());
+    holder.join().expect("the other session ends");
+    assert_eq!(status, 200, "{body}");
+    let line = unseeded
+        .line("could not be removed", Instant::now() + super::ANSWER)
+        .unwrap_or_else(|| panic!("no line says so: {}", unseeded.printed()));
+    unseeded.stop();
+    assert!(
+        line.contains(&ledger) && !line.contains(&board),
+        "the line names {ledger}, whose row was left, and not {board}: {line}"
+    );
+    assert_eq!(recorded(&schema, "board"), None);
+    assert_eq!(recorded(&schema, "ledger"), Some(record));
+}

@@ -282,28 +282,30 @@ impl Marker {
     }
 }
 
-/// Removes the row of the store's lease table that records a seed, where a leased run without a
-/// seed emptied the store or loaded a world (`story:seed-under-a-lease`, D6 A): a later start with
-/// a seed treats the store as one with no record. A failure is printed on stderr.
+/// Removes the row of every current component's lease table that records a seed, where a leased
+/// run without a seed emptied the store or loaded a world (`story:seed-under-a-lease`, D6 A): a
+/// later start with a seed treats the store as one with no record. A failure is printed on
+/// stderr, naming the table whose row was left.
 pub(crate) fn forget_row(row: &crate::database::SeedRow) {
     if let Err(error) = row.forget() {
         log::warn(format!(
-            "the row `seed` of {} could not be removed after the reset, so a start with that seed \
-             may skip the entries it records done: {error:#}",
-            row.table()
+            "a seed record could not be removed after the reset, so a start with that seed may \
+             skip the entries it records done: {error:#}"
         ))
         .field("error", format!("{error:#}"))
         .write();
     }
 }
 
-/// Takes, before a reset by a leased run without a seed empties anything, the leases of the lease
-/// tables of components the specification no longer has that hold a seed record, so
-/// [`forget_row`] removes the record from those too (`story:seed-under-a-lease`, D6 A;
-/// `story:seed-record-after-a-component-is-removed`, adversary round 1). Answers the refusal of
-/// the reset where it cannot: `409` naming the table whose lease another process holds, as a
-/// process of an earlier release still running may, and `500` where the tables cannot be read or
-/// a lease taken. Nothing is emptied or written then, and no lease is kept.
+/// Before a reset by a leased run without a seed empties anything, takes the leases of the lease
+/// tables of components the specification no longer has that hold a seed record, and removes the
+/// records under them (`story:seed-under-a-lease`, D6 A;
+/// `story:seed-record-after-a-component-is-removed`, adversary rounds 1 and 2): [`forget_row`]
+/// removes those of the current tables once the reset emptied the store. Answers the refusal of
+/// the reset where that cannot be done: `409` naming the table whose lease another process holds,
+/// as a process of an earlier release still running may, with nothing removed; `500` naming the
+/// table that could not be read, whose lease could not be taken or whose record could not be
+/// removed. No store is emptied then, and no lease is kept.
 pub(crate) fn claimed(row: &crate::database::SeedRow) -> Option<spindle_ingress::Answer> {
     match row.claim() {
         Ok(None) => None,
@@ -320,18 +322,20 @@ pub(crate) fn claimed(row: &crate::database::SeedRow) -> Option<spindle_ingress:
         Err(error) => Some(spindle_ingress::Answer::refusal(
             500,
             format!(
-                "the reset is refused before any store is emptied: the seed records in the lease \
-                 tables of components this specification no longer has could not be read or \
-                 their leases taken: {error:#}"
+                "the reset is refused before any store is emptied: a seed record in the lease \
+                 table of a component this specification no longer has could not be removed: \
+                 {error:#}"
             ),
         )),
     }
 }
 
-/// Releases the leases [`claimed`] took, where the reset then emptied nothing. A failure is
-/// printed on stderr; the leases run out by their time.
-pub(crate) fn unclaimed(row: &crate::database::SeedRow) {
-    if let Err(error) = row.unclaim() {
+/// Releases the leases [`claimed`] took, once the reset has answered; with `untouched`, as after
+/// a reset refused before it emptied any store, puts back first the records [`claimed`] removed,
+/// so a reset that changed nothing leaves them too. A failure is printed on stderr; the leases
+/// run out by their time.
+pub(crate) fn unclaimed(row: &crate::database::SeedRow, untouched: bool) {
+    if let Err(error) = row.unclaim(untouched) {
         log::warn(format!(
             "the leases taken for the reset were not released; they run out by their time: \
              {error:#}"

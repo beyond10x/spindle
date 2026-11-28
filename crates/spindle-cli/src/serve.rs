@@ -767,27 +767,30 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             // A leased run without a seed: a reset that empties the store or loads a world leaves
             // no seed's entries done, so the store's record goes (`story:seed-under-a-lease`,
             // D6 A). A reset the lease's fence refused answers `503`, as any write does (D4).
-            // A record in the lease table of a component this specification no longer has goes
-            // too, under that table's lease, taken before any store is emptied: where another
-            // process holds it, or it cannot be taken, the reset is refused and changes nothing
-            // (`story:seed-record-after-a-component-is-removed`, adversary round 1).
+            // A record in the lease table of a component this specification no longer has is
+            // removed first, under that table's lease, taken before any store is emptied and kept
+            // until the reset has answered: where another process holds it, or the record cannot
+            // be removed, the reset is refused and no store is emptied; a reset that is then
+            // refused before it empties a store puts the record back
+            // (`story:seed-record-after-a-component-is-removed`, adversary rounds 1 and 2).
             let row = held.seed_row();
             if let Some(refusal) = crate::seed::claimed(&row) {
                 exchange.respond(refusal);
                 continue;
             }
             let mut answer = console::reset(&mut host, exchange.body(), Some(&worlds));
+            // `console::reset` refuses `400` and `409` before any store is emptied; a `500` may
+            // come after some were.
+            let untouched = matches!(answer.status, 400 | 409);
             if answer.status == 200 {
                 if let Some(recorder) = recorder.as_ref() {
                     recorder.count_reset();
                 }
                 crate::seed::forget_row(&row);
-            } else {
-                crate::seed::unclaimed(&row);
-                if crate::database::Kept::fenced().is_some() {
-                    answer = Answer::refusal(503, LEASE_LOST);
-                }
+            } else if crate::database::Kept::fenced().is_some() {
+                answer = Answer::refusal(503, LEASE_LOST);
             }
+            crate::seed::unclaimed(&row, untouched);
             exchange.respond(answer);
             continue;
         }

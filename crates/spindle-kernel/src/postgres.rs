@@ -993,6 +993,37 @@ impl Lease {
         self.gathered((&table, to, to_token), &sources, body)
     }
 
+    /// Writes `body` as the row `seed` of `table`, one [`Lease::orphan_tables`] listed, only while
+    /// its lease row names `token` and this connection's session, as [`Lease::record_seed`] does a
+    /// component's: what puts back a record removed for a reset that then emptied nothing.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where `table` is not a lease table of the schema, where the row
+    /// cannot be written, and, naming the lease, where the lease row names another token or
+    /// session.
+    pub fn record_orphan_seed(
+        &mut self,
+        table: &str,
+        token: u64,
+        body: &serde_json::Value,
+    ) -> Result<(), StoreError> {
+        self.orphan(table)?;
+        let tenant = crate::sqlite::TENANT;
+        let held = i64::try_from(token).unwrap_or(i64::MAX);
+        let text = body.to_string();
+        let statement = SEED_WRITE.replace("{table}", table);
+        let written = self.seed_statement(
+            table,
+            &statement,
+            &[&tenant, &LEASE_ROW, &held, &SEED_ROW, &text],
+            false,
+        )?;
+        match written {
+            Some(_) => Ok(()),
+            None => Err(deposed(table, token, "write")),
+        }
+    }
+
     /// Removes the row `seed` of `table`, one [`Lease::orphan_tables`] listed, where there is
     /// one, only while its lease row names `token` and this connection's session.
     ///

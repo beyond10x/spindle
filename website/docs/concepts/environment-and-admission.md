@@ -349,13 +349,16 @@ the store in place of the state:
   done. A store with no row and no record gets the whole seed.
 
 A reset writes the record as it writes `seed.json`, and one by a leased run without `--seed`
-removes the row, also from the lease tables of removed components, each under its own lease,
-which the run takes before it empties any store. While another process holds one of those leases,
-as a process of the old release still running may, the reset is refused `409`, naming the table
-and that another process holds its lease, and changes nothing: no store is emptied and every
-record stays, since a store emptied with the old record left would read as seeded at the next
-start. Once that process has ended, or the row `seed` of that table is removed, the reset can be
-sent again. Any other store, in PostgreSQL without `database_lease` or in memory, records
+removes the row. From the lease tables of removed components it removes the row first, before it
+empties any store, each under that table's own lease, which it keeps until it answers. While
+another process holds one of those leases, as a process of the old release still running may, the
+reset is refused `409`, naming the table and that another process holds its lease; where a row
+cannot be removed, it is refused `500` naming the table. Either way it changes nothing: no store
+is emptied and every record stays, since a store emptied with the old record left would read as
+seeded at the next start. A reset refused for its body after the rows were removed puts them
+back. Once that process has ended, or the row `seed` of that table is removed, the reset can be
+sent again. Where the removal of a current table's row fails after the reset, a line names that
+table. Any other store, in PostgreSQL without `database_lease` or in memory, records
 nothing: every start sends the whole seed, so a second start applies nothing new only where every
 entry is a create whose command declares `existing_instance:`.
 
