@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:several-writers-one-postgres
 kind: story
-status: active
+status: implemented
 title: Several processes of one component serve on one PostgreSQL store
 summary: Two or more run processes on one PostgreSQL store lose no write, apply none twice, and keep serving when one is killed.
 relations:
@@ -72,10 +72,11 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: cited
   path: website/docs/status.md
-revision: 19
+revision: 20
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
 - {from: "proposed", to: "active", at: "2026-11-27T13:07:33Z", actor: "human:operator", revision: 19, decided_on: {"recorded":{"review_outcome":6}}}
+- {from: "active", to: "implemented", at: "2026-11-28T01:33:47Z", actor: "human:operator", revision: 20, decided_on: {"recorded":{"test_result":1,"review_outcome":15}}}
 ---
 # Several processes of one component serve on one PostgreSQL store
 

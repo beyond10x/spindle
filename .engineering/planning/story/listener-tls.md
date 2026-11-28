@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:listener-tls
 kind: story
-status: active
+status: implemented
 title: The ingress listener serves TLS, and may require a client certificate
 summary: A served run serves HTTPS with a given certificate and, with a CA file, requires a client certificate (mTLS).
 relations:
@@ -46,10 +46,11 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 12
+revision: 13
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-27T09:56:32Z", actor: "human:operator", revision: 3}
 - {from: "proposed", to: "active", at: "2026-11-27T13:07:33Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":4}}}
+- {from: "active", to: "implemented", at: "2026-11-28T01:33:45Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"test_result":1,"review_outcome":5}}}
 ---
 # The ingress listener serves TLS, and may require a client certificate
 
