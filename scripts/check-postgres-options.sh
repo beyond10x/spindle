@@ -16,7 +16,12 @@
 #     options and nothing else, and no flag of the container sets a configuration;
 #   - every other docker command is one of $want_docker;
 #   - `options` is assigned only from `postgres-lane.sh options`, as $want_options lists;
-#   - nothing names psql, ALTER SYSTEM, PGOPTIONS, POSTGRES_INITDB_ARGS or a postgresql.conf.
+#   - nothing names psql, ALTER SYSTEM, PGOPTIONS, POSTGRES_INITDB_ARGS, a postgresql.conf or a
+#     docker:// action;
+#   - SPINDLE_TEST_DATABASE_URL and _CA are written only as $want_env lists, and the job declares
+#     no services: or container:, so the tests reach the container the checked docker run starts.
+# Outside that job, no job of any workflow under .github/workflows runs check:postgres, names
+# SPINDLE_TEST_DATABASE_*, or names a postgres image (postgres:<tag>, postgres@<digest>).
 # A change to the job's database start changes this check with it.
 set -eu
 
@@ -41,10 +46,34 @@ mapfile -t options <<< "$options"
 EOF
 )
 
+want_env=$(
+    cat <<'EOF'
+echo "SPINDLE_TEST_DATABASE_URL=postgres://owner:owner@127.0.0.1:5432/spindle" >> "$GITHUB_ENV"
+echo "SPINDLE_TEST_DATABASE_CA=$dir/ca.pem" >> "$GITHUB_ENV"
+EOF
+)
+
+# The postgres job of a workflow, as written.
+job_raw() {
+    awk '/^  postgres:/{on=1; next} on && /^  [^ #]/{on=0} on' "$1"
+}
+
+# Every line of every workflow under <root> but the postgres job of ci.yml, each as file:line: text.
+outside_lines() {
+    for file in "$1"/.github/workflows/*.yml "$1"/.github/workflows/*.yaml; do
+        [ -f "$file" ] || continue
+        if [ "$file" = "$1/.github/workflows/ci.yml" ]; then
+            awk '/^  postgres:/{skip=1; next} skip && /^  [^ #]/{skip=0} !skip { print FILENAME ":" FNR ": " $0 }' "$file"
+        else
+            awk '{ print FILENAME ":" FNR ": " $0 }' "$file"
+        fi
+    done
+}
+
 # The postgres job of a workflow as logical lines: indentation dropped, continuations joined,
 # runs of blanks made one.
 job_lines() {
-    awk '/^  postgres:/{on=1; next} on && /^  [a-z]/{on=0} on' "$1" |
+    job_raw "$1" |
         awk '{ sub(/^[[:space:]]+/, ""); if (sub(/\\$/, "")) { buf = buf $0 " "; next } print buf $0; buf = "" } END { if (buf != "") print buf }' |
         sed 's/[[:space:]][[:space:]]*/ /g; s/ $//'
 }
@@ -79,9 +108,27 @@ check() {
         echo "check-postgres-options: $ci: the postgres job sets options other than from scripts/postgres-lane.sh options; it reads: $(printf '%s\n' "$named" | tr '\n' ';')" >&2
         status=1
     fi
-    banned=$(printf '%s\n' "$lines" | grep -i -E 'psql|alter system|PGOPTIONS|POSTGRES_INITDB_ARGS|postgresql(\.auto)?\.conf' || true)
+    banned=$(printf '%s\n' "$lines" | grep -i -E 'psql|alter system|PGOPTIONS|POSTGRES_INITDB_ARGS|postgresql(\.auto)?\.conf|docker://' || true)
     if [ -n "$banned" ]; then
         echo "check-postgres-options: $ci: the postgres job can set a server option outside the script: $(printf '%s\n' "$banned" | head -n 1)" >&2
+        status=1
+    fi
+    # The database the tests reach is the one the checked docker run starts: the job writes the
+    # URL and the CA only as $want_env lists, and has no service or job container of its own.
+    database=$(printf '%s\n' "$lines" | grep 'SPINDLE_TEST_DATABASE_' || true)
+    if [ "$database" != "$want_env" ]; then
+        echo "check-postgres-options: $ci: the postgres job names SPINDLE_TEST_DATABASE_URL or _CA other than by writing the checked container's: $(printf '%s\n' "$database" | tr '\n' ';')" >&2
+        status=1
+    fi
+    containers=$(job_raw "$ci" | grep -E '^    (services|container):' || true)
+    if [ -n "$containers" ]; then
+        echo "check-postgres-options: $ci: the postgres job declares $(printf '%s\n' "$containers" | sed 's/^ *//; s/:.*//' | head -n 1): its database is not the checked docker run's" >&2
+        status=1
+    fi
+    # No other job of any workflow runs the lane, names its database or starts a PostgreSQL image.
+    elsewhere=$(outside_lines "$root" | grep -E 'check:postgres|SPINDLE_TEST_DATABASE_|postgres(:[A-Za-z0-9]|@)' || true)
+    if [ -n "$elsewhere" ]; then
+        echo "check-postgres-options: a job other than ci.yml's postgres runs the lane or a PostgreSQL of its own: $(printf '%s\n' "$elsewhere" | head -n 1)" >&2
         status=1
     fi
 
@@ -170,6 +217,26 @@ if [ "${1:-}" = test ]; then
     refused script-no-locks scripts/postgres-lane.sh '/echo "max_locks_per_transaction=256"/d'
     refused script-ssl-off-later scripts/postgres-lane.sh 's/^    echo "max_connections=300"$/&\n    echo "ssl=off"/'
     refused script-bare-argument scripts/postgres-lane.sh 's/^        echo "-c"$/        echo "-N"/'
+    refused ci-job-container .github/workflows/ci.yml 's/^    name: PostgreSQL$/&\n    container: ubuntu:24.04/'
+    refused ci-step-env-url .github/workflows/ci.yml 's/^        run: task check:postgres$/        env:\n          SPINDLE_TEST_DATABASE_URL: postgres:\/\/owner:owner@127.0.0.1:5433\/spindle\n&/'
+    refused ci-gate-runs-lane .github/workflows/ci.yml 's/^        run: task check$/        run: task check \&\& task check:postgres/'
+    refused ci-uses-docker .github/workflows/ci.yml 's/^      - name: The PostgreSQL store$/      - uses: docker:\/\/alpine:3\n&/'
+    # Another workflow file with a job of its own that runs the lane.
+    cases=$((cases + 1))
+    copy other-workflow
+    {
+        echo 'name: Other'
+        echo 'on: push'
+        echo 'jobs:'
+        echo '  lane:'
+        echo '    runs-on: ubuntu-24.04'
+        echo '    steps:'
+        echo '      - run: task check:postgres'
+    } >"$work/other-workflow/.github/workflows/other.yml"
+    if check "$work/other-workflow" >"$work/other-workflow.out" 2>&1; then
+        echo "check-postgres-options: FAIL: case other-workflow: the check passed a second workflow that runs task check:postgres" >&2
+        failures=$((failures + 1))
+    fi
     cases=$((cases + 1))
     copy unchanged
     if ! check "$work/unchanged" >"$work/unchanged.out" 2>&1; then
