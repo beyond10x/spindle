@@ -6,6 +6,18 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- `task check:postgres` without `SPINDLE_TEST_DATABASE_URL` starts its own throwaway PostgreSQL
+  cluster under `target/` with CI's server options (TLS from a CA it issues, which it exports as
+  `SPINDLE_TEST_DATABASE_CA`, `max_locks_per_transaction=256`, `max_connections=300`), runs the
+  lane against it and removes it, on success, failure and SIGINT alike; the task fails when the
+  directory or the postmaster is left. `initdb` and `pg_ctl` of PostgreSQL 13 or later come from
+  `SPINDLE_PG_BIN` or `PATH`, and a major other than 17 is printed with a warning. With
+  `SPINDLE_TEST_DATABASE_URL` set it starts nothing, as before. `scripts/postgres-lane.sh` holds
+  the options, CI's `docker run` reads them from it, and `task check` refuses a `-c` option
+  written in `ci.yml` itself (`story:postgres-lane-runs-locally`).
+
 ## [0.26.0] - 2026-11-28
 
 ### Added

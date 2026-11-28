@@ -16,6 +16,7 @@ tasks:
       - task: check:changed_paths_are_classified
       - task: check:the_release_binary_checks_refuse_what_they_must
       - task: check:within_fails_over_its_bound
+      - task: check:the_postgres_options_are_one
       - ess specify validate --path ess
       - ess specify validate --path examples/rally/ess
       - task: check:the_observe_domain_validates
@@ -178,6 +179,11 @@ tasks:
       - pnpm build
 
   check:postgres:
+    desc: check:postgres:run against the database SPINDLE_TEST_DATABASE_URL names, or, without it, against a throwaway cluster scripts/postgres-lane.sh starts under target/ with CI's server options (PostgreSQL 13 or later from SPINDLE_PG_BIN or PATH, a warning when not 17) and removes afterwards, the task failing unless its directory is gone and its postmaster not alive
+    cmds:
+      - sh scripts/postgres-lane.sh lane -- {{.TASK_EXE}} check:postgres:run
+
+  check:postgres:run:
     desc: The PostgreSQL store's and the state move's tests against the database SPINDLE_TEST_DATABASE_URL names (loopback, a role that may create schemas, roles and tables), the hosted cases over TLS verified against SPINDLE_TEST_DATABASE_CA, under cargo-nextest's postgres profile, each killed at 60 s by .config/nextest.toml; the run after the build ends within 120 s and prints its ten slowest tests
     requires:
       vars: [SPINDLE_TEST_DATABASE_URL, SPINDLE_TEST_DATABASE_CA]
@@ -195,6 +201,17 @@ tasks:
       - '{{.NEXTEST}} --no-run'
       - defer: { task: test:slowest, vars: { NEXTEST_PROFILE: postgres } }
       - "sh scripts/within.sh 120 {{.NEXTEST}} --run-ignored all -E '{{.TESTS}}'"
+
+  check:postgres-lane-script:
+    desc: scripts/postgres-lane.sh, on PostgreSQL's binaries from SPINDLE_PG_BIN or PATH (it fails without initdb and pg_ctl), stops and removes its cluster when its command fails and on SIGINT, prints a major other than 17 with a warning, makes and starts the cluster with SPINDLE_PG_BIN's binaries, and starts none when SPINDLE_TEST_DATABASE_URL is set
+    cmds:
+      - sh scripts/postgres-lane.test.sh
+
+  check:the_postgres_options_are_one:
+    desc: scripts/check-postgres-options.sh, on this tree and on copies with one fault each, fails when CI's PostgreSQL step names a -c server option itself or does not read them from scripts/postgres-lane.sh options, or when the script lacks ssl=on or max_locks_per_transaction=256 or holds a max_connections below 300
+    cmds:
+      - sh scripts/check-postgres-options.sh
+      - sh scripts/check-postgres-options.sh test
 
   check:vm:
     desc: The VM tests, on a host with KVM
