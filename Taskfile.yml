@@ -189,7 +189,7 @@ tasks:
     requires:
       vars: [SPINDLE_TEST_DATABASE_URL, SPINDLE_TEST_DATABASE_CA]
     vars:
-      NEXTEST: cargo nextest run --locked --profile postgres -p spindle-kernel -p spindle-host -p spindle-cli --test spindle-kernel --test spindle-host --test spindle-cli
+      NEXTEST: env -u NEXTEST_TEST_THREADS cargo nextest run --locked --profile postgres -p spindle-kernel -p spindle-host -p spindle-cli --test spindle-kernel --test spindle-host --test spindle-cli
       ALONE: adversary_postgres_named::adv3_a_scan_of_many_instances_costs_no_more_than_reading_the_log
       TESTS: >-
         (binary_id(=spindle-kernel::spindle-kernel) and (test(~postgres::) or test(~state_move::)

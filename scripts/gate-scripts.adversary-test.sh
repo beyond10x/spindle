@@ -183,7 +183,7 @@ printf '%s\n' "$postgres_job" | awk '/Install cargo-nextest/{seen=1} /run: task 
 # check:postgres builds first, then runs its tests under nextest's postgres profile within 120 s.
 lane=$(awk '/^  check:postgres:/{on=1; next} on && /^  [a-z]/{on=0} on' "$taskfile")
 cases=$((cases + 1))
-printf '%s\n' "$lane" | grep -q 'NEXTEST: cargo nextest run .*--profile postgres' ||
+printf '%s\n' "$lane" | grep -q -E 'NEXTEST: (env -u NEXTEST_TEST_THREADS )?cargo nextest run .*--profile postgres' ||
     fail "check:postgres does not run cargo nextest under the postgres profile"
 cases=$((cases + 1))
 printf '%s\n' "$lane" | awk '/--no-run/{built=1} /sh scripts\/within.sh [0-9]+ \{\{\.NEXTEST\}\}/{if (built) ok=1} END{exit !ok}' ||

@@ -137,7 +137,13 @@ PostgreSQL 13 or later, a role that may create schemas, roles and tables) and
 `scripts/postgres-lane.sh` starts a throwaway cluster under `target/` (`initdb` and `pg_ctl` from
 `SPINDLE_PG_BIN`, else `PATH`; a warning when the major is not CI's 17; CI's `en_US.UTF-8` locale
 where `locale -a` lists it, else `C.UTF-8` with a warning), runs the lane against it over TLS, and
-removes it; the task fails when its directory or postmaster is left. That script is the one home of
+removes it; the task fails when its directory or postmaster is left. The cluster and the lane run
+on 4 CPUs there, as on CI's runner, whose 4 CPUs are 2 cores of 2 threads: `taskset` on a block
+of 4 of this machine's CPUs drawn at random, taken core by core with each core's hyperthreads
+(`SPINDLE_PG_LANE_CPUS=<n>` names another count, `0` every CPU), and nextest runs the
+`postgres` profile's 8 threads, `NEXTEST_TEST_THREADS` dropped (a build wrapper sets it to its
+own width). On a 32-CPU build node the unpinned lane's parallel part took 48 to 73 s where CI's
+took 79 to 115 s and failed at 106 s; pinned, `main`'s took 80 to 84 s in three runs. That script is the one home of
 the server options (TLS, `max_locks_per_transaction`, `max_connections`): CI's `docker run` passes
 the image exactly what `postgres-lane.sh options` prints, and `task check` refuses any other way the
 `postgres` job could set a server option or reach another database, and any other job that runs the

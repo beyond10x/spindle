@@ -14,7 +14,11 @@
 #                                           with the command's status
 #   postgres-lane.sh lane -- <command>...   with SPINDLE_TEST_DATABASE_URL set, runs the command
 #                                           alone; else `run`, then fails unless the cluster
-#                                           directory is gone and its postmaster is not alive
+#                                           directory is gone and its postmaster is not alive.
+#                                           The cluster and the command run on 4 CPUs, as on
+#                                           CI's runner (taskset, a block drawn at random from
+#                                           this process's CPUs); SPINDLE_PG_LANE_CPUS=<n>
+#                                           names another count, 0 every CPU
 #
 # The cluster: initdb and pg_ctl of PostgreSQL 13 or later from SPINDLE_PG_BIN, else PATH; a major
 # other than CI's 17 is printed with a warning. The superuser owner (password owner), password
@@ -23,6 +27,8 @@ set -eu
 
 ci_major=17
 floor_major=13
+# The CPUs of CI's runner, which runs the lane and its PostgreSQL on them together.
+ci_cpus=4
 
 # The server options of the lane. CI's PostgreSQL job and `run` both take them from here.
 server_options() {
@@ -240,6 +246,55 @@ run() {
     exit "$status"
 }
 
+# The CPUs the lane's cluster and command run on, as a taskset list: a block of $1 drawn at random
+# from those this process may use, or nothing when it may use $1 or fewer. The CPUs are taken core
+# by core, each with the hyperthreads it shares a core with: CI's 4 CPUs are 2 cores of 2 threads,
+# and 4 threads of 4 cores ran CPU-bound cases 2.5 times faster than CI did.
+cpu_block() {
+    allowed=$(sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' /proc/self/status 2>/dev/null || true)
+    if [ -z "$allowed" ]; then
+        return 0
+    fi
+    echo "$allowed" | awk -v want="$1" -v draw="$(draw_port)" '
+    # expand(list, out): the CPUs of a list such as 0-3,8 into out[0..], their count returned.
+    function expand(list, out,    parts, part, range, i, c, n) {
+        n = 0
+        parts = split(list, part, ",")
+        for (i = 1; i <= parts; i++) {
+            if (split(part[i], range, "-") == 2) {
+                for (c = range[1] + 0; c <= range[2] + 0; c++) out[n++] = c
+            } else if (part[i] != "") {
+                out[n++] = part[i] + 0
+            }
+        }
+        return n
+    }
+    {
+        count = expand($0, cpu)
+        if (count <= want) exit
+        for (i = 0; i < count; i++) ok[cpu[i]] = 1
+        n = 0
+        for (i = 0; i < count; i++) {
+            if (cpu[i] in taken) continue
+            siblings = cpu[i]
+            file = "/sys/devices/system/cpu/cpu" cpu[i] "/topology/thread_siblings_list"
+            if ((getline line < file) > 0) siblings = line
+            close(file)
+            m = expand(siblings, sibling)
+            for (j = 0; j < m; j++) {
+                if ((sibling[j] in ok) && !(sibling[j] in taken)) {
+                    taken[sibling[j]] = 1
+                    order[n++] = sibling[j]
+                }
+            }
+        }
+        start = want * (draw % int(n / want))
+        list = order[start]
+        for (i = 1; i < want; i++) list = list "," order[start + i]
+        print list
+    }'
+}
+
 lane() {
     if [ "${1:-}" = -- ]; then
         shift
@@ -252,12 +307,34 @@ lane() {
         say "SPINDLE_TEST_DATABASE_URL is set: no cluster of its own"
         exec "$@"
     fi
+    cpus=${SPINDLE_PG_LANE_CPUS:-$ci_cpus}
+    case $cpus in
+        '' | *[!0-9]*)
+            echo "postgres-lane: SPINDLE_PG_LANE_CPUS '$cpus' is not a whole number of CPUs" >&2
+            exit 2
+            ;;
+    esac
+    pin=
+    if [ "$cpus" -gt 0 ]; then
+        if command -v taskset >/dev/null 2>&1; then
+            pin=$(cpu_block "$cpus")
+        else
+            say "warning: no taskset here: the cluster and the command run on every CPU, not on $cpus as on CI's runner"
+        fi
+    fi
+    if [ -n "$pin" ]; then
+        say "the cluster and the command run on CPUs $pin, $cpus as on CI's runner (SPINDLE_PG_LANE_CPUS)"
+    fi
     mkdir -p target
     record=$(mktemp "$PWD/target/postgres-lane-record.XXXXXX")
     # A handler, not an ignore: `run` must still get INT and TERM. The check below runs after it.
     trap ':' INT TERM HUP
     status=0
-    SPINDLE_PG_LANE_RECORD=$record sh "$0" run -- "$@" || status=$?
+    if [ -n "$pin" ]; then
+        SPINDLE_PG_LANE_RECORD=$record taskset -c "$pin" sh "$0" run -- "$@" || status=$?
+    else
+        SPINDLE_PG_LANE_RECORD=$record sh "$0" run -- "$@" || status=$?
+    fi
     gone_dir=$(sed -n 1p "$record")
     gone_pid=$(sed -n 2p "$record")
     rm -f "$record"
