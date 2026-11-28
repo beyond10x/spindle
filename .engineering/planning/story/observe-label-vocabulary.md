@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:observe-label-vocabulary
 kind: story
-status: draft
+status: active
 title: The metric label vocabulary and the family description are specified in spindle.observe
 relations:
 - serves: vision:spindle
@@ -24,7 +24,10 @@ scope:
   path: ess/generated/jsonschema
 - confidence: cited
   path: ui/src/api/generated
-revision: 10
+revision: 12
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-28T18:22:04Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"review_outcome":7}}}
+- {from: "proposed", to: "active", at: "2026-11-28T18:22:05Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":7}}}
 ---
 # The metric label vocabulary and the family description are specified in spindle.observe
 

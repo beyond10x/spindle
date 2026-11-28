@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:unknown-commit-in-seed-and-retries
 kind: story
-status: draft
+status: active
 title: A bound command or seed entry whose commit outcome is unknown is not sent again
 summary: The bound-command retry and the seed treat StoreError::Unknown as an outcome to check, not a command that did not run.
 relations:
@@ -50,7 +50,10 @@ scope:
   path: website/docs/concepts/environment-and-admission.md
 - confidence: cited
   path: website/docs/reference/cli.md
-revision: 13
+revision: 15
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-28T18:22:05Z", actor: "human:operator", revision: 14, decided_on: {"recorded":{"review_outcome":7}}}
+- {from: "proposed", to: "active", at: "2026-11-28T18:22:05Z", actor: "human:operator", revision: 15, decided_on: {"recorded":{"review_outcome":7}}}
 ---
 ## Outcome
 

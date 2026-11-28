@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:link-bound-setting
 kind: story
-status: draft
+status: active
 title: The peer link bound is a setting, so its Gate test runs short
 relations:
 - serves: vision:spindle
@@ -21,7 +21,10 @@ scope:
   path: website/docs/examples/rally.md
 - confidence: cited
   path: website/docs/reference/cli.md
-revision: 9
+revision: 11
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-28T18:22:04Z", actor: "human:operator", revision: 10, decided_on: {"recorded":{"review_outcome":7}}}
+- {from: "proposed", to: "active", at: "2026-11-28T18:22:04Z", actor: "human:operator", revision: 11, decided_on: {"recorded":{"review_outcome":7}}}
 ---
 ## Outcome
 

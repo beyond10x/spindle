@@ -1,6 +1,6 @@
 # Wave 35
 
-**Proposed.** Planned on the operator's pick of 2026-11-28 (D-W35 A, relayed by the host operator); story:postgres-lane-margin-ci left the wave when its cut was found to land in eventlog. All stories serve vision:spindle.
+**In progress.** Planned on the operator's pick of 2026-11-28 (D-W35 A, relayed by the host operator); story:postgres-lane-margin-ci left the wave when its cut was found to land in eventlog. All stories serve vision:spindle.
 
 Integration branch `wave/35`, forked from `main` after wave 34 (PR 110) lands. Release 0.29.0
 (wave 34) comes first; release 0.30.0 follows this wave. This plan was written on `plan/wave-35` at
