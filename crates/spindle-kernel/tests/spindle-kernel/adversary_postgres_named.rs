@@ -284,7 +284,15 @@ fn scans(store: &mut dyn Store) -> Vec<Result<Scan, String>> {
 }
 
 /// The groups [`adv3_drawn_command_sequences_scan_as_sqlite_does`] draws.
-const DRAWN_GROUPS: usize = 1_350;
+const DRAWN_GROUPS: usize = 400;
+
+/// The writes of [`SEED`] that bring `ALPHA`'s version near the end of its stream's first page
+/// before the drawn groups start.
+const SEEDED: usize = 800;
+
+/// The identity of `ALPHA` the [`SEEDED`] writes update one after another, none of the drawn
+/// identities.
+const SEED: &str = "seed";
 
 /// The events one page of a read of a stream holds: `ALPHA`'s stream outgrows it.
 const PAGE: u64 = 1_000;
@@ -293,39 +301,89 @@ const PAGE: u64 = 1_000;
 /// every group.
 const PAGE_EDGE: u64 = 10;
 
+/// Appends to `component`'s log what `count` writes of [`SEED`], one write to a group, append:
+/// its `spindle.row` events at versions 1 to `count`, the row of version `v` at step `v`, and
+/// `ALPHA`'s schema-2 `spindle.written` events naming it at each.
+fn seeded_by_sql(component: &str, count: usize) {
+    let table = table(component);
+    let columns = "tenant_id, stream_type, stream_id, version, event_id, event_name, \
+                   event_schema_version, occurred_at, recorded_at, subject, actor, request_id, \
+                   trace_id, data";
+    sql(&format!(
+        "INSERT INTO {table} ({columns}) SELECT 'local', '{ALPHA}', '\"{SEED}\"', g, \
+         gen_random_uuid(), 'spindle.row', 1, now(), now(), 'a', 'a', 'a', 'a', \
+         jsonb_build_object('state', 'open', 'fields', jsonb_build_object('step', g, 'id', \
+         '{SEED}')) FROM generate_series(1, {count}) g ORDER BY g; \
+         INSERT INTO {table} ({columns}) SELECT 'local', 'spindle:entity', '{ALPHA}', g, \
+         gen_random_uuid(), 'spindle.written', 2, now(), now(), 'a', 'a', 'a', 'a', \
+         jsonb_build_object('rows', jsonb_build_object('\"{SEED}\"', g), 'removed', \
+         '{{}}'::jsonb) FROM generate_series(1, {count}) g ORDER BY g; ANALYZE {table}"
+    ));
+}
+
 /// Story: "The store passes the kernel's store contract exactly as the SQLite store does."
 /// [`DRAWN_GROUPS`] groups drawn at a fixed seed, each committed to a SQLite store and to a
 /// PostgreSQL store: both land or both are refused, after every group. Both scan `ALPHA` and
-/// `BETA` alike (rows, versions, the entity's version) after every twentieth group, after every
-/// group that leaves `ALPHA`'s version within [`PAGE_EDGE`] of a multiple of [`PAGE`], and after
-/// the last; a PostgreSQL store opened anew every 200 groups scans them alike too. `ALPHA`'s
-/// stream outgrows one page (version 1,032 after the last group).
+/// `BETA` alike (rows, versions, the entity's version) before the first group, after every
+/// twentieth, after every group that leaves `ALPHA`'s version within [`PAGE_EDGE`] of a
+/// multiple of [`PAGE`], and after the last; a PostgreSQL store opened anew every 200 groups
+/// scans them alike too. `ALPHA`'s stream outgrows one page: [`SEEDED`] writes of [`SEED`]
+/// stand in it before the first group, committed to SQLite and appended to PostgreSQL's table
+/// as its writes append them, and the drawn groups take it from 800 across the page edge.
 ///
 /// A scan of the PostgreSQL store reads `ALPHA`'s whole stream, so a scan after every one of
-/// 2,400 groups made the case quadratic in that stream: 46 of its 61 s. The groups are the
-/// first 1,350 of the same seed's 2,400. A stored state that parts from SQLite's between two
-/// scans is still apart at the next one, and the next group's outcome is compared after every
-/// group, its expected versions drawn from SQLite's scan after every group; the page edge, where
-/// a read could part for a few versions only, is scanned after every group.
+/// 2,400 groups made the case quadratic in that stream: 46 of its 61 s. A stored state that
+/// parts from SQLite's between two scans is still apart at the next one, and the next group's
+/// outcome is compared after every group, its expected versions drawn from SQLite's scan after
+/// every group; the page edge, where a read could part for a few versions only, is scanned
+/// after every group.
 ///
-/// Each group is committed to both stores at once: of the case's 23.5 s alone at 1,500 groups,
-/// the commits took 7.9 s on SQLite and 11.2 s on PostgreSQL, one after the other, and the case
-/// took 29 to 36 s beside the lane on a 4-CPU quota. 1,350 groups still take `ALPHA` across the
-/// page edge and past it, and land 1,180 (`story:postgres-lane-margin`).
+/// The case drew 1,350 groups to take `ALPHA` across the page edge by drawn groups alone: 12 s
+/// alone on 4 CPUs of 2 cores and 15 to 33 s in the lane, most of it a commit of every group to
+/// both stores (`story:postgres-lane-margin`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv3_drawn_command_sequences_scan_as_sqlite_does() {
     let database = database();
     let component = fresh("drawn");
+    drop(open(&database, &component));
+    seeded_by_sql(&component, SEEDED);
     let mut postgres = open(&database, &component);
     let (_directory, mut reference) = sqlite();
+    for version in 1..=SEEDED {
+        let identity = json!(SEED);
+        reference
+            .commit_all(&[Write::Commit(Change {
+                entity: ALPHA.to_owned(),
+                identity: identity.clone(),
+                expected: (version > 1).then(|| u64::try_from(version - 1).expect("small")),
+                row: row("open", version, &identity),
+                events: Vec::new(),
+                scanned: Vec::new(),
+            })])
+            .expect("SQLite takes the seeded writes");
+    }
     let pool = identities();
     let mut rng = Rng(0x5eed_0019_ad73_0003);
     let mut model = BTreeMap::<(String, String), Standing>::new();
     let mut versions = BTreeMap::<String, u64>::new();
     let mut diverged = Vec::new();
     let mut landed = 0;
+    let seeded = scans(&mut reference);
+    for (index, scan) in seeded.iter().enumerate() {
+        let scan = scan.as_ref().expect("SQLite scans");
+        versions.insert([ALPHA, BETA][index].to_owned(), scan.version);
+    }
+    let answered = scans(&mut postgres);
+    if answered != seeded {
+        diverged.push(format!(
+            "seeded: PostgreSQL {answered:?}\nSQLite {seeded:?}"
+        ));
+    }
     for step in 0..DRAWN_GROUPS {
+        if !diverged.is_empty() {
+            break;
+        }
         let (writes, after) = group(&mut rng, step, &pool, &model, &versions);
         let (on_sqlite, on_postgres) = std::thread::scope(|scope| {
             let on_sqlite = scope.spawn(|| reference.commit_all(&writes));
@@ -371,7 +429,7 @@ fn adv3_drawn_command_sequences_scan_as_sqlite_does() {
         versions.get(ALPHA)
     );
     assert!(diverged.is_empty(), "{}", diverged.join("\n"));
-    assert!(landed > 1_000, "only {landed} groups landed");
+    assert!(landed > 300, "only {landed} groups landed");
     assert!(versions[ALPHA] > PAGE, "ALPHA's stream stays in one page");
 }
 
