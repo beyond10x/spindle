@@ -343,13 +343,17 @@ fn listed(identity: &str) -> Change {
 }
 
 /// The instances and writes of the long log [`a_long_scan_lets_another_process_commit`] scans.
+/// 150,000 writes made each scan 0.85 to 1.2 s and 56 commits land beside three of them, and
+/// appending the 300,000 events took most of the case's 9 to 13.5 s; at 50,000 a scan still
+/// reads its entity's stream over 50 pages, and many commits land beside three
+/// (`story:postgres-lane-margin`).
 const INSTANCES: u64 = 1_000;
-const WRITES: u64 = 150_000;
+const WRITES: u64 = 50_000;
 
 /// Two processes on one component's tables, as a rolling deploy runs them: one scans a log of
-/// 300,000 events back to back, as a metrics scrape does, the other takes commands. Every command
+/// 100,000 events back to back, as a metrics scrape does, the other takes commands. Every command
 /// lands: a scan holds no lock a commit waits on for longer than one bounded read. The log is
-/// the entity's own: 150,000 writes of 1,000 instances, each write's `spindle.row` event and the
+/// the entity's own: 50,000 writes of 1,000 instances, each write's `spindle.row` event and the
 /// `spindle.written` event naming it, appended as the store appends them.
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
