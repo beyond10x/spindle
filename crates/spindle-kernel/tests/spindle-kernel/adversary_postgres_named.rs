@@ -787,7 +787,9 @@ fn timed(store: &mut dyn Store, entity: &str) -> (Duration, Scan) {
 ///
 /// Each read is timed [`TIMED`] times and the shortest compared: one of each, timed once beside
 /// the rest of the lane on a 4-CPU quota, read 10,000 instances in 697 ms by the stream and in
-/// 323 ms whole (`story:postgres-lane-margin`).
+/// 323 ms whole (`story:postgres-lane-margin`). `task check:postgres` runs this case alone, after
+/// the rest of the lane: a read by the stream makes more round trips than the whole-log read, so
+/// a loaded machine slows it more, and beside the lane it measured 2.0 to 2.5 times the other.
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv3_a_scan_of_many_instances_costs_no_more_than_reading_the_log() {

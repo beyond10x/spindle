@@ -19,11 +19,6 @@ priority = 30
 test-group = "postgres-heavy"
 
 [[profile.postgres.overrides]]
-filter = "binary_id(=spindle-kernel::spindle-kernel) and test(=adversary_postgres_named::adv3_a_scan_of_many_instances_costs_no_more_than_reading_the_log)"
-priority = -20
-test-group = "postgres-heavy"
-
-[[profile.postgres.overrides]]
 filter = "binary_id(=spindle-kernel::spindle-kernel) and (test(~adversary_w31_u1::) or test(~adversary_postgres_scan::) or test(~adversary_postgres_named::) or test(~adversary_state_move::a_moved_log) or test(=postgres::a_long_scan_lets_another_process_commit))"
 priority = 20
 test-group = "postgres-heavy"
