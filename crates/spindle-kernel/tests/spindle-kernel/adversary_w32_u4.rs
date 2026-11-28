@@ -225,4 +225,53 @@ mod postgres {
             "nothing was moved in"
         );
     }
+
+    /// Round 3 (`Lease::gather_seed`): three tables, the record alike in each; B takes the lease
+    /// of the middle one, neither the table gathered into nor the last. The gathering is refused
+    /// and every row stays as it was.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_gathering_is_refused_once_the_middle_lease_was_taken() {
+        let database = database();
+        let [into, middle, last] = [fresh("gather"), fresh("gather"), fresh("gather")];
+        let term = Duration::from_secs(1);
+        let mut first = Lease::connect(&database, term).expect("A connects for the leases");
+        let mut tokens = Vec::new();
+        for component in [&into, &middle, &last] {
+            tokens.push(
+                first
+                    .take(component)
+                    .expect("the lease is read")
+                    .expect("A takes the lease"),
+            );
+        }
+        let recorded = json!({"digest": "sha256:ee", "done": 1, "rejected": []});
+        for (component, token) in [&into, &middle, &last].into_iter().zip(&tokens) {
+            first
+                .record_seed(component, *token, &recorded)
+                .expect("A records the seed");
+        }
+        let mut second = Lease::connect(&database, term).expect("B connects for the lease");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while second.take(&middle).expect("the lease is read").is_none() {
+            assert!(Instant::now() < deadline, "B never took the middle lease");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let gathered = first.gather_seed(
+            &[(&middle, tokens[1]), (&last, tokens[2])],
+            (&into, tokens[0]),
+            &json!({"digest": "sha256:ee", "done": 2, "rejected": []}),
+        );
+        assert!(
+            gathered.is_err(),
+            "the gathering is refused once B holds the middle lease"
+        );
+        for component in [&into, &middle, &last] {
+            assert_eq!(
+                second.seed_record(component).expect("read"),
+                Some(recorded.clone()),
+                "the row of {component} is as it was"
+            );
+        }
+    }
 }

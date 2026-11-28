@@ -219,3 +219,67 @@ fn a_release_rolled_back_and_forward_with_the_same_seed_skips_it() {
         ),
     }
 }
+
+/// Round 3: three lease tables hold a record, two alike and one that differs in `done` alone.
+/// The run exits 1 before serving, naming the tables, sends no entry, and every row stays as it
+/// was: records alike in two tables do not outvote the third.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn records_in_three_tables_two_alike_and_one_different_are_refused() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let seed = seed_file(directory.path(), "seed.json", &["s1"]);
+    let schema = super::super::schema();
+    let mut first = Replica::start(seeded(&environment, &schema, &seed));
+    assert!(
+        first
+            .line_by("ended: 1 sent, 1 applied", Instant::now() + super::ANSWER)
+            .is_some(),
+        "{}",
+        first.printed()
+    );
+    first.stop();
+    let mut forward = Replica::start(grown_seeded(&environment, &schema, &seed));
+    forward.ready_by(Instant::now() + super::ANSWER);
+    forward.stop();
+    let record = recorded(&schema, "audit").expect("the record is in audit's table");
+    let mut other = record.clone();
+    other["done"] = json!(0);
+    let table = |component: &str| {
+        format!(
+            "{schema}.{}_p_lease",
+            spindle_kernel::postgres_prefix(component)
+        )
+    };
+    super::super::sql(&[
+        format!(
+            "INSERT INTO {} (tenant_id, row_key, body) SELECT tenant_id, row_key, body FROM {} \
+             WHERE row_key = 'seed'",
+            table("board"),
+            table("audit")
+        ),
+        format!(
+            "INSERT INTO {} (tenant_id, row_key, body) SELECT tenant_id, row_key, '{other}'::jsonb \
+             FROM {} WHERE row_key = 'seed'",
+            table("ledger"),
+            table("audit")
+        ),
+    ]);
+    assert_eq!(recorded(&schema, "board"), Some(record.clone()));
+    assert_eq!(recorded(&schema, "ledger"), Some(other.clone()));
+
+    let refused = super::super::refused(grown_seeded(&environment, &schema, &seed));
+    assert_eq!(refused.status.code(), Some(1), "{}", refused.stderr);
+    for component in ["audit", "board", "ledger"] {
+        assert!(
+            refused.stderr.contains(&table(component)),
+            "the refusal names {}: {}",
+            table(component),
+            refused.stderr
+        );
+    }
+    assert!(!refused.stderr.contains("ended:"), "{}", refused.stderr);
+    assert_eq!(recorded(&schema, "audit"), Some(record.clone()));
+    assert_eq!(recorded(&schema, "board"), Some(record));
+    assert_eq!(recorded(&schema, "ledger"), Some(other));
+}
