@@ -39,6 +39,16 @@ are Spindle's releases.
 
 ### Fixed
 
+- A `POST /api/reset` whose PostgreSQL store did not answer within its deadline, as behind a lock
+  another database session holds, keeps the component's store, so the next command runs as
+  before. While the reset has changed no row, it answers `503` `{"refused", "committed": false}`
+  and nothing was reset; once it has changed rows (a row removed, an earlier store emptied, a
+  world row written), it answers `500`, saying that the store is kept and that the reset can be
+  sent again. Before, every such reset answered `500` and replaced the store with a lost one, and
+  every later command answered `501` until the run restarted. `Host::reset` returns
+  `HostError::Store(StoreError::Busy(..))` naming the component and the step that was busy; a
+  store that fails in any other way is lost as before (`HostError::Reset`, `restored: false`)
+  (`story:reset-on-a-busy-store-keeps-the-store`).
 - A command whose PostgreSQL store did not answer within its deadline answers `503`
   `{"refused", "committed": false}`, safe to send again, where it answered `501`, the status of a
   command the runtime cannot complete; the request log records it `failed`, not `not-served`.

@@ -777,8 +777,10 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             // be removed, the reset is refused and no store is emptied. The refusals of the world
             // body and its clock come before any record is touched. A reset that then changed no
             // store's rows, whatever it answers (a row of its world refused, the fence, a store
-            // that refused its first removal), puts the record back before it answers; where that
-            // fails, the answer says the record is lost, naming its table
+            // that refused its first removal or was busy before any row changed, answered `503`
+            // and kept, `story:reset-on-a-busy-store-keeps-the-store`), puts the record back
+            // before it answers; where that fails, the answer says the record is lost, naming its
+            // table
             // (`story:seed-record-after-a-component-is-removed`, adversary rounds 1 to 4).
             if let Some(refusal) = crate::seed::refused_world(&host, exchange.body(), &worlds) {
                 exchange.respond(refusal);
