@@ -1527,5 +1527,112 @@ STUB
         fail "adversary_backfill_verifies_at_main: the step summary does not hold each command: $(head -c 600 "$work/verify/summary")"
 fi
 
+# --- adversary_w34_u1 ------------------------------------------------------------------------
+# Adversarial cases for story:release-artifacts-signed (wave 34, unit U1), added after the unit's
+# own cases were green. Each case is named in its fail message.
+w34u1=$work/adversary-w34-u1
+mkdir -p "$w34u1/latefail" "$w34u1/twice"
+
+# adversary_w34_u1_sign_fails_when_cosign_fails_late: a cosign sign-blob that writes the bundle
+# and then exits non-zero (as a signing that fails after the bundle is on disk) fails sign's
+# signing step. The step's `test -s` after cosign does not catch this; only the exit status does,
+# so a copy of the step with `|| true` after sign-blob must be caught.
+printf '#!%s\nreal=%s\n' "$shell" "$work/sigtools/cosign" >"$w34u1/latefail/cosign"
+cat >>"$w34u1/latefail/cosign" <<'STUB'
+status=0
+"$real" "$@" || status=$?
+for last in "$@"; do :; done
+if [ "$1" = sign-blob ] && [ "$(basename "$last")" = b10x-spindle-0.26.0.cdx.json ]; then
+    echo "stub cosign: bundle written, then the signing failed" >&2
+    exit 1
+fi
+exit "$status"
+STUB
+chmod 755 "$w34u1/latefail/cosign"
+# Passes when the step fails on a cosign that fails late on the SBOM.
+w34u1_sign_refuses_late_failure() {
+    sums true IMAGES >/dev/null 2>&1 || { echo "no checked artifacts to sign: $(cat "$work/sums.out")"; return 1; }
+    rm -rf "$w34u1/signrun"
+    mkdir -p "$w34u1/signrun"
+    if (cd "$work/dist" && PATH="$w34u1/latefail:$work/sigtools:$PATH" RUNNER_TEMP=$w34u1/signrun \
+        GITHUB_STEP_SUMMARY=$w34u1/signrun/summary bash "$1" >"$w34u1/signrun/out" 2>&1); then
+        echo "the step passes though cosign sign-blob exits 1 on the SBOM after writing its bundle"
+        return 1
+    fi
+}
+cases=$((cases + 1))
+why=$(w34u1_sign_refuses_late_failure "$work/steps/sign.sh") ||
+    fail "adversary_w34_u1_sign_fails_when_cosign_fails_late: $why"
+sed 's/^\( *cosign sign-blob .*\)$/\1 || true/' "$work/steps/sign.sh" >"$w34u1/sign-or-true.sh"
+cases=$((cases + 1))
+if cmp -s "$work/steps/sign.sh" "$w34u1/sign-or-true.sh"; then
+    fail "adversary_w34_u1_sign_fails_when_cosign_fails_late: the step has no 'cosign sign-blob' line to append || true to"
+elif w34u1_sign_refuses_late_failure "$w34u1/sign-or-true.sh" >/dev/null; then
+    fail "adversary_w34_u1_sign_fails_when_cosign_fails_late: a step with || true after cosign sign-blob passes the case"
+fi
+
+# adversary_w34_u1_guard_quoted_parens: the accepted guard forms allow no || outside parentheses.
+# A parenthesis inside a string literal is not a parenthesis of the expression, so
+#   ${{ github.event_name != 'pull_request' && '(' || true || ')' }}
+# is true on a pull_request event (false && '(' || true || ')' is true) and must be refused.
+awk '
+    /^  [a-z][a-z0-9_-]*:$/ { job = $1 }
+    /^[^ ]/ { job = "" }
+    job == "sign:" && /^    if:/ { print "    if: ${{ github.event_name != '"'"'pull_request'"'"' && '"'"'('"'"' || true || '"'"')'"'"' }}"; next }
+    { print }
+' "$workflow" >"$w34u1/quoted-parens.yml"
+cases=$((cases + 1))
+if cmp -s "$workflow" "$w34u1/quoted-parens.yml"; then
+    fail "adversary_w34_u1_guard_quoted_parens: the copy is release.yml unchanged"
+elif id_token_breach "$w34u1/quoted-parens.yml" >/dev/null; then
+    fail "adversary_w34_u1_guard_quoted_parens: a copy of release.yml whose sign job runs on a pull request (if: $(sed -n '/^  sign:$/,/^    if:/s/^    if: //p' "$w34u1/quoted-parens.yml")) passes adversary_id_token_only_on_signing_jobs"
+fi
+
+# adversary_w34_u1_backfill_only_from_main: a backfill is signed by the workflow at
+# refs/heads/main (D6 A), and publish verifies it only at that ref, after the upload, which is
+# never replaced. A workflow_dispatch run from any other ref (a branch or a tag picked in "Use
+# workflow from") must stop before anything is signed: provenance, or both sign and
+# image-manifest, compare github.ref (GITHUB_REF) with refs/heads/main.
+w34u1_ref_guard() {
+    job "$1" | grep -Eq '(github\.ref|GITHUB_REF)[^_a-z].*refs/heads/main|refs/heads/main.*(github\.ref|GITHUB_REF)([^_a-z]|$)'
+}
+cases=$((cases + 1))
+w34u1_ref_guard provenance || { w34u1_ref_guard sign && w34u1_ref_guard image-manifest; } ||
+    fail "adversary_w34_u1_backfill_only_from_main: nothing before sign or image-manifest refuses a workflow_dispatch run whose ref is not refs/heads/main; its assets are signed as release.yml@<that ref>, uploaded, and only then fail publish's verification"
+
+# adversary_w34_u1_backfill_keeps_the_tag_runs_attestation: a backfill of a release whose tag
+# run attested the image and then stopped before the upload (the image tag is then left as it
+# is, so IMAGES names the same digest) finds two attestations of the image: the tag run's, at the
+# tagged commit, and its own, at main's. D6 A accepts either ref, so the step passes.
+tagged=$(printf '%040d' 7)
+dispatched=$(printf '%040d' 8)
+printf '#!%s\nreal=%s\n' "$shell" "$work/ghtools/gh" >"$w34u1/twice/gh"
+printf 'tagged=%s\ndispatched=%s\n' "$tagged" "$dispatched" >>"$w34u1/twice/gh"
+cat >>"$w34u1/twice/gh" <<'STUB'
+case "$1 $2 $3" in
+    "attestation verify oci://"*)
+        "$real" "$@" >/dev/null || exit $?
+        for commit in "$tagged" "$dispatched"; do
+            printf '{"verificationResult":{"signature":{"certificate":{"buildSignerURI":"stub","sourceRepositoryDigest":"%s"}}}}\n' "$commit"
+        done | sed -n '1s/^/[/; $!s/$/,/; $s/$/]/; p'
+        ;;
+    *) exec "$real" "$@" ;;
+esac
+STUB
+chmod 755 "$w34u1/twice/gh"
+cases=$((cases + 1))
+if ! on_page true; then
+    fail "adversary_w34_u1_backfill_keeps_the_tag_runs_attestation: no signed release to put on the page: $(cat "$work/sign.out")"
+else
+    echo "$dispatched" >"$work/rec/attested-commit"
+    rm -rf "$work/verify"
+    mkdir -p "$work/verify"
+    (cd "$work/verify" && PATH="$w34u1/twice:$work/sigtools:$PATH" RUNNER_TEMP=$work/verify GH_REPO=beyond10x/spindle \
+        TAG=0.26.0 COMMIT=$tagged GITHUB_SHA=$dispatched GITHUB_EVENT_NAME=workflow_dispatch IMAGES_EXPECTED=true \
+        IMAGE=ghcr.io/beyond10x/spindle GITHUB_STEP_SUMMARY=$work/verify/summary bash "$work/steps/verify.sh" \
+        >"$work/verify/out" 2>&1) ||
+        fail "adversary_w34_u1_backfill_keeps_the_tag_runs_attestation: a backfill fails on the image's attestation from the tag run: $(grep -A3 'oci://' "$work/verify/summary" | tr '\n' ' ')"
+fi
+
 echo "release-linux-binary-adversary: $cases cases, $failures failed"
 [ "$failures" -eq 0 ]
