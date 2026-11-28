@@ -567,7 +567,9 @@ database's clock. Each process takes the lease of every component in name order 
 connection of its own, one of the serving role's beyond its pools
 ([the role's limit](#state-in-postgresql)), and leads once it holds them all. The leader renews
 them every fifth of `database_lease` on that same session, and retries a renewal that did not land
-at once; a clean exit, on SIGINT or SIGTERM, releases them. A renewal lands only on the session
+at once; a clean exit, on SIGINT or SIGTERM, releases them once every egress cursor is saved, each
+release waiting at most 1 s whatever `database_lease` is, so a standby takes over at its next poll.
+A renewal lands only on the session
 that took the lease: a leader whose lease connection was closed (a terminated backend, a dropped
 connection, an idle-session timeout) has given its leases up, and exits 1 at its next renewal.
 
