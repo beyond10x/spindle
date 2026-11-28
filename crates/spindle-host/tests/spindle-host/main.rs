@@ -45,6 +45,8 @@ mod adversary_w30_u8;
 mod adversary_w31_u8;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_w34_u3;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod adversary_w34_u3_r2;
 mod adversary_wasm;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_world_integers;
