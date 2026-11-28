@@ -1,6 +1,6 @@
 # Wave 33
 
-**Proposed.** Planned on the operator's pick of 2026-11-28 (D-W33 A, D-W33b A, relayed by the
+**In progress.** Planned on the operator's pick of 2026-11-28 (D-W33 A, D-W33b A, relayed by the
 host operator). All stories serve `vision:spindle`.
 
 Integration branch `wave/33`, forked from `main` after release 0.27.0 lands (`main` is 276298bb
@@ -151,9 +151,9 @@ both entries, `CHANGELOG.md` ordered by story id.
   three `spindle-cli` tests (each expected under 5 s). The step stays under 120 s; each unit names a
   test over 5 s with its time.
 - PostgreSQL lane (`task check:postgres`, its parallel part under 100 s): U2 adds two tests (under
-  15 s and 5 s) and rewrites two `adversary_w31_u6.rs` cases; U3 adds four `spindle-cli` and four
+  15 s and 5 s) and rewrites two `adversary_w31_u6.rs` cases; U3 adds four `spindle-cli` and five
   kernel tests (each expected under 10 s, none timed yet); U4 adds one (under 5 s). Their stated
-  bounds add up to about 105 s of test time (U2 20 s, U3 80 s, U4 5 s) on a lane that took 112.3 s
+  bounds add up to about 115 s of test time (U2 20 s, U3 90 s, U4 5 s) on a lane that took 112.3 s
   of its 120 s on CI (`story:postgres-lane-margin`, Why); hence the margin story first. Each of U2,
   U3 and U4 times its new lane tests, and the lane's parallel part before and after them, and names
   all of these times in its report; a lane over its bound is a defect fixed before the wave's PR,

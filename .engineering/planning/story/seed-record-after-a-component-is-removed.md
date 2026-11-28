@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:seed-record-after-a-component-is-removed
 kind: story
-status: draft
+status: active
 title: A seed record survives the removal of the component whose lease table held it
 relations:
 - serves: vision:spindle
@@ -37,7 +37,10 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 14
+revision: 17
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-28T09:24:51Z", actor: "human:operator", revision: 16, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "proposed", to: "active", at: "2026-11-28T09:24:52Z", actor: "human:operator", revision: 17, decided_on: {"recorded":{"review_outcome":8}}}
 ---
 ## Outcome
 
@@ -167,7 +170,7 @@ Derived 2026-11-28 by `story-scoper` on `plan/wave-33` (276298bb). Every line is
 - **Files:** `crates/spindle-cli/src/database.rs:432-546` (`Leases::answer`, `Leases::read` 505-539 reads only `held`, `Leases::elsewhere`, `Leases::table_of`) — cited
 - **Symbols:** a schema scan for lease tables of no current component by table name, table-name forms of read and gather (e.g. `Lease::seed_tables`, `Lease::seed_record_in`), take and release of an orphan table's lease row by table name — inferred
 - **Tests, lane** (PostgreSQL, `task check:postgres`), in `crates/spindle-cli/tests/spindle-cli/postgres/replicas/adversary_w32_u4.rs` (has `grown_seeded`, `GROWN`, and the SQL-planted records of `records_in_three_tables_two_alike_and_one_different_are_refused` `:228`): `a_seed_left_part_done_resumes_after_the_component_holding_its_record_was_removed`, `another_seed_file_after_the_component_holding_the_record_was_removed_is_refused`, `a_record_in_a_current_table_wins_over_an_orphan_record` (D2 A), `differing_records_in_orphan_tables_exit_1_naming_the_tables` (D3 A). Expected under 10 s each, not timed.
-- **Tests, kernel** (PostgreSQL, `task check:postgres`): `crates/spindle-kernel/tests/spindle-kernel/postgres.rs` (model: `a_seed_record_moves_between_lease_tables_only_under_both_leases` at 937): `an_orphan_lease_table_is_found_by_its_table_name` incl. a hashed prefix (name over 31 bytes), `a_table_matching_the_pattern_without_a_lease_row_is_not_read`, `a_deposed_process_cannot_move_the_seed_record_out_of_a_removed_components_table`, `an_orphan_record_under_another_holders_lease_is_read_not_moved`. Shared schema: assert inclusion, never set equality.
+- **Tests, kernel** (PostgreSQL, `task check:postgres`): `crates/spindle-kernel/tests/spindle-kernel/postgres.rs` (model: `a_seed_record_moves_between_lease_tables_only_under_both_leases` at 937): `an_orphan_lease_table_is_found_by_its_table_name` incl. a hashed prefix (name over 31 bytes), `a_table_matching_the_pattern_without_a_lease_row_is_not_read`, `a_deposed_process_cannot_move_the_seed_record_out_of_a_removed_components_table`, `an_orphan_record_under_another_holders_lease_is_read_not_moved`, `a_move_out_of_an_orphan_table_whose_lease_another_holds_is_refused`. Shared schema: assert inclusion, never set equality.
 - **Also likely:** `crates/spindle-cli/src/seed.rs:30-45` doc of D5 B; no code change expected — inferred
 - **Documents:** `crates/spindle-cli/src/cli.rs:555-575`, `website/docs/reference/cli.md:153`, `website/docs/concepts/environment-and-admission.md:307-336` — cited; `docs/design/spindle.md:437`, `CHANGELOG.md`, `AGENTS.md:40` — inferred
 - **Documents:** the "Seed at start" row of `crates/spindle-docs/src/status.rs` (`:487-488`; `:488` says "a store kept elsewhere records nothing"), changed if it states where the record is read or the removed-component case, and the regenerated `website/docs/status.md` (`:77`) and `website/data/status.json` (`:422`); U4 of wave 33 edits another row of the same file (`:145`) — inferred

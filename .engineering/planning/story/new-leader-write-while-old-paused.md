@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:new-leader-write-while-old-paused
 kind: story
-status: draft
+status: active
 title: A write to a new leader while the old one is paused never answers 501
 relations:
 - serves: vision:spindle
@@ -33,7 +33,10 @@ scope:
   path: website/docs/concepts/environment-and-admission.md
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 11
+revision: 13
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-28T09:24:51Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":7}}}
+- {from: "proposed", to: "active", at: "2026-11-28T09:24:51Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":7}}}
 ---
 ## Outcome
 
