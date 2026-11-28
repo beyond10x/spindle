@@ -1,0 +1,20 @@
+type: ess-scenario/1
+domain: lamps.yard
+scenario: the-system-stamps-a-tagged-lamp
+summary: A lamp installed under a minted serial is stamped with the next code the system decides.
+timeline:
+  - at: 2026-01-05T09:00:00Z
+    command: lamps.yard.InstallTagged
+    actor: lamps.yard.Caller
+    input: {lamp_id: lamp-1}
+    outcome: tagged
+  - at: 2026-01-05T09:00:01Z
+    command: lamps.yard.Stamp
+    input: {lamp_id: lamp-1}
+    outcome: stamped
+    events:
+      - event: lamps.yard.Stamped
+        payload: {lamp_id: lamp-1, code: 3}
+assert:
+  - view: lamps.yard.Lamps
+    contains: {lamp_id: lamp-1, code: 3, state: Stamped}
