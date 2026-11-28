@@ -1726,8 +1726,8 @@ cat >>"$w34u1/twice/gh" <<'STUB'
 case "$1 $2 $3" in
     "attestation verify oci://"*)
         "$real" "$@" >/dev/null || exit $?
-        for commit in "$tagged" "$dispatched"; do
-            printf '{"verificationResult":{"signature":{"certificate":{"buildSignerURI":"stub","sourceRepositoryDigest":"%s"}}}}\n' "$commit"
+        for signed in "$tagged refs/tags/0.26.0" "$dispatched refs/heads/main"; do commit=${signed% *}
+            printf '{"verificationResult":{"signature":{"certificate":{"buildSignerURI":"https://github.com/beyond10x/spindle/.github/workflows/release.yml@%s","sourceRepositoryDigest":"%s"}}}}\n' "${signed#* }" "$commit"
         done | sed -n '1s/^/[/; $!s/$/,/; $s/$/]/; p'
         ;;
     *) exec "$real" "$@" ;;
@@ -1853,7 +1853,7 @@ r2_verify_with() {
 cases=$((cases + 1))
 if ! on_page true; then
     fail "adversary_w34_u1_r2_commit_rule_fails_closed: no signed release to put on the page: $(cat "$work/sign.out")"
-elif ! r2_verify_with "[{\"verificationResult\":{\"signature\":{\"certificate\":{\"sourceRepositoryDigest\":\"$tagged\"}}}}]"; then
+elif ! r2_verify_with "[{\"verificationResult\":{\"signature\":{\"certificate\":{\"buildSignerURI\":\"https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/tags/0.26.0\",\"sourceRepositoryDigest\":\"$tagged\"}}}}]"; then
     fail "adversary_w34_u1_r2_commit_rule_fails_closed: a tag push with one attestation of the tagged commit fails: $(tail -n 3 "$work/verify/out" | tr '\n' ' ')"
 else
     for json in '[]' 'null' '{}' '[{}]' 'not json' '' \
