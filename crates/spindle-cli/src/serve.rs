@@ -767,14 +767,26 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             // A leased run without a seed: a reset that empties the store or loads a world leaves
             // no seed's entries done, so the store's record goes (`story:seed-under-a-lease`,
             // D6 A). A reset the lease's fence refused answers `503`, as any write does (D4).
+            // A record in the lease table of a component this specification no longer has goes
+            // too, under that table's lease, taken before any store is emptied: where another
+            // process holds it, or it cannot be taken, the reset is refused and changes nothing
+            // (`story:seed-record-after-a-component-is-removed`, adversary round 1).
+            let row = held.seed_row();
+            if let Some(refusal) = crate::seed::claimed(&row) {
+                exchange.respond(refusal);
+                continue;
+            }
             let mut answer = console::reset(&mut host, exchange.body(), Some(&worlds));
             if answer.status == 200 {
                 if let Some(recorder) = recorder.as_ref() {
                     recorder.count_reset();
                 }
-                crate::seed::forget_row(&held.seed_row());
-            } else if crate::database::Kept::fenced().is_some() {
-                answer = Answer::refusal(503, LEASE_LOST);
+                crate::seed::forget_row(&row);
+            } else {
+                crate::seed::unclaimed(&row);
+                if crate::database::Kept::fenced().is_some() {
+                    answer = Answer::refusal(503, LEASE_LOST);
+                }
             }
             exchange.respond(answer);
             continue;

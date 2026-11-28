@@ -284,6 +284,10 @@ pub(crate) struct Leases {
     /// The lease tables of no current component the seed's record was read from, by table name,
     /// which the next write moves it out of under each one's own lease ([`Leases::moved`]).
     orphans: Vec<String>,
+    /// The lease tables of no current component whose leases a reset took before emptying
+    /// anything, with their tokens ([`Leases::claim`]), renewed with the run's own until the
+    /// removal after the reset releases them.
+    claimed: Vec<(String, u64)>,
 }
 
 impl Leases {
@@ -311,6 +315,7 @@ impl Leases {
             told: None,
             elsewhere: Vec::new(),
             orphans: Vec::new(),
+            claimed: Vec::new(),
         }))
     }
 
@@ -462,7 +467,10 @@ impl Leases {
             match ask {
                 Ask::Stop => {}
                 Ask::Read(reply) => drop(reply.send(Err(none))),
-                Ask::Write(_, reply) | Ask::Forget(reply) => drop(reply.send(Err(none))),
+                Ask::Write(_, reply) | Ask::Forget(reply) | Ask::Unclaim(reply) => {
+                    drop(reply.send(Err(none)));
+                }
+                Ask::Claim(reply) => drop(reply.send(Err(none))),
             }
             return;
         };
@@ -504,13 +512,20 @@ impl Leases {
                     }
                 }
                 if removed.is_ok() {
-                    removed = self.forget_orphans().map_err(|error| error.to_string());
+                    removed = self.forget_claimed().map_err(|error| error.to_string());
                 }
                 if removed.is_ok() {
                     self.elsewhere.clear();
                     self.orphans.clear();
                 }
                 let _ = reply.send(removed);
+            }
+            Ask::Claim(reply) => {
+                let _ = reply.send(self.claim().map_err(|error| error.to_string()));
+            }
+            Ask::Unclaim(reply) => {
+                self.unclaim();
+                let _ = reply.send(Ok(()));
             }
         }
     }
@@ -646,35 +661,59 @@ impl Leases {
         written
     }
 
-    /// Removes the seed's record from the lease tables of no current component, as a reset by a
-    /// run without a seed removes it from the current ones (`story:seed-under-a-lease`, D6 A):
-    /// each under its own lease, taken for it and released after. A table whose lease another
-    /// process holds keeps its row, and a line says so.
-    fn forget_orphans(&mut self) -> Result<(), spindle_kernel::StoreError> {
+    /// Takes, before a reset by a run without a seed empties anything, the lease of every lease
+    /// table of no current component that holds a seed record, so the removal after the reset
+    /// ([`Leases::forget_claimed`]) cannot be kept from landing by a process of an earlier release
+    /// (`story:seed-under-a-lease`, D6 A; `story:seed-record-after-a-component-is-removed`,
+    /// adversary round 1). Answers the first such table whose lease another process holds, every
+    /// lease taken released again: the reset is then refused before anything is emptied.
+    fn claim(&mut self) -> Result<Option<String>, spindle_kernel::StoreError> {
+        self.unclaim();
         for table in self.orphan_tables()? {
             if self.lease.orphan_seed_record(&table)?.is_none() {
                 continue;
             }
-            let Some(held) = self.lease.take_orphan(&table)? else {
-                crate::log::warn(format!(
-                    "the seed record in {table}, the lease table of a component this \
-                     specification no longer has, is left there: another process holds that \
-                     table's lease"
-                ))
-                .write();
-                continue;
-            };
-            let forgotten = self.lease.forget_orphan_seed(&table, held);
+            match self.lease.take_orphan(&table) {
+                Ok(Some(held)) => self.claimed.push((table, held)),
+                Ok(None) => {
+                    self.unclaim();
+                    return Ok(Some(table));
+                }
+                Err(error) => {
+                    self.unclaim();
+                    return Err(error);
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Releases every lease [`Leases::claim`] took, as after a reset that did not empty the
+    /// store.
+    fn unclaim(&mut self) {
+        for (table, held) in std::mem::take(&mut self.claimed) {
             if let Err(error) = self.lease.release_orphan(&table, held) {
                 crate::log::warn(format!(
-                    "the lease of {table} was not released after the seed record was removed \
-                     from it; it runs out by its time: {error}"
+                    "the lease of {table} was not released; it runs out by its time: {error}"
                 ))
                 .write();
             }
-            forgotten?;
         }
-        Ok(())
+    }
+
+    /// Removes the seed's record from the lease tables [`Leases::claim`] took the leases of, as a
+    /// reset by a run without a seed removes it from the current ones (`story:seed-under-a-lease`,
+    /// D6 A), each under the lease taken for it, then releases them.
+    fn forget_claimed(&mut self) -> Result<(), spindle_kernel::StoreError> {
+        let mut forgotten = Ok(());
+        for (table, held) in &self.claimed {
+            if let Err(error) = self.lease.forget_orphan_seed(table, *held) {
+                forgotten = Err(error);
+                break;
+            }
+        }
+        self.unclaim();
+        forgotten
     }
 
     /// The lease table of `component`, `<schema>.<prefix>_p_lease`.
@@ -728,6 +767,11 @@ impl Leases {
                     Err(error) => failed = Some(format!("{component}: {error}")),
                 }
             }
+            // A lease a reset took for the removal after it is held as long as the reset takes;
+            // one lost meanwhile makes that removal fail by name, as a deposed write does.
+            for (table, held) in &self.claimed {
+                let _ = self.lease.renew_orphan(table, *held);
+            }
             match failed {
                 None => {
                     renewed = began;
@@ -761,6 +805,7 @@ impl Leases {
                 .write();
             }
         }
+        self.unclaim();
     }
 }
 
@@ -782,8 +827,14 @@ enum Ask {
     Read(mpsc::Sender<Result<Option<serde_json::Value>, String>>),
     /// Write the seed's record.
     Write(serde_json::Value, mpsc::Sender<Result<(), String>>),
-    /// Remove the seed's record.
+    /// Remove the seed's record, from the lease tables of no current component a [`Ask::Claim`]
+    /// took too.
     Forget(mpsc::Sender<Result<(), String>>),
+    /// Take the leases of the lease tables of no current component that hold a record, before a
+    /// reset empties anything: the table whose lease another process holds, if one does.
+    Claim(mpsc::Sender<Result<Option<String>, String>>),
+    /// Release the leases a [`Ask::Claim`] took, as after a reset that emptied nothing.
+    Unclaim(mpsc::Sender<Result<(), String>>),
 }
 
 /// Where a leading run records its seed (`story:seed-under-a-lease`): the row `seed` of the lease
@@ -828,6 +879,27 @@ impl SeedRow {
     /// As [`SeedRow::write`].
     pub(crate) fn forget(&self) -> Result<()> {
         self.asked(Ask::Forget)
+    }
+
+    /// Takes, before a reset by a run without a seed empties anything, the lease of each lease
+    /// table of no current component that holds a seed record, which [`SeedRow::forget`] then
+    /// removes it from (`story:seed-record-after-a-component-is-removed`, adversary round 1):
+    /// `Some` with the first such table whose lease another process holds, every lease taken
+    /// released again, so the reset is refused.
+    ///
+    /// # Errors
+    /// The tables cannot be read or a lease taken, or a lease thread that has ended or did not
+    /// answer in time; every lease taken is released again.
+    pub(crate) fn claim(&self) -> Result<Option<String>> {
+        self.asked(Ask::Claim)
+    }
+
+    /// Releases the leases [`SeedRow::claim`] took, after a reset that emptied nothing.
+    ///
+    /// # Errors
+    /// A lease thread that has ended or did not answer in time.
+    pub(crate) fn unclaim(&self) -> Result<()> {
+        self.asked(Ask::Unclaim)
     }
 
     /// Sends the ask `ask` makes of a reply channel and waits for its answer.

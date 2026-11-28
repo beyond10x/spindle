@@ -506,3 +506,59 @@ fn a_reset_without_a_seed_removes_the_record_of_a_removed_component() {
         unseeded.printed()
     );
 }
+
+/// Adversary round 1 of wave 33 U3: while a process of release 1 holds `audit`'s lease, as its
+/// standby does during a rollout, a reset by a leased run of release 2 without a seed cannot
+/// remove the record in `audit`'s lease table. It is refused `409` before any store is emptied,
+/// naming that table and its holder, and the store's rows and every record stay as they were:
+/// a reset that emptied the store and left the record would make the next seeded start send
+/// nothing (`story:seed-under-a-lease`, D6 A).
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_reset_while_a_removed_components_lease_is_held_is_refused_and_changes_nothing() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let seed = seed_file(directory.path(), "seed.json", &["s1", "s2"]);
+    let schema = super::super::schema();
+    let mut first = Replica::start(grown_seeded(&environment, &schema, &seed));
+    assert!(
+        first
+            .line_by("ended: 2 sent, 2 applied", Instant::now() + super::ANSWER)
+            .is_some(),
+        "{}",
+        first.printed()
+    );
+    first.stop();
+    let record = recorded(&schema, "audit").expect("the seed is recorded");
+
+    let mut database = spindle_kernel::Database::new(super::super::owner_url());
+    database.schema.clone_from(&schema);
+    let mut old = spindle_kernel::Lease::connect(&database, Duration::from_secs(60))
+        .expect("the old release's process connects for its leases");
+    let token = old
+        .take("audit")
+        .expect("the lease is read")
+        .expect("the old release's process takes audit's lease");
+
+    let mut unseeded = Replica::start(super::run(&environment, &schema));
+    unseeded.ready_by(Instant::now() + super::ANSWER);
+    let (status, body) = super::call(unseeded.address, "POST", "/api/reset", None);
+    let refused = body["refused"].as_str().unwrap_or_default();
+    assert_eq!(status, 409, "{body}");
+    assert!(
+        refused.contains(&lease_table(&schema, "audit"))
+            && refused.contains("another process holds"),
+        "the refusal names audit's table and its holder: {body}"
+    );
+    assert_eq!(
+        super::task_ids(&unseeded),
+        ["s1", "s2"],
+        "no store was emptied: {}",
+        unseeded.printed()
+    );
+    unseeded.stop();
+    assert_eq!(recorded(&schema, "audit"), Some(record));
+    assert_eq!(recorded(&schema, "board"), None);
+    old.release("audit", token)
+        .expect("the old release's process ends");
+}

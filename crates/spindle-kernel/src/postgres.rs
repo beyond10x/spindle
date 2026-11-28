@@ -947,6 +947,17 @@ impl Lease {
         self.step(table, table, Step::TakeExisting)
     }
 
+    /// Renews the lease of `table` held under `token` for another term, as [`Lease::renew`] does
+    /// a component's: `false` once another process took it.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where `table` is not a lease table of the schema, or the lease
+    /// cannot be read or written.
+    pub fn renew_orphan(&mut self, table: &str, token: u64) -> Result<bool, StoreError> {
+        self.orphan(table)?;
+        Ok(self.step(table, table, Step::Renew(token))?.is_some())
+    }
+
     /// Ends the lease of `table` held under `token` now, as [`Lease::release`] does a component's.
     ///
     /// # Errors
