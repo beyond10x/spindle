@@ -447,7 +447,8 @@ fn continue_on(store: &mut dyn Store, round: u32) {
 
 /// A log of 0.7.0 to 0.10.0 moved into PostgreSQL arrives unmarked, every `spindle.written`
 /// naming its instances, and answers every scan and load the file answers, before and after
-/// writes of this release on both.
+/// writes of this release on both. Its history of 300 rounds is still over the feed's page of
+/// 1,000 events; 600 took 4.7 s alone and 7.5 s in the lane (`story:postgres-lane-margin-ci`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn a_moved_log_of_0_10_answers_every_scan_and_load_the_file_answers() {
@@ -455,7 +456,7 @@ fn a_moved_log_of_0_10_answers_every_scan_and_load_the_file_answers() {
     let path = directory.path().join("named.sqlite");
     let mut old = Old::open(&path);
     let mut dice = Dice(0x5350_4d56_0019_0003);
-    named_history(&mut old, &mut dice, 600);
+    named_history(&mut old, &mut dice, 300);
     drop(old);
     let mut file = SqliteStore::open(&path).expect("the file opens");
     let before = answers(&mut file);

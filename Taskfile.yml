@@ -16,6 +16,7 @@ tasks:
       - task: check:changed_paths_are_classified
       - task: check:the_release_binary_checks_refuse_what_they_must
       - task: check:within_fails_over_its_bound
+      - task: check:each_test_within_fails_over_its_bound
       - task: check:the_postgres_options_are_one
       - task: check:postgres-options-adversary
       - ess specify validate --path ess
@@ -59,6 +60,11 @@ tasks:
       - sh scripts/within.sh 5 true
       - if sh scripts/within.sh 1 sleep 2; then echo "within.sh passed a 2-second sleep with a 1-second bound" >&2; exit 1; fi
       - sh -c 'sh scripts/within.sh 5 sh -c "exit 3"; status=$?; [ "$status" -eq 3 ] || { echo "within.sh answered $status for a command that exits 3" >&2; exit 1; }'
+
+  check:each_test_within_fails_over_its_bound:
+    desc: scripts/each-test-within.sh, the PostgreSQL lane's bound on each test, passes a JUnit report whose slowest test took the bound, fails one with a test over it naming that test and its time, reads a failing test's case, and fails a missing report, one that names no test and a bound that is not whole seconds
+    cmds:
+      - sh scripts/each-test-within.test.sh
 
   check:the_tests_pass_within_the_budget:
     desc: Every Rust test of the workspace under cargo-nextest, each killed at 60 s by .config/nextest.toml; the step after the build ends within 120 s and prints its ten slowest tests
@@ -185,7 +191,7 @@ tasks:
       - sh scripts/postgres-lane.sh lane -- {{.TASK_EXE}} check:postgres:run
 
   check:postgres:run:
-    desc: The PostgreSQL store's and the state move's tests against the database SPINDLE_TEST_DATABASE_URL names (loopback, a role that may create schemas, roles and tables), the hosted cases over TLS verified against SPINDLE_TEST_DATABASE_CA, under cargo-nextest's postgres profile, each killed at 60 s by .config/nextest.toml; the run after the build ends within 100 s and prints its ten slowest tests
+    desc: The PostgreSQL store's and the state move's tests against the database SPINDLE_TEST_DATABASE_URL names (loopback, a role that may create schemas, roles and tables), the hosted cases over TLS verified against SPINDLE_TEST_DATABASE_CA, under cargo-nextest's postgres profile, each killed at 60 s by .config/nextest.toml; the run after the build ends within 100 s and prints its ten slowest tests, and the task fails naming each test that took over 15 s (scripts/each-test-within.sh on the run's JUnit report)
     requires:
       vars: [SPINDLE_TEST_DATABASE_URL, SPINDLE_TEST_DATABASE_CA]
     vars:
@@ -202,6 +208,7 @@ tasks:
       - '{{.NEXTEST}} --no-run'
       - defer: { task: test:slowest, vars: { NEXTEST_PROFILE: postgres } }
       - "sh scripts/within.sh 100 {{.NEXTEST}} --run-ignored all -E '{{.TESTS}}'"
+      - sh scripts/each-test-within.sh 15 target/nextest/postgres/junit.xml
 
   check:postgres-lane-script:
     desc: scripts/postgres-lane.sh, on PostgreSQL's binaries from SPINDLE_PG_BIN or PATH (it fails without initdb and pg_ctl), stops and removes its cluster when its command fails and on SIGINT, prints a major other than 17 with a warning, makes and starts the cluster with SPINDLE_PG_BIN's binaries, and starts none when SPINDLE_TEST_DATABASE_URL is set

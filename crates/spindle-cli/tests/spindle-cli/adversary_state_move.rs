@@ -324,7 +324,9 @@ fn a_row_holding_a_nul_character_moves_or_the_move_writes_nothing() {
 
 /// A log of several thousand events, its append groups (one of them over 1000 events) straddling
 /// the feed's pages of 1000, a removal and a re-creation among them: every stream arrives at its
-/// version and every row as it rests, and the entity's version is the same.
+/// version and every row as it rests, and the entity's version is the same. 150 rounds write
+/// 3,659 events, the widest group 1,401; 300 took 6.7 s alone and 9.3 s in the lane
+/// (`story:postgres-lane-margin-ci`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn a_long_log_with_groups_across_pages_arrives_whole() {
@@ -332,7 +334,7 @@ fn a_long_log_with_groups_across_pages_arrives_whole() {
     one_row_each(directory.path());
     let mut table = SqliteStore::open(&file(directory.path(), "rally-table")).expect("opens");
     let mut versions = BTreeMap::<String, u64>::new();
-    for round in 0..300_u64 {
+    for round in 0..150_u64 {
         let identities: Vec<String> = (0..7_u64)
             .map(|slot| format!("m{}", (round * 7 + slot) % 40))
             .collect();

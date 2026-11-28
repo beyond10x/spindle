@@ -143,7 +143,8 @@ of 4 of this machine's CPUs drawn at random, taken core by core with each core's
 (`SPINDLE_PG_LANE_CPUS=<n>` names another count, `0` every CPU), and nextest runs the
 `postgres` profile's 8 threads, `NEXTEST_TEST_THREADS` dropped (a build wrapper sets it to its
 own width). The lane runs its tests in one nextest run under `scripts/within.sh 100`, none alone
-after the rest: a case that judges what a scan costs counts PostgreSQL's reads of the event table
+after the rest, and then fails naming each test that took over 15 s (`scripts/each-test-within.sh`
+on the run's JUnit report, its own cases in `task check:each_test_within_fails_over_its_bound`): a case that judges what a scan costs counts PostgreSQL's reads of the event table
 (the rows `pg_stat_user_tables` and `pg_stat_user_indexes` count, read once the case's
 sessions have ended: `crates/spindle-kernel/tests/spindle-kernel/postgres_reads.rs`) instead of
 timing it, as a time flips under load. On a 32-CPU build node the unpinned lane's run took 48 to
