@@ -287,8 +287,32 @@ list for `linux/amd64` and `linux/arm64`: the release's gnu binary on `gcr.io/di
 listed in `SHA256SUMS`, names that list by digest (`ghcr.io/beyond10x/spindle:<version>@sha256:<digest>`);
 pull it by that line. A container port reaches `run` only on an address off loopback
 (`--address 0.0.0.0`), which needs `--trusted-caller-header` and `--trusted-caller-secret`, or
-`--caller-token` with `--tls-cert` and `--tls-key`. Changes
-are in [`CHANGELOG.md`](CHANGELOG.md), and the release steps in
+`--caller-token` with `--tls-cert` and `--tls-key`.
+
+Each asset (the archives, the SBOM, `IMAGES` and `SHA256SUMS`) carries a cosign keyless signature
+beside it as `<asset>.sigstore.json` and a build provenance attestation in the repository's
+attestations, and the image is signed and attested by its digest. The signer is the release
+workflow at the tag's ref. Verify an asset before you deploy it:
+
+```sh
+id=https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/tags/<version>
+issuer=https://token.actions.githubusercontent.com
+cosign verify-blob --bundle <asset>.sigstore.json --certificate-identity "$id" \
+  --certificate-oidc-issuer "$issuer" <asset>
+gh attestation verify <asset> --repo beyond10x/spindle \
+  --signer-workflow beyond10x/spindle/.github/workflows/release.yml
+```
+
+and the image by the line in `IMAGES`:
+
+```sh
+cosign verify --certificate-identity "$id" --certificate-oidc-issuer "$issuer" "$(cat IMAGES)"
+gh attestation verify "oci://$(cat IMAGES)" --repo beyond10x/spindle \
+  --signer-workflow beyond10x/spindle/.github/workflows/release.yml
+```
+
+An asset added later to an older release by a backfill is signed by the workflow at
+`refs/heads/main` instead. Changes are in [`CHANGELOG.md`](CHANGELOG.md), and the release steps in
 [`AGENTS.md`](AGENTS.md#cutting-a-release).
 
 ## License

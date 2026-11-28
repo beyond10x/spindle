@@ -6,6 +6,54 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- Each release asset (every archive, the SBOM, `IMAGES` and `SHA256SUMS`) carries a cosign keyless
+  signature, uploaded beside it as `<asset>.sigstore.json`, and a SLSA build provenance
+  attestation in the repository's attestations; the image's manifest list is signed by its digest
+  and attested the same way. The signer is `release.yml` at the tag's ref, or at
+  `refs/heads/main` for a backfill, which fails before it builds anything when it is dispatched
+  from another ref. A new job `sign`, the only one with `attestations: write`,
+  and `image-manifest` are the only jobs with `id-token: write`, and neither runs on a pull
+  request; cosign v3.1.6 is checked against its pinned sha256 before it runs, and
+  `actions/attest-build-provenance` v4.2.2 is pinned by commit. `publish` uploads each bundle with
+  its asset, then downloads every asset back from the page and verifies it with
+  `cosign verify-blob` and `gh attestation verify`, the image with `cosign verify` and
+  `gh attestation verify oci://`, and fails the run on any check that fails. `gh` must answer one
+  JSON list, every attestation in it must be signed by `release.yml` at `refs/heads/main` or at
+  the tag's ref, each at the tag's ref must name the tagged commit, and one must name the commit
+  of the run, so a backfill passes beside the attestations of the tag run and of earlier
+  backfills. The README tells a
+  consumer how to verify each (`story:release-artifacts-signed`).
+
+### Fixed
+
+- A `POST /api/reset` whose PostgreSQL store did not answer within its deadline, as behind a lock
+  another database session holds, keeps the component's store, so the next command runs as
+  before. While the reset has changed no row, it answers `503` `{"refused", "committed": false}`
+  and nothing was reset; once it has changed rows (a row removed, an earlier store emptied, a
+  world row written), it answers `500`, saying that the store is kept and that the reset can be
+  sent again. Before, every such reset answered `500` and replaced the store with a lost one, and
+  every later command answered `501` until the run restarted; a reset whose world's rows were
+  checked against a busy store, before any store was emptied, answered `400` as if the world were
+  wrong, and now answers that `503`. `Host::reset` returns
+  `HostError::Store(StoreError::Busy(..))` naming the component and the step that was busy; a
+  store that fails in any other way is lost as before (`HostError::Reset`, `restored: false`)
+  (`story:reset-on-a-busy-store-keeps-the-store`).
+- A command whose PostgreSQL commit has an unknown outcome, because the store's deadline fired
+  after COMMIT was sent, answers `500` `{"refused", "committed": "unknown"}` where it answered
+  `501` with `committed: false`: the write may have landed, so a caller reads before it sends the
+  same request again. The request log records it `failed`, and a leased run that finds its lease
+  lost does not replace it with its `503`. eventlog's `UnknownCommit` reaches the ingress as the
+  new `spindle_kernel::StoreError::Unknown`, displayed `store: …` as before, answered by the new
+  `spindle_ingress::Answer::unknown`. A reset whose removal or forgetting of events meets it loses
+  the store, as before; one whose world row meets it keeps the store and answers `500`
+  `{"refused", "committed": "unknown"}`. A removal or a world row that meets it now counts as a changed
+  row (`spindle_host::Host::reset_changed_rows` reads `true`), since it may have landed, so a caller
+  does not put back what it removed for the reset.
+  Only the PostgreSQL store returns it; a store failure before COMMIT answers `503` or `501` as
+  before (`story:unknown-commit-answered-as-unknown`).
+
 ## [0.28.0] - 2026-11-28
 
 ### Added

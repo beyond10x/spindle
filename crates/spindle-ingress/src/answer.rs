@@ -101,6 +101,19 @@ impl Answer {
             headers: Vec::new(),
         }
     }
+
+    /// The `500` of a command whose store cannot say whether its write landed
+    /// ([`StoreError::Unknown`]), as a PostgreSQL commit whose deadline fired after COMMIT was
+    /// sent: `committed` is the string `"unknown"`, never `false`, since the write may have
+    /// landed, so a caller reads before it sends the same request again
+    /// (`story:unknown-commit-answered-as-unknown`).
+    pub fn unknown(detail: impl Into<String>) -> Self {
+        Self {
+            status: 500,
+            body: Some(json!({"refused": detail.into(), "committed": "unknown"})),
+            headers: Vec::new(),
+        }
+    }
 }
 
 /// Answers one request for `route`, whose path carries `carried`, whose query string (after the
@@ -143,7 +156,10 @@ impl Answer {
 ///
 /// A body that is not a JSON object, or input the kernel refuses, is refused `400`. A command the
 /// kernel does not run answers `501` with `committed: false`; one whose store did not answer
-/// within its deadline answers `503` with `committed: false` ([`Answer::busy`]); one whose effect
+/// within its deadline answers `503` with `committed: false` ([`Answer::busy`]); one whose store
+/// cannot say whether its write landed, as a PostgreSQL commit whose deadline fired after COMMIT
+/// was sent, answers `500` with `committed: "unknown"` ([`Answer::unknown`]): the write may have
+/// landed, so a caller reads before it sends again; one whose effect
 /// was written and whose consequences could not be carried answers `501` with `committed: true`. A
 /// view the host cannot answer is refused `501`, naming what it does not read.
 ///
@@ -582,6 +598,9 @@ fn run(
             }
             ExecuteError::NotGranted { actor } => Answer::not_granted(&actor),
             busy @ ExecuteError::Store(StoreError::Busy(_)) => Answer::busy(busy.to_string()),
+            unknown @ ExecuteError::Store(StoreError::Unknown(_)) => {
+                Answer::unknown(unknown.to_string())
+            }
             other => Answer::unfinished(other.to_string(), false),
         },
         Err(error @ HostError::NotAccepted(_)) => Answer::unfinished(error.to_string(), false),

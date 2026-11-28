@@ -2,11 +2,15 @@
 format: aep.planning-md/3
 id: story:postgres-lane-margin
 kind: story
-status: draft
+status: implemented
 title: The PostgreSQL lane ends within 90 s on the CI runner
 relations:
 - serves: vision:spindle
-revision: 1
+revision: 4
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-28T14:03:08Z", actor: "human:operator", revision: 2}
+- {from: "proposed", to: "active", at: "2026-11-28T14:03:09Z", actor: "human:operator", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-28T14:03:09Z", actor: "human:operator", revision: 4, decided_on: {"recorded":{"test_result":1}}}
 ---
 ## Outcome
 

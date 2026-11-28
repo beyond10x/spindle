@@ -526,7 +526,6 @@ fn reads_held_through_the_reader_answer_the_documented_statuses() {
 /// waits out its deadline, it should answer that `503`; once the store answers again, a command
 /// should be written (`202`, the route's status of `opened`), the run still leading on its store.
 #[test]
-#[ignore = "story:reset-on-a-busy-store-keeps-the-store"]
 fn a_reset_held_by_a_busy_store_answers_the_documented_503_and_the_run_keeps_its_store() {
     let Built {
         mut host,

@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-28T16:05:45Z",
+  "actor": "human:operator",
+  "artifact": "story:release-artifacts-signed",
+  "kind": "story",
+  "revision": 9,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "unit/w34-release-signed at b8ba2006: release check 453 cases, 0 failed, about 25 s (251 before the unit); docs-check current; actionlint 1.7.12 no findings; the same 453 cases pass with mawk as awk. Real signing and verification run first in the 0.29.0 tagged release. wave/34 at ae1a5478: task check exit 0, 2226 passed, nextest 31.7 s of 120 s; PostgreSQL lane pinned to 4 CPUs as on CI, 206 passed in 76.0 s of 100 s; lane script 38 cases, lane adversary 21 cases. After main (PR 109) merged at 42488ced: lane 206 passed in 74.0 s, slowest 12.6 s, each within 15 s; task check 2226 passed in 115.9 s of 120 s on a loaded build node."
+  }
+}

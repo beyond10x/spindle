@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-28T16:05:46Z",
+  "actor": "human:operator",
+  "artifact": "story:unknown-commit-answered-as-unknown",
+  "kind": "story",
+  "revision": 14,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "unit/w34-unknown-commit at bf8faca2: spindle-kernel 551, spindle-ingress 253, spindle-host 268 passed; a mutant counting every failed world row as changed killed by adversary_w34_u2_r2; on wave/34 bcdf0861 the reset's world-row Unknown answers committed unknown, red before and green after (spindle-ingress 235 passed). wave/34 at ae1a5478: task check exit 0, 2226 passed, nextest 31.7 s of 120 s; PostgreSQL lane pinned to 4 CPUs as on CI, 206 passed in 76.0 s of 100 s; lane script 38 cases, lane adversary 21 cases. After main (PR 109) merged at 42488ced: lane 206 passed in 74.0 s, slowest 12.6 s, each within 15 s; task check 2226 passed in 115.9 s of 120 s on a loaded build node."
+  }
+}

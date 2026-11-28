@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-28T16:05:47Z",
+  "actor": "human:operator",
+  "artifact": "story:reset-on-a-busy-store-keeps-the-store",
+  "kind": "story",
+  "revision": 25,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "unit/w34-busy-reset at d2ff2c7e: spindle-host 268, spindle-ingress 232, spindle-cli 742 passed; the busy world check read (400 to 503) and the unnamed busy world-row write each red on the unit before their fix. wave/34 at ae1a5478: task check exit 0, 2226 passed, nextest 31.7 s of 120 s; PostgreSQL lane pinned to 4 CPUs as on CI, 206 passed in 76.0 s of 100 s; lane script 38 cases, lane adversary 21 cases. After main (PR 109) merged at 42488ced: lane 206 passed in 74.0 s, slowest 12.6 s, each within 15 s; task check 2226 passed in 115.9 s of 120 s on a loaded build node."
+  }
+}

@@ -242,11 +242,18 @@ makes, as ESS's served application makes them, are `{"refused": "<why>"}`:
 A command the runtime cannot complete answers `501` with `{"refused", "committed"}`. A command
 whose PostgreSQL store did not answer within its deadline, as a write held behind a lock another
 database session holds, answers `503` with `{"refused", "committed": false}`: nothing was written,
-and the same request is safe to send again. A SQLite store reports no deadline: a command whose
-write it finds busy answers `501`. Outside a drain, a read held so is not answered `503`: a view
+and the same request is safe to send again. A command whose PostgreSQL commit has an unknown
+outcome, as when the store's deadline fired after COMMIT was sent, answers `500` with
+`{"refused", "committed": "unknown"}`: the write may have landed, so a caller reads before it sends
+the same request again. A SQLite store reports no deadline: a command whose write it finds busy
+answers `501`. Outside a drain, a read held so is not answered `503`: a view
 answers `501` `{"refused"}`, and `GET /api/events` and `GET /api/history` answer `500`
 `{"refused"}`; during a drain after SIGINT or SIGTERM, an events or history read still waiting for
 the store is cut off and answered `503`
 ([draining on SIGTERM](observe.md#draining-on-sigterm)). A
-`POST /api/reset` held so answers `500` and leaves the component's store lost until the run
-restarts (`story:reset-on-a-busy-store-keeps-the-store`).
+`POST /api/reset` held so keeps the component's store, and the next command runs as before: while
+the reset has changed no row, it answers `503` with `{"refused", "committed": false}` and nothing
+was reset; once it has changed rows (a row removed, an earlier store emptied, a world row written),
+it answers `500` `{"refused"}`, saying that the store is kept and that the reset can be sent again
+(`story:reset-on-a-busy-store-keeps-the-store`). A reset whose store fails in any other way
+answers `500` and leaves the component's store lost until the run restarts.

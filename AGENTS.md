@@ -223,7 +223,8 @@ cut from `main`:
    observe UI once and `b10x-spindle` with it embedded for `x86_64-unknown-linux-gnu`,
    `aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-musl`, `aarch64-apple-darwin` (`macos-15`)
    and `x86_64-apple-darwin` (`macos-15-intel`); and uploads
-   `b10x-spindle-<version>-<target>.tar.gz` and `SHA256SUMS` to the page once it exists. The two
+   `b10x-spindle-<version>-<target>.tar.gz` and `SHA256SUMS`, each with its signature bundle, to
+   the page once it exists. The two
    gnu binaries link against glibc 2.17 through `cargo auditable zigbuild --target
    <target>.2.17`; `scripts/release-linux-binary.sh` fails the row on any `GLIBC_` symbol version
    above 2.17 (`objdump -T`) and runs `--version` in `debian:bookworm`. The musl binary is built
@@ -234,7 +235,7 @@ cut from `main`:
    readings and the parent-death signal are Linux-only and compile to a declared refusal there.
    CI's `macOS` job checks and lints the workspace for both macOS targets and runs the in-process
    test lanes and the off-Linux refusals of the microVM crates. A target is added as a matrix row
-   in the `build` job and a name in the `sbom` and `publish` jobs' `targets`, with the `sbom`
+   in the `build` job and a name in the `sbom` and `sign` jobs' `targets`, with the `sbom`
    job's count of targets. It never creates or edits the page and never replaces an asset. The
    `image` job, one row per gnu target on a runner of its architecture (`linux/amd64`,
    `linux/arm64`), builds [`Containerfile`](Containerfile) from the archive the `build` job checked:
@@ -256,20 +257,58 @@ cut from `main`:
    a tag listing anything else is refused and never moved, and so is any other answer of the
    registry. It writes the list's digest to `IMAGES` (`images-line`) and to its summary, and refuses
    a list that is not exactly `linux/amd64` and `linux/arm64` with each checked image on its own
-   platform (`manifest-list`); `publish` lists `IMAGES` in `SHA256SUMS` and uploads it. The stub
-   cases of `task check:the_release_binary_checks_refuse_what_they_must` test every mode and run
-   the workflow's tag, checksum and upload steps on stub tools. A pull request that changes the
+   platform (`manifest-list`), then signs the list with cosign by that digest, never by its tag.
+   `sign` checks each artifact against the hash its job wrote, lists them, `IMAGES` included, in
+   `SHA256SUMS`, signs each archive, the SBOM, `IMAGES` and `SHA256SUMS` with cosign keyless into
+   `<asset>.sigstore.json`, and attests the build provenance of each and of the image's manifest
+   list by its digest with `actions/attest-build-provenance`, kept in the repository's
+   attestations. `sign` is the only job with `attestations: write`, and with `image-manifest` the
+   only one with `id-token: write`; neither runs on a pull request. cosign is the release binary
+   `cosign-linux-amd64` of v3.1.6, checked with `sha256sum --check --strict` against its pinned
+   sha256 before it runs, in each job that fetches it; every action is pinned by commit.
+   `publish` uploads each asset with its bundle and refuses one already on the page; it then
+   downloads them back and verifies each with `cosign verify-blob` and `gh attestation verify`
+   (each attestation must be signed by `release.yml` at `refs/heads/main` or at the tag's ref,
+   each at the tag's ref must name the tagged commit, and one must name the commit expected for
+   the run: the tagged commit on a tag push, `github.sha` on a backfill; `gh` must print one JSON
+   list), refuses a copy of one archive with one byte changed, and
+   verifies the image with `cosign verify` and `gh attestation verify oci://<line>`, each command
+   and its output in the run's summary; a failed check fails the run. The signing identity is
+   `https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/tags/<version>`, or
+   `@refs/heads/main` for a backfill. The stub cases of
+   `task check:the_release_binary_checks_refuse_what_they_must` test every mode and run the
+   workflow's tag, checksum, cosign install, signing, upload and verification steps on stub tools,
+   and check the permissions of every job, refusing a `jobs:` section whose jobs are not each a
+   `<name>:` line at 2 spaces with their keys at 4, or whose keys are quoted, escaped or written in
+   flow style at any depth, under gawk and mawk alike. A pull request that changes the
    workflow, the script or the Containerfile runs the builds, builds and checks both images, and
    publishes and pushes nothing. `workflow_dispatch` with `tag` backfills an existing tag whose
    page lacks the assets: a version older than 0.26.0 without a root `Containerfile` builds no
-   image, and `publish` uploads the archives, the SBOM and `SHA256SUMS` without `IMAGES`; for
-   0.26.0 or later a commit without one fails `provenance`, naming the file. A commit with one
+   image, and `publish` uploads the archives, the SBOM and `SHA256SUMS`, signed, without
+   `IMAGES`; for 0.26.0 or later a commit without one fails `provenance`, naming the file. A
+   backfill is dispatched from `main`: `provenance`'s first step fails a `workflow_dispatch` run
+   from any other ref before anything is built or signed. It is signed by the workflow at
+   `refs/heads/main`, and its attestations name the commit of `main` the workflow ran from
+   (`github.sha`), not the tag's. Attestations of earlier runs stay beside a backfill's and pass:
+   the tag run's at the tagged commit, and an earlier backfill's at another commit of `main`. A
+   commit with one
    rebuilds the images, and their tag is left as it is only where the rebuilt images have the
    digests it lists, since a rebuilt binary that differs gives other images. `image-manifest`
    tags only on the registry's answer `<image>:<version>: not found`; any other error stops it.
 7. Verify: the `Release` run for the tag succeeded; the page is authored by `b10x-bot[bot]`, is
-   Latest and resolves to the tag's commit; it carries one archive per target, `IMAGES` and
-   `SHA256SUMS`, and `sha256sum --check SHA256SUMS` passes on the downloaded assets. The line in
+   Latest and resolves to the tag's commit; it carries one archive per target, the SBOM, `IMAGES`
+   and `SHA256SUMS`, each with its `<asset>.sigstore.json`, and `sha256sum --check SHA256SUMS`
+   passes on the downloaded assets. The `publish` job's summary shows each check below passing;
+   to repeat one, with `id` the identity
+   `https://github.com/beyond10x/spindle/.github/workflows/release.yml@refs/tags/<version>`:
+   `cosign verify-blob --bundle <asset>.sigstore.json --certificate-identity <id>
+   --certificate-oidc-issuer https://token.actions.githubusercontent.com <asset>` and
+   `gh attestation verify <asset> --repo beyond10x/spindle --signer-workflow
+   beyond10x/spindle/.github/workflows/release.yml` for each asset;
+   `cosign verify --certificate-identity <id> --certificate-oidc-issuer
+   https://token.actions.githubusercontent.com <line>` and `gh attestation verify oci://<line>
+   --repo beyond10x/spindle --signer-workflow beyond10x/spindle/.github/workflows/release.yml` for
+   the image. The line in
    `IMAGES` resolves to a manifest list of `linux/amd64` and `linux/arm64`
    (`docker buildx imagetools inspect <line>`), `docker run --rm <line> --version` prints
    `b10x-spindle <version>`, and the `spindle` package on `ghcr.io` is public.

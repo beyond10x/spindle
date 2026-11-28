@@ -361,7 +361,8 @@ emptied with the old record left would read as seeded at the next start. Once th
 ended, or the row `seed` of that table is removed, the reset can be sent again. A reset that then
 changes no store's rows puts the rows back, in one transaction, before it answers, whatever it
 answers: `400` for a row of its world, `503` where the lease was lost and the fence refused its
-first write, `500` where a store refused its first removal. A run that lost its lease while the
+first write or a store did not answer within its deadline before any row changed, `500` where a
+store refused its first removal otherwise. A run that lost its lease while the
 reset ran keeps renewing the leases of the removed components' tables, not its own, until the
 reset has put the rows back, as long as the reset's store operations may still wait, then exits.
 A reset that removed no such row keeps its answer as it is. Its answer stands; where the put-back
@@ -669,8 +670,10 @@ every write of the component's tables waits for. A command to the new leader hel
 answers `503` with `{"refused", "committed": false}` once it has waited out the store's lock wait
 (2 s), until the paused leader's session ends, at most 10 s after the pause: nothing was written,
 the same request is safe to send again, and the new leader keeps leading. A `POST /api/reset`
-held the same way answers `500` and leaves the component's store lost until the run restarts
-(`story:reset-on-a-busy-store-keeps-the-store`). A store's operations
+held the same way keeps the component's store: while it has changed no row it answers `503` with
+`{"refused", "committed": false}`, and once it has, `500`, saying that the store is kept and that
+the reset can be sent again (`story:reset-on-a-busy-store-keeps-the-store`); a reset whose store
+fails in any other way loses it until the run restarts. A store's operations
 keep their own 10 s deadline whatever the lease. Before it runs a request, a
 leader whose last renewal began two thirds of the lease ago or longer, as after a pause, waits
 until it has renewed its leases or found one taken. A write the check refuses counts as a lease
