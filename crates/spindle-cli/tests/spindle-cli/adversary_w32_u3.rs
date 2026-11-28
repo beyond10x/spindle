@@ -338,6 +338,22 @@ mod postgres {
         }
     }
 
+    /// Waits for `replica`, signalled at `signalled`, to exit while `holder`'s transaction stays
+    /// open: it is ended once the run exits, or 1 s past `bound` where the run has not, and the
+    /// wait goes on to 12 s after the signal. A run the transaction holds exits only after it
+    /// ends, past the bound. Ending it at the exit rather than at the bound frees the feed of every
+    /// other test of the lane that much sooner (`story:postgres-lane-margin-ci`).
+    fn exit_holding(
+        replica: &mut Replica,
+        holder: &Holder,
+        signalled: Instant,
+        bound: Duration,
+    ) -> Option<(ExitStatus, Instant)> {
+        let exit = replica.exited_by(signalled + bound + Duration::from_secs(1));
+        holder.end_at(Instant::now());
+        exit.or_else(|| replica.exited_by(signalled + Duration::from_secs(12)))
+    }
+
     /// `run --help`: a leading run exits within `--drain` (counted only while requests wait), the
     /// longest `timeout_ms` of an `[egress]` call and 5 s of the signal, "also while another
     /// session on the server holds a transaction open" (`CHANGELOG.md`). Here no request waits
@@ -345,8 +361,8 @@ mod postgres {
     /// `GET /api/events` (on by default on loopback) after the run committed t2 behind another
     /// session's open transaction: the read is answered beside the run's thread, waits in the
     /// feed for t2 (`LogStore::published`, up to 30 s), and the listener's close at exit waits for
-    /// that read to end. The transaction is held until 1 s past the bound; the run exits within
-    /// the bound, before it ends.
+    /// that read to end. The transaction is held until the run exits or 1 s past the bound,
+    /// whichever comes first ([`exit_holding`]); the run exits within the bound, while it is open.
     #[test]
     #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
     fn a_leader_with_an_events_read_under_way_exits_within_the_bound_under_an_open_transaction() {
@@ -378,8 +394,7 @@ mod postgres {
 
         let signalled = leader.terminate();
         let bound = ALLOWANCE;
-        holder.end_at(signalled + bound + Duration::from_secs(1));
-        let exit = leader.exited_by(signalled + Duration::from_secs(12));
+        let exit = exit_holding(&mut leader, &holder, signalled, bound);
         let ended = Instant::now();
         let read = reading.recv_timeout(Duration::from_secs(5)).ok();
         let _ = reader.join();
@@ -489,7 +504,8 @@ mod postgres {
     /// cursor saved, and only then are the leases released, so the standby that takes over posts
     /// nothing the old leader posted. The webhook answers each post 1.5 s after it read it, within
     /// the call's `timeout_ms` of 2000; SIGTERM comes while t1's post waits for its answer. The
-    /// run exits within 2 s + 5 s; t1 reaches the webhook once, from the old leader.
+    /// run exits within 2 s + 5 s; t1 reaches the webhook once, from the old leader, before t2,
+    /// which the new leader commits and posts.
     #[test]
     #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
     fn a_post_under_way_at_sigterm_is_saved_before_the_standby_takes_over() {
@@ -530,7 +546,25 @@ mod postgres {
             standby.printed()
         );
         standby.ready_by(exited + ANSWER);
-        std::thread::sleep(Duration::from_secs(3));
+        // The new leader's lane posts in commit order from the cursor the old leader saved: had
+        // t1's not been saved, t1 reaches the webhook again before t2, which the new leader
+        // commits now. A fixed 3 s wait here missed such a post whenever another test's open
+        // transaction held the feed longer (`story:postgres-lane-margin-ci`).
+        let (status, answer) = standby.open("t2");
+        assert_eq!(status, 201, "the new leader writes t2: {answer}");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !webhook
+            .bodies()
+            .iter()
+            .any(|body| body["fields"]["task_id"] == "t2")
+        {
+            assert!(
+                Instant::now() < deadline,
+                "the new leader never posted t2: {}",
+                standby.printed()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
         let bodies = webhook.bodies();
         let t1: Vec<&Value> = bodies
             .iter()
@@ -599,8 +633,7 @@ mod postgres {
             "the events read waits for t2, which the open transaction withholds: {early:?}"
         );
         let signalled = standby.terminate();
-        holder.end_at(signalled + ALLOWANCE + Duration::from_secs(1));
-        let exit = standby.exited_by(signalled + Duration::from_secs(12));
+        let exit = exit_holding(&mut standby, &holder, signalled, ALLOWANCE);
         let read = answer.recv_timeout(Duration::from_secs(5)).ok();
         let _ = reader.join();
         holder.join();
@@ -658,8 +691,7 @@ mod postgres {
             "the view read waits for the slot the events read holds: {early:?}"
         );
         let signalled = leader.terminate();
-        holder.end_at(signalled + ALLOWANCE + Duration::from_secs(1));
-        let exit = leader.exited_by(signalled + Duration::from_secs(12));
+        let exit = exit_holding(&mut leader, &holder, signalled, ALLOWANCE);
         let viewed = view.recv_timeout(Duration::from_secs(5)).ok();
         let read = events.recv_timeout(Duration::from_secs(5)).ok();
         let _ = view_thread.join();

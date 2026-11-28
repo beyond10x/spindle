@@ -564,7 +564,8 @@ const RETRY_CAP: Duration = Duration::from_secs(5);
 /// `story:leader-exits-promptly-on-sigterm`: a leader whose egress lane waits for the feed, which
 /// withholds the cursor the leader saved behind a transaction another session opened before it,
 /// exits within [`EXIT_BOUND`] of SIGTERM while that transaction is still open, the cursor saved
-/// and its leases released: the standby takes over at once and does not post t1 again.
+/// and its leases released: the standby takes over at once, while it is still open, and posts t2,
+/// which it commits, and not t1 again.
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn a_leader_exits_within_the_bound_under_an_open_transaction() {
@@ -608,7 +609,6 @@ fn a_leader_exits_within_the_bound_under_an_open_transaction() {
         since <= RETRY_CAP,
         "the signal came {since:?} after the older transaction opened, past {RETRY_CAP:?}"
     );
-    holder.end_at(signalled + EXIT_BOUND + Duration::from_secs(1));
     let mut leader = leader;
     leader.signal(rustix::process::Signal::TERM);
     let (status, exited) = exit_status_within(&mut leader, signalled + EXIT_BOUND);
@@ -630,30 +630,42 @@ fn a_leader_exits_within_the_bound_under_an_open_transaction() {
         "the standby took the lease {:?} after the exit",
         took.saturating_duration_since(exited)
     );
-    standby.ready_by(exited + Duration::from_secs(10));
-    std::thread::sleep(Duration::from_secs(3));
+    // The exit and the takeover both came while the transaction held the feed. It ends now, not
+    // 8 s after the signal, which freed the feed of every other test of the lane that much later
+    // (`story:postgres-lane-margin-ci`).
+    holder.end_at(Instant::now());
     holder.join();
+    standby.ready_by(exited + Duration::from_secs(10));
+    // The new leader's lane posts in commit order from the cursor the old leader saved: had it not
+    // been saved, t1 reaches the webhook again before t2, which the new leader commits now. A
+    // fixed 3 s wait here ended before the feed let any post of the new leader through.
+    let (status, answer) = standby.open("t2");
+    assert_eq!(status, 201, "the new leader writes t2: {answer}");
+    accepted(&webhook, 2);
 
     let received = webhook.received();
     let printed = format!("{received:?}");
     assert!(
-        received.iter().all(
-            |posted| posted.body["event"] == OPENED && posted.body["fields"]["task_id"] == "t1"
-        ),
-        "only t1 was posted: {printed}"
+        received.iter().all(|posted| posted.body["event"] == OPENED),
+        "only TaskOpened was posted: {printed}"
     );
-    let statuses: Vec<u16> = received.iter().map(|posted| posted.status).collect();
-    assert_eq!(statuses.first(), Some(&500), "{printed}");
+    let posted = |task: &str| -> Vec<u16> {
+        received
+            .iter()
+            .filter(|posted| posted.body["fields"]["task_id"] == task)
+            .map(|posted| posted.status)
+            .collect()
+    };
+    let t1 = posted("t1");
+    assert_eq!(t1.first(), Some(&500), "{printed}");
     assert_eq!(
-        statuses.iter().filter(|status| **status == 200).count(),
+        t1.iter().filter(|status| **status == 200).count(),
         1,
-        "t1 was accepted once: {printed}"
+        "t1 was accepted once, from the old leader; the new leader did not post it again: \
+         {printed}"
     );
-    assert_eq!(
-        statuses.last(),
-        Some(&200),
-        "the old leader's accepted post was the last; the new leader posted nothing: {printed}"
-    );
+    assert_eq!(t1.last(), Some(&200), "{printed}");
+    assert_eq!(posted("t2"), [200], "the new leader posted t2: {printed}");
 }
 
 /// Waits until `replica` exits, at most until `deadline`: its status, and the instant the test
