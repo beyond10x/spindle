@@ -1027,8 +1027,7 @@ impl<L: Log> LogStore<L> {
 
     /// The greatest `after` of the [`CONTINUED`] events of the stream [`DEAD_LETTERS`] before
     /// `version`, `0` for none: what the id of the dead letter at `version` adds to it. Reads on
-    /// from where the last call         loop {
-    // The feed answers a prefixped, so keeping one dead letter after another does not read
+    /// from where the last call stopped, so keeping one dead letter after another does not read
     /// the stream again from its start.
     fn offset_before(&mut self, version: u64) -> Result<u64, StoreError> {
         let stream = self.dead_letter_stream()?;
