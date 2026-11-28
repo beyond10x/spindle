@@ -24,7 +24,7 @@ scope:
   path: ess/generated/jsonschema
 - confidence: cited
   path: ui/src/api/generated
-revision: 9
+revision: 10
 ---
 # The metric label vocabulary and the family description are specified in spindle.observe
 
@@ -177,7 +177,8 @@ read the tree of 2026-11-10. Every line is **cited** (read from the story or the
   `ess/domains/observe.yaml` (`DeadLetter` `:876-927`, `SeedState` `:949-987`, other types than
   this story's) and on every generated file above, `.ess-output/state.json` included: U3 merges
   after this story and regenerates on top of it (D4 A); `CHANGELOG.md` with every unit of the wave
-- **Test time:** one existing unit test changes, well under 1 s; no new test, no PostgreSQL-lane
+- **Test time:** one existing unit test changes and one new unit test
+  (`the_label_vocabulary_is_the_specified_vocabulary`) reads one schema file, each well under 1 s; no PostgreSQL-lane
   test — inferred
 
 ## Notes

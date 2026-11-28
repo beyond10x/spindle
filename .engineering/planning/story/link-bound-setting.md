@@ -21,7 +21,7 @@ scope:
   path: website/docs/examples/rally.md
 - confidence: cited
   path: website/docs/reference/cli.md
-revision: 8
+revision: 9
 ---
 ## Outcome
 
@@ -60,7 +60,9 @@ under 120 s) and ends within 60 s; the story adds no test to the PostgreSQL lane
 - `adversary_processes::the_link_bound_defaults_to_30_seconds` (new, in the existing module, so
   the test binary's `main.rs` is not edited), default test step: the `link_within` argument of
   `play` in `spindle_cli::cli::Cli::command()` has the default values `["30"]` and the env
-  `SPINDLE_SETTING_LINK_WITHIN`, and `Cli::try_parse_from` refuses `--link-within 0`; it starts no
+  `SPINDLE_SETTING_LINK_WITHIN`; `Cli::try_parse_from` on `play <spec> --environment <file>
+  --component <name> --link-within 0` is refused naming `--link-within`, and the same line with
+  `--link-within 1` parses; it starts no
   process and ends within 1 s (D1 A, D2 A, D6 A).
 - `adversary_processes::a_peer_slow_to_start_is_reached_within_the_connect_bound`
   (`adversary_processes.rs:675`), default test step: passes unchanged on the 30 s default (about
