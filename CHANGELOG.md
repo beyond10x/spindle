@@ -32,7 +32,13 @@ are Spindle's releases.
   is stopped (`spindle_kernel::Reading::events_placed_after_unless_stopped`, whose wait for a
   turn stops too), the cursors are still saved before the leases are released, and each release
   at exit waits at most 1 s for its statement and the lease row's lock, where it waited a third
-  of `database_lease` (`story:leader-exits-promptly-on-sigterm`).
+  of `database_lease`. The same wait held the exit through a `GET /api/events` or
+  `GET /api/history` under way beside the run's thread, which the listener's close waited for:
+  such a read is now given up once the signal arrives and answered `503` `{"refused": "the run
+  is stopping"}`, as every request that arrives after the signal is
+  (`spindle_host::Reader::stopped_by`, `HostError::ReadStopped`, and the reading handle's
+  `events_after_unless_stopped` and `events_head_unless_stopped`)
+  (`story:leader-exits-promptly-on-sigterm`).
 
 ## [0.26.0] - 2026-11-28
 

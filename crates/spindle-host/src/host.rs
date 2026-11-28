@@ -460,6 +460,11 @@ pub enum HostError {
     /// The caller asked the host to stop while it waited for its peers.
     #[error("stopped while waiting for peers")]
     Stopped,
+    /// A read of the events through a [`Reader`] stopped by its flag ([`Reader::stopped_by`]) was
+    /// under way when the flag was set, and was given up or answered after it: nothing it read is
+    /// answered (`story:leader-exits-promptly-on-sigterm`).
+    #[error("the read was given up: the run is stopping")]
+    ReadStopped,
 }
 
 /// What a host does with an event binding whose `on_failure` is `retry`.
@@ -1796,6 +1801,7 @@ impl Host {
             emitted: Arc::clone(&self.emitted),
             run: self.run,
             sequence: Arc::clone(&self.sequence),
+            stop: None,
         }
     }
 

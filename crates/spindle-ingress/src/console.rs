@@ -132,7 +132,8 @@ pub fn events(host: &mut Host) -> Answer {
 }
 
 /// What `GET /api/events` answers, read beside the host's thread through its `reader`, as
-/// [`events`] answers it ([`Reader::published`]).
+/// [`events`] answers it ([`Reader::published`]); `503` where a reader stopped by its flag
+/// ([`Reader::stopped_by`]) gave the read up, as a listener's does once the run is stopping.
 pub fn events_read(reader: &Reader) -> Answer {
     answered(reader.published())
 }
@@ -183,7 +184,8 @@ pub fn events_queried(host: &mut Host, query: &str) -> Answer {
 }
 
 /// What `GET /api/events?<query>` answers, read beside the host's thread through its `reader`,
-/// as [`events_queried`] answers it ([`Reader::published_after`]).
+/// as [`events_queried`] answers it ([`Reader::published_after`]); `503` where the reader gave the
+/// read up, as [`events_read`] says.
 pub fn events_read_queried(reader: &Reader, query: &str) -> Answer {
     match ranged(query) {
         Ok(None) => events_read(reader),
@@ -297,7 +299,8 @@ pub fn history_queried(host: &mut Host, query: &str) -> Answer {
 }
 
 /// What `GET /api/history?<query>` answers, read beside the host's thread through its `reader`,
-/// as [`history_queried`] answers it ([`Reader::history`]).
+/// as [`history_queried`] answers it ([`Reader::history`]); `503` where the reader gave the read
+/// up, as [`events_read`] says.
 pub fn history_read_queried(reader: &Reader, query: &str) -> Answer {
     match history_asked(reader.ir(), query) {
         Ok(asked) => {
@@ -404,6 +407,13 @@ fn limited(raw: &str) -> Result<usize, String> {
 
 /// `200` with `{"events": [...], "next": <cursor>}` for `history`; `400` for an entity the model
 /// does not declare, `500` naming why a store could not be read.
+/// What a read of the events or a history answers where its reader gave it up because the run
+/// stops taking work ([`HostError::ReadStopped`]): `503`, as every request that arrives once the
+/// run is stopping is answered (`story:leader-exits-promptly-on-sigterm`).
+fn stopping() -> Answer {
+    Answer::refusal(503, "the run is stopping")
+}
+
 fn historied(history: Result<History, HostError>) -> Answer {
     match history {
         Ok(history) => Answer {
@@ -418,6 +428,7 @@ fn historied(history: Result<History, HostError>) -> Answer {
             400,
             format!("query.{ENTITY}: expected an entity the model declares"),
         ),
+        Err(HostError::ReadStopped) => stopping(),
         Err(error) => Answer::refusal(500, error.to_string()),
     }
 }
@@ -466,6 +477,7 @@ fn paged(page: Result<Page, HostError>) -> Answer {
         Err(error @ HostError::Cursor(_)) => {
             Answer::refusal(400, format!("query.{AFTER}: {error}"))
         }
+        Err(HostError::ReadStopped) => stopping(),
         Err(error) => Answer::refusal(500, error.to_string()),
     }
 }
@@ -473,6 +485,7 @@ fn paged(page: Result<Page, HostError>) -> Answer {
 fn answered(published: Result<Vec<Published>, HostError>) -> Answer {
     match published {
         Ok(published) => listed(&published),
+        Err(HostError::ReadStopped) => stopping(),
         Err(error) => Answer::refusal(500, error.to_string()),
     }
 }

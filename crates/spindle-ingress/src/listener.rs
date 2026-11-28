@@ -495,7 +495,9 @@ impl Listener {
     /// every read through the host's `reader`, hands every other request to [`Listener::next`],
     /// and reads ready as any listener does. A listener that has its reader keeps it.
     pub fn lead(&self, reader: Reader) {
-        let _ = self.reader.set(reader);
+        let _ = self
+            .reader
+            .set(reader.stopped_by(Arc::clone(&self.health.stopping)));
         self.health.standby.store(false, Ordering::SeqCst);
     }
 
@@ -539,7 +541,13 @@ impl Listener {
         let (sender, exchanges) = mpsc::channel();
         let (shutdown, mut stopped) = oneshot::channel::<Stop>();
         let health = Arc::new(Health::new());
-        let reader = Arc::new(reader.map(OnceLock::from).unwrap_or_default());
+        // Its reads of the events are given up once the run stops taking work, so a read waiting
+        // for a store's feed does not hold the listener's close (`story:leader-exits-promptly-on-sigterm`).
+        let reader = Arc::new(
+            reader
+                .map(|reader| OnceLock::from(reader.stopped_by(Arc::clone(&health.stopping))))
+                .unwrap_or_default(),
+        );
         let served = Arc::new(Served {
             surface,
             exchanges: sender,
@@ -625,8 +633,11 @@ impl Listener {
     /// The flag that stops this listener taking work (`story:health-and-graceful-drain`): once it
     /// is set, `GET /__spindle/ready` answers `503`, and every request that arrives from then on is
     /// answered `503` at once, but those under `/__spindle/`; each request already handed over
-    /// still arrives on [`Listener::next`]. It is set by whoever holds it, such as a signal
-    /// handler, without the caller's thread (`signal_hook::flag::register`).
+    /// still arrives on [`Listener::next`]. A read of the events or of a history under way beside
+    /// the caller's thread when it is set is given up and answered `503` too
+    /// ([`Reader::stopped_by`]), so no read waiting for a store's feed holds [`Listener::close`].
+    /// It is set by whoever holds it, such as a signal handler, without the caller's thread
+    /// (`signal_hook::flag::register`).
     pub fn stopping(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.health.stopping)
     }

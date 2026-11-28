@@ -615,6 +615,12 @@ fn no_cursor() -> StoreError {
     )
 }
 
+/// What a read given up on its stop flag answers where it has no empty answer
+/// ([`Reading::events_head_unless_stopped`]).
+pub(crate) fn given_up() -> StoreError {
+    StoreError::Backend("the read was given up: its reader is stopping".to_owned())
+}
+
 /// A read-only handle on what a store committed, read from any thread beside the store's one
 /// writer ([`Store::reading`]).
 ///
@@ -695,6 +701,25 @@ pub trait Reading: Send + Sync {
         self.events_placed_after(position, limit)
     }
 
+    /// [`Reading::events_after`], given up once `stop` is set, as
+    /// [`Reading::events_placed_after_unless_stopped`] is: no event once it is set. This default
+    /// answers no event where `stop` is set before the read, and reads as
+    /// [`Reading::events_after`] otherwise.
+    ///
+    /// # Errors
+    /// As [`Reading::events_after`].
+    fn events_after_unless_stopped(
+        &self,
+        position: u64,
+        limit: usize,
+        stop: &AtomicBool,
+    ) -> Result<Vec<Committed>, StoreError> {
+        if stop.load(Ordering::SeqCst) {
+            return Ok(Vec::new());
+        }
+        self.events_after(position, limit)
+    }
+
     /// A position at or past every write that committed an event so far, as
     /// [`Store::events_head`] answers it.
     ///
@@ -703,6 +728,20 @@ pub trait Reading: Send + Sync {
     /// the events it commits.
     fn events_head(&self) -> Result<u64, StoreError> {
         Err(no_events())
+    }
+
+    /// [`Reading::events_head`], given up once `stop` is set, as
+    /// [`Reading::events_placed_after_unless_stopped`] is. This default refuses where `stop` is
+    /// set before the read, and reads as [`Reading::events_head`] otherwise.
+    ///
+    /// # Errors
+    /// As [`Reading::events_head`], and [`StoreError::Backend`] naming the stop where the read
+    /// was given up: a head it did not read is no head.
+    fn events_head_unless_stopped(&self, stop: &AtomicBool) -> Result<u64, StoreError> {
+        if stop.load(Ordering::SeqCst) {
+            return Err(given_up());
+        }
+        self.events_head()
     }
 
     /// The id of the log of events the store keeps, as [`Store::events_id`] answers it; `0`

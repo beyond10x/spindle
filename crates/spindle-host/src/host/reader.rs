@@ -1,13 +1,13 @@
 //! What reads a host's committed state beside the host's thread ([`Reader`]).
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use ess_compiler::EssIr;
 use ess_compiler::ir::ResolvedView;
 use serde_json::{Map, Value};
-use spindle_kernel::StoreError;
+use spindle_kernel::{Committed, Reading, StoreError};
 use spindle_telemetry::Counters;
 use spindle_timer::Clock;
 
@@ -41,6 +41,8 @@ pub struct Reader {
     pub(super) run: u64,
     /// The sequence of the last command the host started, `0` before the first.
     pub(super) sequence: Arc<AtomicU64>,
+    /// The flag that gives up its reads of the events ([`Reader::stopped_by`]).
+    pub(super) stop: Option<Arc<AtomicBool>>,
 }
 
 /// What a [`Reader`] reads of one component.
@@ -59,6 +61,57 @@ impl std::fmt::Debug for Reader {
 }
 
 impl Reader {
+    /// This reader, its reads of the events given up once `stop` is set
+    /// (`story:leader-exits-promptly-on-sigterm`): [`Reader::published`],
+    /// [`Reader::published_after`], [`Reader::published_head`] and [`Reader::history`] then stop
+    /// waiting for a store's feed, which PostgreSQL's withholds a write from while an older
+    /// transaction is open anywhere on the server, and each read under way when it is set, or
+    /// asked after, answers [`HostError::ReadStopped`]. A listener stops its reader with the flag
+    /// a signal sets, so a read under way does not hold the run's exit.
+    #[must_use]
+    pub fn stopped_by(mut self, stop: Arc<AtomicBool>) -> Self {
+        self.stop = Some(stop);
+        self
+    }
+
+    /// The events of `reading` after `position`, at most `wanted`, given up on the stop flag.
+    fn events_after(
+        &self,
+        reading: &dyn Reading,
+        position: u64,
+        wanted: usize,
+    ) -> Result<Vec<Committed>, HostError> {
+        match &self.stop {
+            None => Ok(reading.events_after(position, wanted)?),
+            Some(stop) => {
+                let read = reading.events_after_unless_stopped(position, wanted, stop);
+                self.unstopped()?;
+                Ok(read?)
+            }
+        }
+    }
+
+    /// The head of `reading`'s feed, given up on the stop flag.
+    fn events_head(&self, reading: &dyn Reading) -> Result<u64, HostError> {
+        match &self.stop {
+            None => Ok(reading.events_head()?),
+            Some(stop) => {
+                let read = reading.events_head_unless_stopped(stop);
+                self.unstopped()?;
+                Ok(read?)
+            }
+        }
+    }
+
+    /// [`HostError::ReadStopped`] once the stop flag is set: a read answered after it may have
+    /// been given up, so none is answered.
+    fn unstopped(&self) -> Result<(), HostError> {
+        match &self.stop {
+            Some(stop) if stop.load(Ordering::SeqCst) => Err(HostError::ReadStopped),
+            _ => Ok(()),
+        }
+    }
+
     /// The compiled specification the host runs.
     pub fn ir(&self) -> &EssIr {
         &self.ir
@@ -145,7 +198,10 @@ impl Reader {
             let reading = read.shared.reading().ok_or_else(|| {
                 HostError::Unsupported(format!("{name} is read on the host's thread only"))
             })?;
-            committed.push((name.clone(), reading.events_after(0, usize::MAX)?));
+            committed.push((
+                name.clone(),
+                self.events_after(reading.as_ref(), 0, usize::MAX)?,
+            ));
         }
         Ok(super::merged(committed))
     }
@@ -183,7 +239,7 @@ impl Reader {
             &stores,
             after,
             limit,
-            |name, position, wanted| Ok(handle(name)?.events_after(position, wanted)?),
+            |name, position, wanted| self.events_after(handle(name)?.as_ref(), position, wanted),
             |name| Ok(handle(name)?.events_id()?),
         )
     }
@@ -207,7 +263,7 @@ impl Reader {
                 HostError::Unsupported(format!("{name} is read on the host's thread only"))
             })?;
             // The head before the log's id: a head past the start never comes with log 0.
-            let head = reading.events_head()?;
+            let head = self.events_head(reading.as_ref())?;
             stores.push((name.clone(), generation, reading.events_id()?, head));
         }
         Ok(super::range::head(self.run, &stores, sequence))
@@ -245,7 +301,7 @@ impl Reader {
             (entity, identity),
             limit,
             super::civil,
-            |position, wanted| Ok(reading.events_after(position, wanted)?),
+            |position, wanted| self.events_after(reading.as_ref(), position, wanted),
         )
     }
 

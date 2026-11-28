@@ -882,7 +882,7 @@ impl<L: Log> Store for LogStore<L> {
     }
 
     fn events_head(&mut self) -> Result<u64, StoreError> {
-        self.feed_end()
+        self.feed_end(None)
     }
 
     fn events_id(&mut self) -> Result<u64, StoreError> {
@@ -1336,10 +1336,38 @@ impl<L: Log> Reading for SharedReading<L> {
         self.placed_unless(position, limit, Some(stop))
     }
 
+    /// [`SharedReading::events_after`], whose wait for its turn and for the feed looks at `stop`,
+    /// and answers no event once it is set.
+    fn events_after_unless_stopped(
+        &self,
+        position: u64,
+        limit: usize,
+        stop: &AtomicBool,
+    ) -> Result<Vec<Committed>, StoreError> {
+        let Some(_turn) = self.turns.take_unless(Some(stop))? else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .store
+            .placed_after(position, limit, Some(stop))?
+            .into_iter()
+            .map(|(_, committed)| committed)
+            .collect())
+    }
+
     /// Reads the feed through the store's own pool on a turn, as a scan does.
     fn events_head(&self) -> Result<u64, StoreError> {
         let _turn = self.turns.take()?;
-        self.store.feed_end()
+        self.store.feed_end(None)
+    }
+
+    /// [`SharedReading::events_head`], whose wait for its turn and for the feed looks at `stop`,
+    /// and is refused once it is set.
+    fn events_head_unless_stopped(&self, stop: &AtomicBool) -> Result<u64, StoreError> {
+        let Some(_turn) = self.turns.take_unless(Some(stop))? else {
+            return Err(crate::store::given_up());
+        };
+        self.store.feed_end(Some(stop))
     }
 
     fn events_id(&self) -> Result<u64, StoreError> {
@@ -1672,9 +1700,12 @@ impl<L: Log> LogStore<L> {
     /// ([`Store::events_head`]): found by reading one feed event at a time past positions that
     /// double, then halve, so about twice the binary logarithm of the feed's length of them,
     /// none of them answered; once the feed answers every write this store committed
-    /// ([`LogStore::published`]).
-    fn feed_end(&self) -> Result<u64, StoreError> {
-        self.published(None)?;
+    /// ([`LogStore::published`]). Where `stop` is given and is set while the read waits for the
+    /// feed, the read is given up and refused ([`crate::store::given_up`]).
+    fn feed_end(&self, stop: Option<&AtomicBool>) -> Result<u64, StoreError> {
+        if !self.published(stop)? {
+            return Err(crate::store::given_up());
+        }
         let next = |after: u64| -> Result<Option<u64>, StoreError> {
             let page = self
                 .call(self.log.read_feed(&self.tenant, after, 1))
@@ -2695,7 +2726,7 @@ impl Reading for SqliteReading {
     }
 
     fn events_head(&self) -> Result<u64, StoreError> {
-        self.with(|connection| connection.feed_end())
+        self.with(|connection| connection.feed_end(None))
     }
 
     fn events_id(&self) -> Result<u64, StoreError> {
