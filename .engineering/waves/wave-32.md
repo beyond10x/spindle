@@ -50,7 +50,7 @@ Revision round 1 of the plan critics (2026-11-28, review results `wave32-acc-r1`
   `when_related:` input; `no_await_scenario_of_the_fixture_is_skipped` and
   `a_replayed_scenario_runs_its_await` are added.
 - `story:leader-exits-promptly-on-sigterm`: `depends_on story:postgres-lane-runs-locally`; the
-  end-to-end test states its numbers (bound 7 s = 0 s drain + 2 s `timeout_ms` + 5 s, a 10 s hold,
+  end-to-end test states its numbers (bound 7 s = 0 s drain + 2 s `timeout_ms` + 5 s, a hold to 8 s after SIGTERM,
   standby within 1.33 s of the exit) and asserts t1 is not posted again; the wait is named in the
   `CHANGELOG.md` entry; `a_release_under_a_long_lease_waits_at_most_one_second` (lease 3600 s) is
   added; the kernel stop test is not red first.
@@ -95,11 +95,14 @@ Merge order: U1 and U2 in parallel, then U3, then U4.
 - U3 next (`depends_on` U1): a defect of 0.26.0, and U4 builds on its exit path. Its 20 evidence
   runs use the local lane U1 starts. It shares no file with U1 or U2.
 - Lane budget: `story:postgres-lane-margin` records the PostgreSQL lane at 112.3 s of 120 s on CI
-  (spindle#101). U3 adds one process test (about 10 s: a 10 s held transaction) and two kernel
+  (spindle#101). U3 adds one process test (at most 13 s: a transaction held to 8 s after SIGTERM) and two kernel
   tests; U4 adds nine process tests and one kernel test and rewrites three. `integration/2026-11-28-1`,
   which cuts the time of CI's two test steps, lands before `wave/32` forks. Each unit times
   `task check:postgres` before and after its tests and names both times in its report; a lane run
-  over 120 s is a defect fixed before the wave's PR, not by a longer bound.
+  over 120 s is a defect fixed before the wave's PR, not by a longer bound. U3 and U4 each sample
+  the `pg_stat_activity` peak of one lane run after their tests, as U1 does, and name it beside the
+  lane time; a peak within 50 of the script's `max_connections` raises the value in the script and
+  in CI in the same unit.
 - U4 after U3 (`depends_on`): both change `crates/spindle-cli/src/serve.rs` (U3 the teardown
   `:860-866` and loop top `:676-697`; U4 the seed branch `:594-625` and resets `:749-777`),
   `crates/spindle-cli/src/database.rs` (U3 `Leases::renewing` `:416-480`, `Kept::confirmed`

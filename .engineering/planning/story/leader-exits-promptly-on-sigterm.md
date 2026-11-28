@@ -67,15 +67,18 @@ the 60 s bound.
   (`LEASE`); `--drain` at its default 20 s, which adds 0 s since no request is queued; the egress
   call's `timeout_ms` 2000 (`crates/spindle-cli/tests/spindle-cli/egress.rs:191`); so the bound is
   0 + 2 + 5 = 7 s from SIGTERM. Steps: the webhook answers `500` for t1; another session (any role)
-  opens a transaction with a transaction id at T0 and holds it 10 s, to T0 + 10 s; the webhook then
-  answers `200`, so the leader saves its cursor after T0; the test sends SIGTERM at most 2 s after T0,
-  so the hold outlasts the bound by at least 1 s. Asserted: the leader exits within 7 s of SIGTERM;
+  opens a transaction with a transaction id at T0; the webhook then answers `200`, so the leader
+  saves its cursor after T0; the test waits until the webhook has received t1's `200` post and only
+  then sends SIGTERM at instant S, and holds the transaction until S + 8 s (the 7 s bound plus 1 s),
+  so the cursor save is ordered after T0 and before SIGTERM, and the hold outlasts the bound. The
+  test fails, naming the delay, when S comes more than 5 s after T0 (the egress retry pause's cap,
+  `BACKOFF_CAP`), so the hold stays at most 13 s. Asserted: the leader exits within 7 s of SIGTERM;
   the standby prints `took the lease of <component>` within 1.33 s (two thirds of the 2 s lease)
   counted from the instant the test reads the old leader's exit status, and answers ready `200`
   within 10 s of it; 3 s after that, the webhook has received t1 from the old leader only (its
   `500` and its `200`) and never from the new leader. If D2 A's 5 s allowance is adjusted before
-  merge, the 7 s, the SIGTERM instant and the hold change with it in the same change, the hold
-  staying at most 10 s and ending at least 1 s past the bound.
+  merge, the 7 s and the hold change with it in the same change, the hold
+  staying at most 13 s after T0 and ending at least 1 s past the bound.
 - That end-to-end test passes in 20 of 20 separate runs, each its own nextest call under the 60 s
   bound, on the lane `story:postgres-lane-runs-locally` starts, recorded as evidence; the 20 runs
   are not part of the gate.
@@ -113,7 +116,7 @@ Taken 2026-11-28 on the scoper's default, each reversible.
 - **D4 The red-first test.**
   A (default, taken): an end-to-end case in `postgres/replicas.rs`: the webhook answers 500 for
   t1; the test opens a transaction with a transaction id on a connection of its own and holds it
-  for at most 10 s; the webhook then answers 200, so the leader saves the cursor after that
+  for at most 13 s; the webhook then answers 200, so the leader saves the cursor after that
   transaction began; then SIGTERM, and the exit is asserted within the D2 bound. Plus a kernel
   case: a stopped `events_placed_after` returns while an older transaction is open.
   B: the kernel case alone.
