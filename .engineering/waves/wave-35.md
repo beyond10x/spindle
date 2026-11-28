@@ -42,11 +42,17 @@ Acceptance amendments, one line per story:
 - `story:link-bound-setting`: `--link-within <SECONDS>` on `play` (`SPINDLE_SETTING_LINK_WITHIN`,
   default 30); the never-listens test runs with 1 s and ends within 3 s; a new clap-definition test
   holds the 30 s default; help and `cli.md` say one bound covers both phases.
-- `story:observe-label-vocabulary`: 18 families, not 14; existing labels unchanged (D1 A); the unit
-  test `the_families_are_the_specified_families` compares `level` and `unit`; the fixture
-  validates against the regenerated schema.
+- `story:observe-label-vocabulary`: 18 families, not 14; existing labels unchanged (D1 A); a new
+  unit test `the_label_vocabulary_is_the_specified_vocabulary` reads the vocabulary and its label
+  rule from the generated schema and fails on today's tree; the unit test
+  `the_families_are_the_specified_families` compares `level` and `unit`, `unit` required and
+  `"none"` for a family that counts things (D5 A); the fixture validates against the regenerated
+  schema.
 - `story:unknown-commit-in-seed-and-retries`: named host, ingress, seed and serve unit tests for
-  D1-D6; a store error other than `Unknown` keeps today's retry and `Rejected`.
+  D1-D6; a store error other than `Unknown` keeps today's retry and `Rejected`; the two concept
+  pages hold named sentences, and `run --help` and the regenerated `cli.md` say an entry whose
+  outcome is unknown is recorded done, counted under `rejected` and not sent again by a run that
+  keeps a seed record.
 
 ## Units
 
@@ -54,10 +60,14 @@ Acceptance amendments, one line per story:
 |---|---|---|---|---|
 | U1 | `story:link-bound-setting` | `crates/spindle-cli/src/component.rs` (`LINK_WITHIN`, `Playing`, `linked`), `cli.rs` (`Command::Play`), `main.rs` (the `Play` arm), `tests/spindle-cli/adversary_processes.rs`, `website/docs/reference/cli.md` (generated), `website/docs/examples/rally.md` | `unit/w35-link-bound` | `spindle-w35-link-bound` |
 | U2 | `story:observe-label-vocabulary` | `ess/domains/observe.yaml` (`MetricFamily`, `MetricFamilies`), `ess/fixtures/observe/metrics/families.json`, `crates/spindle-ingress/src/observe/metrics.rs` (`Family`, `FAMILIES`), generated `ess/generated/jsonschema`, `crates/spindle-observe-api`, `ui/src/api/generated`, `docs/design/observe.md` | `unit/w35-label-vocabulary` | `spindle-w35-label-vocabulary` |
-| U3 | `story:unknown-commit-in-seed-and-retries` | `crates/spindle-host/src/host.rs` (`Host::attempt`), `crates/spindle-kernel/src/store.rs` (`DeadLetter`), `crates/spindle-cli/src/seed.rs`, `serve.rs` (`did_not_run`), `crates/spindle-ingress/src/console.rs` (`replay`, `letter`), `ess/domains/console.yaml` and `observe.yaml` (`DeadLetter`, `SeedState`), the same generated files as U2, new `tests/spindle-host/unknown_retry.rs` and its `mod` line, `tests/spindle-ingress/unknown_commit.rs`, `components-and-bindings.md`, `environment-and-admission.md` | `unit/w35-unknown-seed-retries` | `spindle-w35-unknown-seed-retries` |
+| U3 | `story:unknown-commit-in-seed-and-retries` | `crates/spindle-host/src/host.rs` (`Host::attempt`), `crates/spindle-kernel/src/store.rs` (`DeadLetter`), `crates/spindle-cli/src/seed.rs`, `serve.rs` (`did_not_run`), `crates/spindle-ingress/src/console.rs` (`replay`, `letter`), `ess/domains/console.yaml` and `observe.yaml` (`DeadLetter`, `SeedState`), the same generated files as U2, new `tests/spindle-host/unknown_retry.rs` and its `mod` line, `tests/spindle-ingress/unknown_commit.rs`, `components-and-bindings.md`, `environment-and-admission.md`, `crates/spindle-cli/src/cli.rs` (the `--seed` help of `run`), `website/docs/reference/cli.md` (generated) | `unit/w35-unknown-seed-retries` | `spindle-w35-unknown-seed-retries` |
 
-No `depends_on` edge inside the wave. Each unit is built by one `aep:implementor` and gets one
-`aep:adversary` pass when green.
+Two `depends_on` edges inside the wave, both added at review round 1:
+`story:unknown-commit-in-seed-and-retries depends_on story:observe-label-vocabulary` (U3 reads the
+generated files U2 regenerates) and `story:unknown-commit-in-seed-and-retries depends_on
+story:link-bound-setting` (U3 regenerates `cli.md` on top of U1's change to `cli.rs`). They record
+the merge order; the units are still built in parallel. Each unit is built by one
+`aep:implementor` and gets one `aep:adversary` pass when green.
 
 ## Surfaces
 
@@ -75,20 +85,30 @@ Files two or more units share, and how they are kept apart:
   `types-report.json`, `.ess-output/state.json`): U2 and U3. U3 merges after U2, and its implementor
   regenerates these files on top of U2's merged change before its last round, so
   `task check:the_generated_types_have_no_drift` holds both changes.
+- `crates/spindle-cli/src/cli.rs`: U1 and U3. U1 edits `Command::Play` (`:695-751`: the
+  `--link-within` argument and the help's two "up to 30 s" lines); U3 edits the `--seed` help of
+  `run` (`:536-585`: "rejected (it did not run: …)" `:547-548` and "a restart with the same file
+  sends the rejected entries again" `:559-561`). Different variants; U3 merges after U1 and keeps
+  both sides.
+- `website/docs/reference/cli.md`, generated from `cli.rs` by `task docs-generate` and checked by
+  `task docs-check`, never edited by hand: U1 (`play`, `:163-186`) and U3 (the `--seed` row of
+  `run`, `:153`). U3 merges after U1, and its implementor regenerates `cli.md` on top of U1's merged
+  change before its last round, so `task docs-check` holds both changes.
 - `crates/spindle-cli/tests/spindle-cli/main.rs`: not shared. U1 puts its new test in the existing
   `adversary_processes.rs` and adds no module; U2 and U3 add no `spindle-cli` integration test
   (U3's seed and serve cases are unit tests inside `seed.rs` and `serve.rs`).
 
-No other file is in two units' scope. U1 shares only `CHANGELOG.md`.
+No other file is in two units' scope.
 
 ## Order and parallel safety
 
-All three are built in parallel from `wave/35`. Merge order: U1, U2, U3. U3 merges after U2 and
-regenerates the generated files on top of U2's.
+All three are built in parallel from `wave/35`. Merge order: U1, U2, U3, recorded by U3's two
+`depends_on` edges. U3 merges after U1 and U2, and regenerates `cli.md` on top of U1's change and
+the observe files on top of U2's.
 
 - Default test step (`task check:the_tests_pass_within_the_budget`, under 120 s): U1 cuts about
   27 s of test time (the never-listens test from 30.068 s to within 3 s) and adds one test under
-  1 s; U2 changes one unit test and adds none; U3 adds seven tests, each under 1 s, about 1.3 s in
+  1 s; U2 adds one unit test and changes one, each under 1 s; U3 adds seven tests, each under 1 s, about 1.3 s in
   all. U1 reports the step's wall time before and after, against 84.5 s and the 80 s target.
 - PostgreSQL lane (`task check:postgres`): no unit adds a lane test. The lane ran 89.8 s (PR 109)
   and 98.5 s (PR 108) of its 100 s bound on CI; its margin waits on eventlog
@@ -105,12 +125,14 @@ Every decision takes option A, each reversible (D-W35 A).
   clap definition).
 - `story:observe-label-vocabulary`: D1 A (existing families keep their labels; the exposition does
   not change), D2 A (`domain`, not `context`), D3 A (the families the level list does not name take
-  one of its ten levels), D4 A (built beside U3, merged first).
+  one of its ten levels), D4 A (built beside U3, merged first; U3 `depends_on` it), D5 A (`unit`
+  required on every family, `"none"` for a family that counts things; taken at review round 1).
 - `story:unknown-commit-in-seed-and-retries`: D1 A (stop, and keep a dead letter marked unknown),
   D2 A (`"committed": "unknown"` in the dead-letter listing), D3 A (`result: "unknown"` on a
   replay), D4 A (escalation unchanged, left to a follow-up), D5 A (the seed entry recorded done,
   the marker format unchanged), D6 A (`Became::Unknown`, counted under `rejected`, exit 1 at the
-  seed's end), D7 A (PostgreSQL without a lease unchanged, documented).
+  seed's end), D7 A (PostgreSQL without a lease unchanged, documented); at review round 1, U3
+  updates the `--seed` help of `run` in `cli.rs` and regenerates `cli.md` on top of U1.
 
 ## What a unit must not do
 

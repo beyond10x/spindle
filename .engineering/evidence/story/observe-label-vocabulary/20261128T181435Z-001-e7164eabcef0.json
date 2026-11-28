@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-28T18:14:35Z",
+  "actor": "human:operator",
+  "artifact": "story:observe-label-vocabulary",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "review-result:wave35-par-r1",
+    "review": "review-result:wave35-par-r1",
+    "outcome": "fixed"
+  }
+}

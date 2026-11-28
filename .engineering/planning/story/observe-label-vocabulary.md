@@ -24,7 +24,7 @@ scope:
   path: ess/generated/jsonschema
 - confidence: cited
   path: ui/src/api/generated
-revision: 6
+revision: 9
 ---
 # The metric label vocabulary and the family description are specified in spindle.observe
 
@@ -35,15 +35,17 @@ reader can tell what it measures:
 
 - a label vocabulary, read from the model: `domain`, `component`, `kind` (`entity`, `command`,
   `view`, `event`, `external`, `binding`) and `name`, each value a declared name of the IR;
-- `MetricFamily` gains `level` (`ingress`, `admission`, `command`, `store`, `view`, `binding`,
-  `external`, `timer`, `queue`, `deployment`) and `unit` (`seconds`, `bytes`, `rows`, `envelopes`,
-  `ticks`, `requests`, none);
-- a stated rule: no label value is an entity identity, an actor, a path value or anything else the
-  model does not declare, so every family's cardinality is bounded by the specification.
+- `MetricFamily` gains two required fields, `level` (`ingress`, `admission`, `command`, `store`,
+  `view`, `binding`, `external`, `timer`, `queue`, `deployment`) and `unit` (`seconds`, `bytes`,
+  `rows`, `envelopes`, `ticks`, `requests`, `"none"`); a family that counts things the other units
+  do not name carries `"unit": "none"` (D5 A);
+- a stated rule, in the model's text: no label value is an entity identity, an actor, a path value
+  or anything else the model does not declare, so every family's cardinality is bounded by the
+  specification.
 
 The 18 existing families keep their names and labels (D1 A), so the exposition does not change; the
-fixture and `FAMILIES` gain `level` and `unit` for each (D3 A). The vocabulary's labels are the ones
-families built from now on carry.
+fixture and `FAMILIES` gain `level` and `unit` for each (D3 A, D5 A). The vocabulary's labels are
+the ones families built from now on carry.
 
 ## Why
 
@@ -65,19 +67,40 @@ already lists in the code which labels take their values from the specification
 
 ## Acceptance
 
-The story adds one changed unit test to the default test step (`task check:the_tests_pass_within_the_budget`),
-under 1 s, and no test to the PostgreSQL lane.
+The story adds one new and one changed unit test to the default test step
+(`task check:the_tests_pass_within_the_budget`), each under 1 s, and no test to the PostgreSQL lane.
 
+- `metrics::tests::the_label_vocabulary_is_the_specified_vocabulary` (new, in the unit tests of
+  `crates/spindle-ingress/src/observe/metrics.rs`, `:645`), default test step: it reads the
+  generated schema of the vocabulary,
+  `ess/generated/jsonschema/schema/types/spindle.observe.MetricLabel.schema.json`, from
+  `CARGO_MANIFEST_DIR` as `specified()` (`:651-659`) reads the fixture, and asserts that its
+  `enum` is `["domain", "component", "kind", "name"]`, that the schema of the `kind` label's values
+  (`spindle.observe.MetricLabelKind`) has the `enum` `["entity", "command", "view", "event",
+  "external", "binding"]`, and that the vocabulary's `description` (its `naming.summary` in
+  `observe.yaml`) holds the rule's sentence: no label value is an entity identity, an actor, a path
+  value or anything else the model does not declare. It fails on today's tree, where neither schema
+  file exists. It reads the JSON file because `spindle-ingress` does not depend on
+  `crates/spindle-observe-api` (only `spindle-cli` does, `crates/spindle-cli/Cargo.toml:54`), where the generated Rust
+  type is `MetricLabel`; it compares with a literal list, not with `SPECIFIED_LABELS`
+  (`metrics.rs:227-235`), which holds the seven labels an aggregated scrape writes empty (`route`,
+  `operation`, `command`, `outcome`, `event`, `binding`, `entity`) and none of the vocabulary's.
+  The type names are this story's; an implementor who names them otherwise reads those files.
+- `metrics::tests::an_aggregated_scrape_drops_the_specified_labels` (`metrics.rs:712-802`), default
+  test step: passes unchanged. It walks `FAMILIES` and asserts every label of every family is one of
+  `SPECIFIED_LABELS` or the test's `KEPT_LABELS` (`:720-724`), each a label with a bounded set of
+  values, so the cardinality rule holds over the 18 existing families (D1 A).
 - `task check:the_observe_domain_validates` (`ess specify validate --path ess --strict-requires`)
-  accepts `ess/domains/observe.yaml` with the vocabulary, the label rule and the two new fields of
-  `spindle.observe.MetricFamily`.
+  accepts `ess/domains/observe.yaml` with the vocabulary, the label rule and the two new required
+  fields of `spindle.observe.MetricFamily`.
 - `task check:every_fixture_answer_validates_against_its_schema` (`Taskfile.yml:347`):
   `ess/fixtures/observe/metrics/families.json` validates against the regenerated
-  `spindle.observe.MetricFamilies` schema.
+  `spindle.observe.MetricFamilies` schema, in which `level` and `unit` are required.
 - `metrics::tests::the_families_are_the_specified_families`
   (`crates/spindle-ingress/src/observe/metrics.rs:661-675`), default test step: `FAMILIES`, with
   `level` and `unit` in the compared JSON, equals the fixture, which lists all 18 existing families,
-  each with a `level` and a `unit` from the specified values.
+  each with a `level` and a `unit` from the specified values; a family that counts things the other
+  units do not name has `"unit": "none"`, in the fixture and in `FAMILIES` alike (D5 A).
 - `observe::the_exposed_families_are_the_specified_families`
   (`crates/spindle-cli/tests/spindle-cli/observe.rs:993`), default test step: passes unchanged, so
   every family keeps its name, type and labels (D1 A).
@@ -104,15 +127,20 @@ decision, the one the Notes recommend or the smallest, each reversible. No new d
   story's list, which stays at ten levels: `spindle_bound_refusals_total` `binding`,
   `spindle_seed_commands_total` `command`, `spindle_resets_total` `store`,
   `spindle_metrics_scrape_duration_seconds` and `spindle_metrics_series_mode` `ingress`; a family
-  that counts things the unit list does not name has unit none.
+  that counts things the other units do not name has `"unit": "none"` (D5 A).
   Not taken: B (new levels `seed` and `observe` for these families), C (`level` optional and
   absent for them).
 - D4 Running beside another story on `ess/domains/observe.yaml`: A, built beside
   `story:unknown-commit-in-seed-and-retries` (wave 35, U3) and merged first; U3 regenerates the
-  generated files on top of this story's merged change. `story:live-topology`, which the Notes
-  named, is implemented and no longer edits the file.
+  generated files on top of this story's merged change. U3 `depends_on` this story (edge added at
+  the wave's review round 1), so the order is in the graph, not only in prose.
+  `story:live-topology`, which the Notes named, is implemented and no longer edits the file.
   Not taken: B (U3 starts only once this story is merged), C (U3 takes its fallbacks D2 C and D6 C
   and leaves `observe.yaml`).
+- D5 The unit of a family that counts things (taken at the wave's review round 1): A, `unit` is
+  required on every family, and its enumeration holds an explicit `"none"`, which the fixture and
+  `FAMILIES` write for a family that counts things the other units do not name.
+  Not taken: B (the field is absent for such a family).
 
 ## Scope
 
