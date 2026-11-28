@@ -168,6 +168,10 @@ enum Stall {
     ForgetBusy,
     /// Every removal fails `Backend`, as a connection lost mid-write.
     RemoveDown,
+    /// Every load fails busy, as a read waiting out its lock wait.
+    LoadBusy,
+    /// Every load fails `Backend`, as a connection lost mid-read.
+    LoadDown,
 }
 
 /// A memory store the test keeps a handle to, whose reset steps fail as its switch says, counting
@@ -202,7 +206,11 @@ impl Stalled {
 
 impl Store for Stalled {
     fn load(&mut self, entity: &str, identity: &Value) -> Result<Option<Stored>, StoreError> {
-        self.store.lock().expect("the store").load(entity, identity)
+        match self.stalled() {
+            Stall::LoadBusy => Err(StoreError::Busy(DEADLINE.to_owned())),
+            Stall::LoadDown => Err(StoreError::Backend(DOWN.to_owned())),
+            _ => self.store.lock().expect("the store").load(entity, identity),
+        }
     }
 
     fn commit(&mut self, change: &Change) -> Result<(), StoreError> {
@@ -427,5 +435,75 @@ fn a_reset_whose_store_fails_otherwise_still_loses_it() {
         store.rows(NOTEBOOK),
         1,
         "nothing reaches the store the host lost"
+    );
+}
+
+/// `story:reset-on-a-busy-store-keeps-the-store`, adversary round 1: a reset with a world reads
+/// each row's instance from its store before any store is emptied (`Host::reset_to`). Where that
+/// read is busy, nothing changed, so the reset answers the store's busy error naming the
+/// component and the row, which `console::reset` answers `503`, not the `400` of a world the
+/// client got wrong; the store is kept and the reset can be sent again. A read that fails
+/// otherwise still refuses the world.
+#[test]
+fn a_reset_whose_world_check_reads_a_busy_store_changes_nothing() {
+    let store = Stalled::default();
+    let mut host = notebooks_on(&store);
+    host.submit(
+        "desk.notebooks.OpenNotebook",
+        object(json!({"title": "Field notes"})),
+    )
+    .expect("OpenNotebook runs");
+    let row = store
+        .store
+        .lock()
+        .expect("the store")
+        .scan(NOTEBOOK)
+        .expect("the store reads")
+        .rows[0]
+        .1
+        .row
+        .clone();
+    let world = || World {
+        rows: vec![Seed {
+            entity: NOTEBOOK.to_owned(),
+            identity: json!("00000000-0000-4000-8000-000000000001"),
+            row: row.clone(),
+        }],
+        ..World::default()
+    };
+
+    store.stall(Stall::LoadBusy);
+    let error = host
+        .reset_to(world())
+        .expect_err("the busy store holds the world check");
+    assert!(
+        matches!(&error, HostError::Store(StoreError::Busy(detail))
+            if detail.contains("desk") && detail.contains("row 0")),
+        "a busy world check answers the store's busy error naming desk and the row: {error}"
+    );
+    assert!(
+        !host.reset_changed_rows(),
+        "a reset held at its world check changed no row"
+    );
+
+    store.stall(Stall::LoadDown);
+    let error = host
+        .reset_to(world())
+        .expect_err("the failing store refuses the world");
+    assert!(
+        matches!(&error, HostError::World(_)),
+        "a world check that fails otherwise still refuses the world: {error}"
+    );
+
+    store.stall(Stall::Answering);
+    assert_eq!(store.rows(NOTEBOOK), 1, "the store keeps its row");
+    assert_eq!(
+        host.reset_to(world()).expect("the reset sent again"),
+        vec!["desk".to_owned()]
+    );
+    assert_eq!(
+        store.rows(NOTEBOOK),
+        1,
+        "the world's row replaced the store's"
     );
 }

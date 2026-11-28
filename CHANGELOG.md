@@ -45,7 +45,9 @@ are Spindle's releases.
   and nothing was reset; once it has changed rows (a row removed, an earlier store emptied, a
   world row written), it answers `500`, saying that the store is kept and that the reset can be
   sent again. Before, every such reset answered `500` and replaced the store with a lost one, and
-  every later command answered `501` until the run restarted. `Host::reset` returns
+  every later command answered `501` until the run restarted; a reset whose world's rows were
+  checked against a busy store, before any store was emptied, answered `400` as if the world were
+  wrong, and now answers that `503`. `Host::reset` returns
   `HostError::Store(StoreError::Busy(..))` naming the component and the step that was busy; a
   store that fails in any other way is lost as before (`HostError::Reset`, `restored: false`)
   (`story:reset-on-a-busy-store-keeps-the-store`).

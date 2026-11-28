@@ -1880,9 +1880,11 @@ impl Host {
     /// # Errors
     /// [`HostError::Clock`] for a world that carries a clock on a host without a stepping clock
     /// ([`Host::stepping`]), and [`HostError::World`] for one whose clock is before the
-    /// clock's civil time or a row that does not pass, each before anything changed; then as
-    /// [`Host::reset`], and as [`Host::establish`] for a row a store did not take, the rows
-    /// before it written and the answers, mint and clock of the last world kept.
+    /// clock's civil time or a row that does not pass, each before anything changed, but
+    /// [`HostError::Store`] where a store was busy ([`StoreError::Busy`]) while a row was read
+    /// from it, also before anything changed; then as [`Host::reset`], and as
+    /// [`Host::establish`] for a row a store did not take, the rows before it written and the
+    /// answers, mint and clock of the last world kept.
     pub fn reset_to(&mut self, world: World) -> Result<Vec<String>, HostError> {
         self.reset_rows = false;
         if let Some(at) = world.clock {
@@ -1908,11 +1910,18 @@ impl Host {
             }
             store_of(&mut self.components, &owner)?
                 .load(&seed.entity, &seed.identity)
-                .map_err(|error| {
-                    HostError::World(format!(
+                .map_err(|error| match error {
+                    // A busy store refused the read before anything changed: the world is not
+                    // at fault, and the reset can be sent again
+                    // (`story:reset-on-a-busy-store-keeps-the-store`).
+                    StoreError::Busy(detail) => HostError::Store(StoreError::Busy(format!(
+                        "resetting {owner}: reading row {index}, {} {}: {detail}",
+                        seed.entity, seed.identity
+                    ))),
+                    error => HostError::World(format!(
                         "row {index}: {owner}'s store cannot hold {} {}: {error}",
                         seed.entity, seed.identity
-                    ))
+                    )),
                 })?;
             owners.push(owner);
         }
