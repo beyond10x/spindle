@@ -25,6 +25,8 @@ use spindle_kernel::{
     StateSource, StateTarget, Store, Write,
 };
 
+use crate::postgres_reads;
+
 const SCHEMA: &str = "adv3_w19";
 const ALPHA: &str = "adv3.a.Alpha";
 const BETA: &str = "adv3.b.Beta";
@@ -850,6 +852,10 @@ fn adv3_a_scan_of_many_instances_costs_no_more_than_reading_the_log() {
     );
 }
 
+/// The events of other streams in the log
+/// [`adv3_an_entity_moved_from_0_10_0_scans_without_reading_the_whole_log`] scans.
+const MOVED_NOISE: usize = 20_000;
+
 /// A log moved from a state directory 0.10.0 wrote, whose entity's stream holds a schema-1
 /// `spindle.written` naming no instances. Were it copied as it is, every later scan of that
 /// entity would read the whole log under eventlog's publication lock, as before fix pass 2:
@@ -857,14 +863,18 @@ fn adv3_a_scan_of_many_instances_costs_no_more_than_reading_the_log() {
 /// commits on the same tables during it wait on that lock. The file is moved by `state move`
 /// ([`moved`]), which copies each such event naming the instances its write left.
 ///
-/// The whole-log scan took 5.4 s at 400,000 events, about 13.5 µs an event, with another
-/// process's commit failing at its 2 s lock wait: 200,000 events still take it past both the
-/// case's 1 s and that 2 s. 400,000 made the case 10 s of CPU alone (`story:postgres-lane-margin`).
+/// The case counts the rows the scan reads from the event table, once the sessions of its store
+/// have ended: fewer than 1,000, where reading the whole log reads every one of the
+/// [`MOVED_NOISE`] other events too. It timed the scan over 200,000 events against 1 s instead,
+/// which took a whole-log scan past it (5.4 s at 400,000 events, about 13.5 µs an event, with
+/// another process's commit failing at its 2 s lock wait), and the noise made the case 4 s of
+/// CPU of the lane on 4 CPUs (`story:postgres-lane-margin`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv3_an_entity_moved_from_0_10_0_scans_without_reading_the_whole_log() {
-    let database = database();
     let component = fresh("moved");
+    let mut database = database();
+    database.url = postgres_reads::tagged(&url(), &component);
     let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
     let path = directory.path().join(format!("{component}.sqlite"));
     let identity = json!("from-0.10.0");
@@ -884,13 +894,14 @@ fn adv3_an_entity_moved_from_0_10_0_scans_without_reading_the_whole_log() {
             })
             .expect("written since the move");
     }
-    noise(&component, 0, 200_000);
-    let started = Instant::now();
-    let scanned = store
+    drop(store);
+    noise(&component, 0, MOVED_NOISE);
+    let before = postgres_reads::events_read(&url(), SCHEMA, &component, &component);
+    let scanned = open(&database, &component)
         .scan(ALPHA)
         .map(|scan| scan.rows.len())
         .map_err(|error| error.to_string());
-    let elapsed = started.elapsed();
+    let read = postgres_reads::events_read(&url(), SCHEMA, &component, &component) - before;
     let mut scanner = open(&database, &component);
     let mut other = open(&database, &component);
     let stop = Arc::new(AtomicBool::new(false));
@@ -920,10 +931,14 @@ fn adv3_an_entity_moved_from_0_10_0_scans_without_reading_the_whole_log() {
         stop.store(true, Ordering::SeqCst);
         failed
     });
-    eprintln!("scan of the moved entity over 200,051 events: {elapsed:?}, {scanned:?}");
+    eprintln!(
+        "scan of the moved entity over {} events: {scanned:?}, {read} rows read",
+        MOVED_NOISE + 51
+    );
     assert!(
-        scanned == Ok(51) && failed.is_empty() && elapsed < Duration::from_secs(1),
-        "scan {scanned:?} after {elapsed:?}; commits of another process failed: {failed:#?}"
+        scanned == Ok(51) && failed.is_empty() && read < 1_000,
+        "scan {scanned:?} reading {read} rows of the event table; commits of another process \
+         failed: {failed:#?}"
     );
 }
 

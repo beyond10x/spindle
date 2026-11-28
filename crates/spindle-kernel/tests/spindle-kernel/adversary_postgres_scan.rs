@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use spindle_kernel::{Change, Database, PostgresStore, Row, SqliteStore, Store, Write};
 
+use crate::postgres_reads;
+
 const SCHEMA: &str = "adv2_w19";
 const ENTITY: &str = "adv.match.Match";
 /// The log sizes a scan is measured at, in events.
@@ -50,75 +52,18 @@ fn sql(url: &str, statement: &str) {
     });
 }
 
-/// The first column of the first row `query` answers on `url`.
-fn sql_value(url: &str, query: &str) -> String {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("a runtime");
-    runtime.block_on(async {
-        let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls)
-            .await
-            .expect("the test database accepts its owner");
-        let driver = tokio::spawn(connection);
-        let value = client
-            .simple_query(query)
-            .await
-            .unwrap_or_else(|error| panic!("{query}: {error}"))
-            .into_iter()
-            .find_map(|message| match message {
-                tokio_postgres::SimpleQueryMessage::Row(row) => row.get(0).map(str::to_owned),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("{query}: no row"));
-        drop(client);
-        let _ = driver.await;
-        value
-    })
-}
-
 /// [`database`], every session opened through it carrying the application name `tag` in
 /// `pg_stat_activity`.
 fn tagged(tag: &str) -> Database {
     let mut database = database();
-    database.url = format!("{}?application_name={tag}", url());
+    database.url = postgres_reads::tagged(&url(), tag);
     database
 }
 
-/// The rows the sessions of [`tagged`] `tag` read from `component`'s event table so far, by a
-/// sequential scan or from its indexes, once every one of them has ended. From PostgreSQL 15 a
-/// session hands its statistics over before it leaves `pg_stat_activity`; before 15 a collector
-/// process takes them up to half a second later, so the wait adds 2.5 s there.
+/// The rows read from `component`'s event table so far, once every session of [`tagged`] `tag`
+/// has ended ([`postgres_reads::events_read`]).
 fn events_read(component: &str, tag: &str) -> u64 {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while sql_value(
-        &url(),
-        &format!("SELECT count(*) FROM pg_stat_activity WHERE application_name = '{tag}'"),
-    ) != "0"
-    {
-        assert!(
-            Instant::now() < deadline,
-            "the sessions of {tag} did not end within 10 s"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let version: u32 = sql_value(&url(), "SHOW server_version_num")
-        .parse()
-        .expect("a version number");
-    if version < 150_000 {
-        std::thread::sleep(Duration::from_millis(2500));
-    }
-    let table = format!("{}_events", spindle_kernel::postgres_prefix(component));
-    sql_value(
-        &url(),
-        &format!(
-            "SELECT coalesce(max(t.seq_tup_read), 0) + coalesce(sum(i.idx_tup_read), 0) FROM \
-             pg_stat_user_tables t LEFT JOIN pg_stat_user_indexes i ON i.relid = t.relid \
-             WHERE t.schemaname = '{SCHEMA}' AND t.relname = '{table}'"
-        ),
-    )
-    .parse()
-    .expect("a count")
+    postgres_reads::events_read(&url(), SCHEMA, component, tag)
 }
 
 /// The PostgreSQL advisory lock a case holds while it runs `GRANT … ON DATABASE`, the one
@@ -250,10 +195,20 @@ fn peak_mib() -> u64 {
         .map_or(0, |kib| kib / 1024)
 }
 
+/// The log sizes [`adv2_a_scan_answers_over_a_long_log_as_sqlite_does`] scans at, in events.
+const POSTGRES_SIZES: [usize; 2] = [50_000, 100_000];
+
 /// Story: "The store passes the kernel's store contract exactly as the SQLite store does." A
 /// SQLite store scans a log of 500,000 events (`adv2_sqlite_scans_the_same_long_logs`); the
-/// PostgreSQL store scans the same logs, rather than fail once the log outgrows the time one
+/// PostgreSQL store scans long logs too, rather than fail once the log outgrows the time one
 /// store transaction is allowed.
+///
+/// The scan reads the entity's own stream however long the log, which
+/// [`adv2_a_scan_reads_none_of_the_other_streams_of_a_long_log`] counts in rows read; a store
+/// whose scan reads the whole log took 5 s at 500,000 events, inside eventlog's 10 s, and
+/// passed here at the sizes this case scanned, 100,000, 200,000 and 500,000, whose appending
+/// made it 5 s of PostgreSQL's CPU in the lane. With its store transaction allowed 0.3 s, a
+/// scratch build reading the whole log fails at [`POSTGRES_SIZES`] (`story:postgres-lane-margin`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv2_a_scan_answers_over_a_long_log_as_sqlite_does() {
@@ -263,7 +218,7 @@ fn adv2_a_scan_answers_over_a_long_log_as_sqlite_does() {
     store.commit(&created("one")).expect("the match is created");
     let mut failures = Vec::new();
     let mut from = 0;
-    for size in SIZES {
+    for size in POSTGRES_SIZES {
         noise(&component, from, size);
         from = size;
         let started = Instant::now();
