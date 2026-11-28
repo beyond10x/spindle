@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-28T08:49:46Z",
+  "actor": "human:operator",
+  "artifact": "story:conform-awaits-system-steps",
+  "kind": "story",
+  "revision": 6,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/46126981292 (PR 104 Gate, PostgreSQL, macOS green on 9bb15b5e; merged 276298bbc35c29c19ccf756387cb0f6cc149f5c4)"
+  }
+}
