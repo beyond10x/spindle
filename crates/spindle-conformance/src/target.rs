@@ -827,7 +827,8 @@ impl ConformanceTarget for HostTarget {
     /// scenario's, which an await that reaches nothing leaves where it was, so asking again
     /// answers the same. That counter counts only the awaits' values: the interpreter's also
     /// counts each value the scenario's commands generated, which the host mints from its own
-    /// seed, so a minted input can differ from the interpreter's. The combinations are tried
+    /// seed, so a minted input can differ from the interpreter's
+    /// (`story:await-mints-count-generated-values`). The combinations are tried
     /// first field slowest, and the first under which the model takes an accepting branch, or the
     /// external one the scenario forced, is committed and answered, taken at once (`elapsed_ms`
     /// 0); a refused combination commits nothing. Where several combinations would take different accepting
