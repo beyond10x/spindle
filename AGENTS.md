@@ -133,7 +133,19 @@ PostgreSQL tests (`postgres::` in the kernel, host and CLI test binaries, `state
 `#[ignore]`d too. `task check:postgres` runs them against `SPINDLE_TEST_DATABASE_URL` (a loopback
 PostgreSQL 13 or later, a role that may create schemas, roles and tables) and
 `SPINDLE_TEST_DATABASE_CA` (the PEM CA of that server's TLS certificate, for the hosted cases); CI's
-`PostgreSQL` job starts PostgreSQL 17 with TLS and runs it.
+`PostgreSQL` job starts PostgreSQL 17 with TLS and runs it. Without `SPINDLE_TEST_DATABASE_URL`,
+`scripts/postgres-lane.sh` starts a throwaway cluster under `target/` (`initdb` and `pg_ctl` from
+`SPINDLE_PG_BIN`, else `PATH`; a warning when the major is not CI's 17; CI's `en_US.UTF-8` locale
+where `locale -a` lists it, else `C.UTF-8` with a warning), runs the lane against it over TLS, and
+removes it; the task fails when its directory or postmaster is left. That script is the one home of
+the server options (TLS, `max_locks_per_transaction`, `max_connections`): CI's `docker run` passes
+the image exactly what `postgres-lane.sh options` prints, and `task check` refuses any other way the
+`postgres` job could set a server option or reach another database, and any other job that runs the
+lane or starts a PostgreSQL image (`scripts/check-postgres-options.sh` pins the job's `docker run`
+line and the lines that write the database's URL and CA; a change to them changes the check). The tests reach the cluster on `127.0.0.1`:
+where a build wrapper runs `cargo nextest` on another machine, run the whole task on that machine.
+`task check:postgres-lane-script` and `task check:postgres-lane-adversary` check the script itself
+on real binaries.
 
 ## Documentation
 
