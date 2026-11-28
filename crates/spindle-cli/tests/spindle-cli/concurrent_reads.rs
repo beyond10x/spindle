@@ -4,10 +4,12 @@
 //! command holds the thread that runs commands, from the state as of the last committed write, on
 //! the memory and the SQLite store. The command is held by its external cause: the environment
 //! binds it to an HTTP call, and the desk this test runs answers a request whose id starts with
-//! [`HELD`] only after [`HOLD`]. Each read is timed [`ROUNDS`] times while the command is held:
-//! the median within [`BUDGET`], so that one read the scheduler of a loaded machine held back
-//! does not decide it, and every one within [`CEILING`], well inside the hold, before the held
-//! command is answered.
+//! [`HELD`] only once the test released it, once that round's reads were answered, or after
+//! [`HOLD`] at the latest. Each read is timed [`ROUNDS`] times while the command is held: the
+//! median within [`BUDGET`], so that one read the scheduler of a loaded machine held back does
+//! not decide it, and every one within [`CEILING`], well inside the hold, before the held command
+//! is answered. A read held behind the command is answered only after [`HOLD`], past
+//! [`CEILING`], and after the command.
 //!
 //! The fixture `tests/fixtures/served-held-cause` is `served-http-cause` with a view,
 //! `probe.approval.Requests`, listing every approved request.
@@ -17,7 +19,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -27,9 +29,11 @@ const ASK: &str = "probe.approval.Ask";
 const VIEW: &str = "probe.approval.Requests";
 const CAPABILITY: &str = "external.probe.approval.Ask.approved";
 const SECRET: &str = "SPINDLE_TEST_HELD_TOKEN";
-/// The prefix of a request id the desk holds for [`HOLD`] before it answers.
+/// The prefix of a request id the desk holds until the test releases it ([`Desk::release`]), at
+/// most [`HOLD`], before it answers.
 const HELD: &str = "held-";
-/// How long the desk holds a [`HELD`] request, and so the command that asked it.
+/// How long the desk holds a [`HELD`] request the test does not release, and so the command that
+/// asked it: past [`CEILING`], so a read held behind the command fails it.
 const HOLD: Duration = Duration::from_secs(2);
 /// How many times each read is timed while the command is held.
 const ROUNDS: usize = 5;
@@ -50,11 +54,15 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// A local approval desk on 127.0.0.1 that approves every request, a [`HELD`] one after [`HOLD`],
-/// and records the id of each request as it arrives.
+/// The ids of the [`HELD`] requests the test released, and the signal that one more was.
+type Released = Arc<(Mutex<Vec<String>>, Condvar)>;
+
+/// A local approval desk on 127.0.0.1 that approves every request, a [`HELD`] one once released
+/// or after [`HOLD`], and records the id of each request as it arrives.
 struct Desk {
     address: SocketAddr,
     arrived: Arc<Mutex<Vec<String>>>,
+    released: Released,
 }
 
 impl Desk {
@@ -62,15 +70,27 @@ impl Desk {
         let listener = TcpListener::bind("127.0.0.1:0").expect("the desk binds");
         let address = listener.local_addr().expect("the desk has an address");
         let arrived = Arc::new(Mutex::new(Vec::new()));
-        let recorded = Arc::clone(&arrived);
+        let released: Released = Arc::new((Mutex::new(Vec::new()), Condvar::new()));
+        let (recorded, releasing) = (Arc::clone(&arrived), Arc::clone(&released));
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(stream) = stream else { return };
-                let recorded = Arc::clone(&recorded);
-                std::thread::spawn(move || approve(stream, &recorded));
+                let (recorded, releasing) = (Arc::clone(&recorded), Arc::clone(&releasing));
+                std::thread::spawn(move || approve(stream, &recorded, &releasing));
             }
         });
-        Self { address, arrived }
+        Self {
+            address,
+            arrived,
+            released,
+        }
+    }
+
+    /// Lets the desk answer the [`HELD`] request `id`, now or once it arrives.
+    fn release(&self, id: &str) {
+        let (ids, signal) = &*self.released;
+        ids.lock().expect("the desk's releases").push(id.to_owned());
+        signal.notify_all();
     }
 
     fn url(&self) -> String {
@@ -96,9 +116,9 @@ impl Desk {
     }
 }
 
-/// Reads one request from `stream`, records its id, and approves it, a [`HELD`] one after
-/// [`HOLD`].
-fn approve(stream: TcpStream, recorded: &Mutex<Vec<String>>) {
+/// Reads one request from `stream`, records its id, and approves it, a [`HELD`] one once
+/// `released` holds its id or after [`HOLD`].
+fn approve(stream: TcpStream, recorded: &Mutex<Vec<String>>, released: &Released) {
     let _ = stream.set_read_timeout(Some(ANSWER));
     let mut reader = BufReader::new(stream);
     let mut length = 0;
@@ -128,7 +148,11 @@ fn approve(stream: TcpStream, recorded: &Mutex<Vec<String>>) {
         .to_owned();
     recorded.lock().expect("the desk's record").push(id.clone());
     if id.starts_with(HELD) {
-        std::thread::sleep(HOLD);
+        let (ids, signal) = &**released;
+        let ids = ids.lock().expect("the desk's releases");
+        let _ = signal
+            .wait_timeout_while(ids, HOLD, |ids| !ids.contains(&id))
+            .expect("the desk's releases");
     }
     let answer = json!({"holds": true}).to_string();
     let mut stream = reader.into_inner();
@@ -347,6 +371,7 @@ fn reads_are_answered_from_the_last_committed_write_while_a_command_is_held() {
             if answered.load(Ordering::SeqCst) {
                 early.push(round);
             }
+            desk.release(&id);
             let (status, answer) = held.join().expect("the held command's thread ends");
             assert!((200..300).contains(&status), "{store}: {status} {answer}");
             // What the reads must have seen: every command answered before this round's.

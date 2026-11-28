@@ -15,11 +15,15 @@
 
 use std::process::{Command, Output, Stdio};
 
-/// One case of each module that creates its schema behind a `Once`, each short.
+/// One case of each module that creates its schema behind a `Once`, each short. The case of
+/// `adversary_postgres_named` was `adv3_a_scan_beside_removals_and_recreations_holds_the_state_at_its_version`,
+/// 400 drawn groups and a scanner beside them: 24 processes of it made this case 43 to 60 s of
+/// the lane on a 4-CPU runner (`story:postgres-lane-margin`). The race is in the schema's
+/// creation, which every case of the module goes through first.
 const CASES: [&str; 3] = [
     "adversary_postgres::adv_two_stores_on_one_prefix_create_one_identity_exactly_once",
     "adversary_postgres_scan::adv2_a_migrate_beside_a_serving_store_delays_nothing",
-    "adversary_postgres_named::adv3_a_scan_beside_removals_and_recreations_holds_the_state_at_its_version",
+    "adversary_postgres_named::adv3_each_escaped_identity_scans_as_on_sqlite",
 ];
 
 /// Processes of each case started side by side in one round.

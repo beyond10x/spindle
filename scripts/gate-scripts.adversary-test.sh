@@ -186,8 +186,15 @@ cases=$((cases + 1))
 printf '%s\n' "$lane" | grep -q 'NEXTEST: cargo nextest run .*--profile postgres' ||
     fail "check:postgres does not run cargo nextest under the postgres profile"
 cases=$((cases + 1))
-printf '%s\n' "$lane" | awk '/--no-run/{built=1} /sh scripts\/within.sh 120 \{\{\.NEXTEST\}\}/{if (built) ok=1} END{exit !ok}' ||
-    fail "check:postgres does not build with --no-run before its run under within.sh 120"
+printf '%s\n' "$lane" | awk '/--no-run/{built=1} /sh scripts\/within.sh [0-9]+ \{\{\.NEXTEST\}\}/{if (built) ok=1} END{exit !ok}' ||
+    fail "check:postgres does not build with --no-run before its run under within.sh"
+
+# The within.sh bounds of check:postgres's runs sum to the step's 120 s at most.
+cases=$((cases + 1))
+bounds=$(printf '%s\n' "$lane" | grep -o 'sh scripts/within.sh [0-9][0-9]*' | awk '{sum += $3; n++} END{print n + 0, sum + 0}')
+set -- $bounds
+[ "$1" -ge 1 ] && [ "$2" -le 120 ] ||
+    fail "check:postgres runs $1 call(s) under within.sh whose bounds sum to $2 s, want at least one and at most 120 s"
 cases=$((cases + 1))
 printf '%s\n' "$lane" | grep -q 'test:slowest, vars: { NEXTEST_PROFILE: postgres }' ||
     fail "check:postgres does not print the ten slowest tests of its own profile"

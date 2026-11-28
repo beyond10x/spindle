@@ -108,25 +108,36 @@ fn created(identity: &str) -> Change {
     }
 }
 
+/// The events one transaction of [`noise`] appends. eventlog's feed hides a commit until every
+/// older write transaction on the server has ended, so one statement of 500,000 rows, open for
+/// seconds on a loaded runner, held back every egress test of the lane for as long
+/// (`story:postgres-lane-margin`).
+const NOISE_CHUNK: usize = 10_000;
+
 /// Appends events `from + 1 ..= to` of another entity to `component`'s log, as its other
-/// instances would.
+/// instances would, [`NOISE_CHUNK`] to a transaction. Each instance's name is its number padded
+/// to nine digits, so the names ascend as they are appended and each lands at the end of the
+/// table's index: about a sixth cheaper than names in another order.
 fn noise(component: &str, from: usize, to: usize) {
     let table = format!(
         "{SCHEMA}.{}_events",
         spindle_kernel::postgres_prefix(component)
     );
-    sql(
-        &url(),
-        &format!(
-            "INSERT INTO {table} (tenant_id, stream_type, stream_id, version, event_id, \
+    let mut statements = String::new();
+    for first in (from + 1..=to).step_by(NOISE_CHUNK) {
+        let last = (first + NOISE_CHUNK - 1).min(to);
+        statements.push_str(&format!(
+            "BEGIN; INSERT INTO {table} (tenant_id, stream_type, stream_id, version, event_id, \
              event_name, event_schema_version, occurred_at, recorded_at, subject, actor, \
-             request_id, trace_id, data) SELECT 'local', 'adv.noise.Noise', 'n' || g, 1, \
+             request_id, trace_id, data) SELECT 'local', 'adv.noise.Noise', \
+             lpad(g::text, 9, '0'), 1, \
              gen_random_uuid(), 'spindle.row', 1, now(), now(), 'a', 'a', 'a', 'a', \
              '{{\"state\":\"open\",\"fields\":{{\"id\":\"noise\"}}}}'::jsonb \
-             FROM generate_series({}, {to}) g; ANALYZE {table}",
-            from + 1,
-        ),
-    );
+             FROM generate_series({first}, {last}) g; COMMIT; "
+        ));
+    }
+    statements.push_str(&format!("ANALYZE {table}"));
+    sql(&url(), &statements);
 }
 
 /// The same events `from + 1 ..= to` in the SQLite store's file at `path`.
@@ -310,6 +321,12 @@ fn grown(store: &mut PostgresStore, component: &str, at_least: Duration, cap: us
     size
 }
 
+/// The longest log [`grown`] appends for the two-process cases. A scan that read the whole log
+/// took about 13.5 µs an event, so 3 s from about 220,000 events: such a scan is long at 300,000.
+/// The store's scan reads the entity's own stream and never takes 3 s, so the cases grew to
+/// 500,000 events every run, 9 to 10 s of CPU each (`story:postgres-lane-margin`).
+const GROWN_CAP: usize = 300_000;
+
 /// Two processes on one component's tables (a rolling deploy, or two replicas), one scanning
 /// back to back as a metrics scrape does, the other taking commands: every command lands, as it
 /// does on SQLite, where a reader never fails a writer.
@@ -323,7 +340,7 @@ fn adv2_an_append_from_another_process_lands_during_a_long_scan() {
     scanner
         .commit(&created("first"))
         .expect("the match is created");
-    let size = grown(&mut scanner, &component, Duration::from_secs(3), 500_000);
+    let size = grown(&mut scanner, &component, Duration::from_secs(3), GROWN_CAP);
     let stop = Arc::new(AtomicBool::new(false));
     let (scans, writes) = std::thread::scope(|scope| {
         let stopping = Arc::clone(&stop);
@@ -391,7 +408,7 @@ fn adv2_two_processes_scan_one_long_log_at_once() {
     let mut first = open(&database, &component);
     let mut second = open(&database, &component);
     first.commit(&created("one")).expect("the match is created");
-    let size = grown(&mut first, &component, Duration::from_secs(3), 500_000);
+    let size = grown(&mut first, &component, Duration::from_secs(3), GROWN_CAP);
     let barrier = Arc::new(Barrier::new(2));
     let outcomes: Vec<(Duration, Result<usize, String>)> = std::thread::scope(|scope| {
         let handles: Vec<_> = [&mut first, &mut second]
