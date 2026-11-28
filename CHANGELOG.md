@@ -8,34 +8,6 @@ are Spindle's releases.
 
 ### Added
 
-- A served `run` bounds its listener: `--max-connections` (512) connections at once, one over it
-  waiting in the kernel's backlog until one closes; `--max-head-bytes` (65536) bytes of a
-  request's head, and 100 headers, a larger head answered `431` and its connection closed before
-  anything is handed on or recorded; a connection closed that sends no head for 10 s (an idle
-  keep-alive one included) or whose answer makes no write progress for 10 s, as to a client that
-  never reads, over TLS as over plain TCP; a body that pauses for longer than 10 s, or takes over
-  10 s in all, refused `408`; and
-  `--request-timeout` (30) seconds per request from the end of its body read, a request no thread
-  took by then answered `503` with `"committed": false` and never run, its client still waiting
-  or gone, one taken `504`, its command still completing. When the listener closes, each
-  connection still waiting in the socket's backlog, at the cap or not yet accepted, is taken and
-  its one request answered as during the drain (outside `/__spindle/` `503` once the run stops
-  taking work, the probes there as always) rather than reset; none after them is accepted. `spindle_ingress` gains `Limits` and
-  `Surface::limited`. The proxy secret, the guarded listener's token and `spindle-control`'s token
-  are compared in time that depends only on their own length, where a presented value of another
-  length returned at once (`story:listener-limits`).
-- `run` under a specification with another digest than a durable store recorded judges every
-  stored row under each invariant the new specification declares on the row's entity, as a row at
-  rest is judged, and exits 3 before listening or reading stdin, printing one line per broken
-  invariant with the entity, the statement and how many stored rows break it
-  (`spindle_kernel::Misfit::Invariant`); a row the invariant leaves unknown fits. Every misfit
-  line, of any kind, prints each name, state and statement escaped so that it stays one line: a
-  backslash as `\\`, a line feed and a carriage return as `\n` and `\r`, any other control
-  character and U+2028 and U+2029 as `\u{..}`, a tab as it is. Before, only
-  the rows' fields and states were compared, so a run started over rows its specification does
-  not admit. The record is unchanged, so a row that already broke an unchanged invariant now
-  refuses the next start under another digest. On SQLite and PostgreSQL alike
-  (`story:entity-invariant-over-stored-rows`).
 - Each release asset (every archive, the SBOM, `IMAGES` and `SHA256SUMS`) carries a cosign keyless
   signature, uploaded beside it as `<asset>.sigstore.json`, and a SLSA build provenance
   attestation in the repository's attestations; the image's manifest list is signed by its digest
@@ -68,6 +40,55 @@ are Spindle's releases.
   `HostError::Store(StoreError::Busy(..))` naming the component and the step that was busy; a
   store that fails in any other way is lost as before (`HostError::Reset`, `restored: false`)
   (`story:reset-on-a-busy-store-keeps-the-store`).
+- A command whose PostgreSQL commit has an unknown outcome, because the store's deadline fired
+  after COMMIT was sent, answers `500` `{"refused", "committed": "unknown"}` where it answered
+  `501` with `committed: false`: the write may have landed, so a caller reads before it sends the
+  same request again. The request log records it `failed`, and a leased run that finds its lease
+  lost does not replace it with its `503`. eventlog's `UnknownCommit` reaches the ingress as the
+  new `spindle_kernel::StoreError::Unknown`, displayed `store: …` as before, answered by the new
+  `spindle_ingress::Answer::unknown`. A reset whose removal or forgetting of events meets it loses
+  the store, as before; one whose world row meets it keeps the store and answers `500`
+  `{"refused", "committed": "unknown"}`. A removal or a world row that meets it now counts as a changed
+  row (`spindle_host::Host::reset_changed_rows` reads `true`), since it may have landed, so a caller
+  does not put back what it removed for the reset.
+  Only the PostgreSQL store returns it; a store failure before COMMIT answers `503` or `501` as
+  before (`story:unknown-commit-answered-as-unknown`).
+
+## [0.28.0] - 2026-11-28
+
+### Added
+
+- A served `run` bounds its listener: `--max-connections` (512) connections at once, one over it
+  waiting in the kernel's backlog until one closes; `--max-head-bytes` (65536) bytes of a
+  request's head, and 100 headers, a larger head answered `431` and its connection closed before
+  anything is handed on or recorded; a connection closed that sends no head for 10 s (an idle
+  keep-alive one included) or whose answer makes no write progress for 10 s, as to a client that
+  never reads, over TLS as over plain TCP; a body that pauses for longer than 10 s, or takes over
+  10 s in all, refused `408`; and
+  `--request-timeout` (30) seconds per request from the end of its body read, a request no thread
+  took by then answered `503` with `"committed": false` and never run, its client still waiting
+  or gone, one taken `504`, its command still completing. When the listener closes, each
+  connection still waiting in the socket's backlog, at the cap or not yet accepted, is taken and
+  its one request answered as during the drain (outside `/__spindle/` `503` once the run stops
+  taking work, the probes there as always) rather than reset; none after them is accepted. `spindle_ingress` gains `Limits` and
+  `Surface::limited`. The proxy secret, the guarded listener's token and `spindle-control`'s token
+  are compared in time that depends only on their own length, where a presented value of another
+  length returned at once (`story:listener-limits`).
+- `run` under a specification with another digest than a durable store recorded judges every
+  stored row under each invariant the new specification declares on the row's entity, as a row at
+  rest is judged, and exits 3 before listening or reading stdin, printing one line per broken
+  invariant with the entity, the statement and how many stored rows break it
+  (`spindle_kernel::Misfit::Invariant`); a row the invariant leaves unknown fits. Every misfit
+  line, of any kind, prints each name, state and statement escaped so that it stays one line: a
+  backslash as `\\`, a line feed and a carriage return as `\n` and `\r`, any other control
+  character and U+2028 and U+2029 as `\u{..}`, a tab as it is. Before, only
+  the rows' fields and states were compared, so a run started over rows its specification does
+  not admit. The record is unchanged, so a row that already broke an unchanged invariant now
+  refuses the next start under another digest. On SQLite and PostgreSQL alike
+  (`story:entity-invariant-over-stored-rows`).
+
+### Fixed
+
 - A command whose PostgreSQL store did not answer within its deadline answers `503`
   `{"refused", "committed": false}`, safe to send again, where it answered `501`, the status of a
   command the runtime cannot complete; the request log records it `failed`, not `not-served`.
@@ -118,19 +139,6 @@ are Spindle's releases.
   undone behind it: no lease is kept and no record is lost. A removal from a current table that
   fails after the reset is printed naming that table.
   One schema holds one leased deployment (`story:seed-record-after-a-component-is-removed`).
-- A command whose PostgreSQL commit has an unknown outcome, because the store's deadline fired
-  after COMMIT was sent, answers `500` `{"refused", "committed": "unknown"}` where it answered
-  `501` with `committed: false`: the write may have landed, so a caller reads before it sends the
-  same request again. The request log records it `failed`, and a leased run that finds its lease
-  lost does not replace it with its `503`. eventlog's `UnknownCommit` reaches the ingress as the
-  new `spindle_kernel::StoreError::Unknown`, displayed `store: …` as before, answered by the new
-  `spindle_ingress::Answer::unknown`. A reset whose removal or forgetting of events meets it loses
-  the store, as before; one whose world row meets it keeps the store and answers `500`
-  `{"refused", "committed": "unknown"}`. A removal or a world row that meets it now counts as a changed
-  row (`spindle_host::Host::reset_changed_rows` reads `true`), since it may have landed, so a caller
-  does not put back what it removed for the reset.
-  Only the PostgreSQL store returns it; a store failure before COMMIT answers `503` or `501` as
-  before (`story:unknown-commit-answered-as-unknown`).
 
 ## [0.27.0] - 2026-11-28
 

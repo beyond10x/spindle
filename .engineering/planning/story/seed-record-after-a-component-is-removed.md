@@ -41,7 +41,7 @@ revision: 19
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-28T09:24:51Z", actor: "human:operator", revision: 16, decided_on: {"recorded":{"review_outcome":8}}}
 - {from: "proposed", to: "active", at: "2026-11-28T09:24:52Z", actor: "human:operator", revision: 17, decided_on: {"recorded":{"review_outcome":8}}}
-- {from: "active", to: "implemented", at: "2026-11-28T16:06:04Z", actor: "human:operator", revision: 19, decided_on: {"recorded":{"test_result":1,"review_outcome":14}}}
+- {from: "active", to: "implemented", at: "2026-11-28T14:16:57Z", actor: "human:operator", revision: 19, decided_on: {"recorded":{"test_result":2,"review_outcome":14}}}
 ---
 ## Outcome
 

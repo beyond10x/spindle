@@ -41,7 +41,7 @@ revision: 16
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-28T09:24:51Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":7}}}
 - {from: "proposed", to: "active", at: "2026-11-28T09:24:51Z", actor: "human:operator", revision: 14, decided_on: {"recorded":{"review_outcome":7}}}
-- {from: "active", to: "implemented", at: "2026-11-28T16:06:04Z", actor: "human:operator", revision: 16, decided_on: {"recorded":{"test_result":1,"review_outcome":11}}}
+- {from: "active", to: "implemented", at: "2026-11-28T14:16:56Z", actor: "human:operator", revision: 16, decided_on: {"recorded":{"test_result":2,"review_outcome":11}}}
 ---
 # The ingress listener bounds connections, headers and request time
 
