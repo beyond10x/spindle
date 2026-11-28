@@ -1952,15 +1952,25 @@ impl Host {
     /// Empties every store, then writes each row of a world into the store of its owner.
     fn load(&mut self, rows: Vec<Seed>, owners: Vec<String>) -> Result<Vec<String>, HostError> {
         let emptied = self.empty()?;
-        for (seed, owner) in rows.into_iter().zip(owners) {
-            store_of(&mut self.components, &owner)?.commit(&Change {
-                entity: seed.entity,
-                identity: seed.identity,
-                expected: None,
-                row: seed.row,
-                events: Vec::new(),
-                scanned: Vec::new(),
-            })?;
+        for (index, (seed, owner)) in rows.into_iter().zip(owners).enumerate() {
+            let step = format!("writing row {index}, {} {}", seed.entity, seed.identity);
+            store_of(&mut self.components, &owner)?
+                .commit(&Change {
+                    entity: seed.entity,
+                    identity: seed.identity,
+                    expected: None,
+                    row: seed.row,
+                    events: Vec::new(),
+                    scanned: Vec::new(),
+                })
+                .map_err(|error| match error {
+                    // A busy write names the component and the step, as every busy step of a
+                    // reset does (`story:reset-on-a-busy-store-keeps-the-store`, D2 A).
+                    StoreError::Busy(detail) => {
+                        StoreError::Busy(format!("resetting {owner}: {step}: {detail}"))
+                    }
+                    error => error,
+                })?;
             self.reset_rows = true;
         }
         Ok(emptied)
