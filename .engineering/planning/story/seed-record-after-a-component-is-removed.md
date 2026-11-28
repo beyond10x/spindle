@@ -21,17 +21,23 @@ scope:
   path: crates/spindle-cli/tests/spindle-cli/postgres/replicas.rs
 - confidence: inferred
   path: crates/spindle-cli/tests/spindle-cli/postgres/replicas/adversary_w32_u4.rs
+- confidence: inferred
+  path: crates/spindle-docs/src/status.rs
 - confidence: cited
   path: crates/spindle-kernel/src/postgres.rs
 - confidence: cited
   path: crates/spindle-kernel/tests/spindle-kernel/postgres.rs
 - confidence: inferred
   path: docs/design/spindle.md
+- confidence: inferred
+  path: website/data/status.json
 - confidence: cited
   path: website/docs/concepts/environment-and-admission.md
 - confidence: cited
   path: website/docs/reference/cli.md
-revision: 8
+- confidence: inferred
+  path: website/docs/status.md
+revision: 13
 ---
 ## Outcome
 
@@ -73,7 +79,8 @@ unguarded unless the mover takes that lease itself.
 
 Each test below is a PostgreSQL-lane test (`#[ignore]`, run by `task check:postgres`, matched by
 its `postgres::` filter), each under the 60 s bound and expected under 10 s; the unit's report
-names each one's time. No new fixture.
+names each one's time. No new fixture. Each wait for a run's line or exit is bounded by the lane's
+`ANSWER`, 10 s (`crates/spindle-cli/tests/spindle-cli/postgres.rs:25`).
 
 - `a_seed_left_part_done_resumes_after_the_component_holding_its_record_was_removed`
   (`crates/spindle-cli/tests/spindle-cli/postgres/replicas/adversary_w32_u4.rs`, beside
@@ -85,6 +92,19 @@ names each one's time. No new fixture.
 - `another_seed_file_after_the_component_holding_the_record_was_removed_is_refused` (same file):
   release 2 with another seed file exits 1 before listening, naming both digests, prints no
   listening line, and `audit`'s record is unchanged.
+- `a_record_in_a_current_table_wins_over_an_orphan_record` (same file; D2 A): release 1 leaves the
+  record in `audit`'s lease table at `done` 1 of 1; the test then writes into `board`'s lease table
+  a record that differs from it only in `done` (0), with one SQL statement as
+  `records_in_three_tables_two_alike_and_one_different_are_refused` (`adversary_w32_u4.rs:228`)
+  does. Release 2 with the same file starts from `board`'s record: it does not exit 1, its end line
+  counts 1 sent, and `audit`'s record is unchanged afterwards. Under D2 B (a scan on every read)
+  the two differing records would exit 1, so this line tells the two apart.
+- `differing_records_in_orphan_tables_exit_1_naming_the_tables` (same file; D3 A): release 1
+  leaves the record in `audit`'s lease table; the test copies that table, its `lease` and `seed`
+  rows, to the lease table of a component no fixture names (`retired`, its table named by
+  `spindle_kernel::postgres_prefix`), with `done` changed in the copy's record, so two orphan tables
+  hold differing records and no current table holds one. Release 2 exits 1 before listening, its
+  stderr names both tables and holds no `ended:` line, and both records are unchanged.
 - `an_orphan_lease_table_is_found_by_its_table_name`
   (`crates/spindle-kernel/tests/spindle-kernel/postgres.rs`): the scan finds the lease table of a
   component the current specification does not name, including one whose name is over 31 bytes
@@ -106,8 +126,10 @@ names each one's time. No new fixture.
   on PostgreSQL with a lease of `environment-and-admission.md` (`:307-336`) state the
   removed-component case in place of the link to this story (`cli.rs:569`, `:323`), and the page
   says one schema holds one leased deployment (D3 A); `docs/design/spindle.md:437`, the module doc
-  of `crates/spindle-cli/src/seed.rs` (`:33-42`) and `AGENTS.md:40` change where they say where
-  the record is read; the change goes under `[Unreleased]` in `CHANGELOG.md`.
+  of `crates/spindle-cli/src/seed.rs` (`:33-42`), `AGENTS.md:40` and the "Seed at start" row of
+  `crates/spindle-docs/src/status.rs` (`:488`, regenerated into `website/docs/status.md` and
+  `website/data/status.json`) change where they say where the record is read; the change goes
+  under `[Unreleased]` in `CHANGELOG.md`.
 
 ## Decided when scoped
 
@@ -136,14 +158,17 @@ Derived 2026-11-28 by `story-scoper` on `plan/wave-33` (276298bb). Every line is
 - **Files:** `crates/spindle-kernel/src/postgres.rs:690-965` (`Lease::seed_record`, `gather_seed`, `seed_statement`, `table`, `lease_table`, `seed_gathering`, `TAKE` at 994) — cited
 - **Files:** `crates/spindle-cli/src/database.rs:432-546` (`Leases::answer`, `Leases::read` 505-539 reads only `held`, `Leases::elsewhere`, `Leases::table_of`) — cited
 - **Symbols:** a schema scan for lease tables of no current component by table name, table-name forms of read and gather (e.g. `Lease::seed_tables`, `Lease::seed_record_in`), take and release of an orphan table's lease row by table name — inferred
-- **Tests, lane** (PostgreSQL, `task check:postgres`): in `crates/spindle-cli/tests/spindle-cli/postgres/replicas.rs` or `replicas/adversary_w32_u4.rs` (has `grown_seeded`, `GROWN`): `a_seed_left_part_done_resumes_after_the_component_holding_its_record_was_removed` (record in `audit`'s table `done` 1 of 3; release 2 sends 2; afterwards `board`'s table holds it, `audit`'s none); `another_seed_file_after_the_component_holding_the_record_was_removed_is_refused` (exit 1, both digests, no listening line). Expected under 10 s each, not timed.
-- **Tests, kernel** (PostgreSQL): `crates/spindle-kernel/tests/spindle-kernel/postgres.rs` (model: `a_seed_record_moves_between_lease_tables_only_under_both_leases` at 937): `a_deposed_process_cannot_move_the_seed_record_out_of_a_removed_components_table`; `an_orphan_lease_table_is_found_by_its_table_name` incl. a hashed prefix (name over 31 bytes). Shared schema: assert inclusion, never set equality.
+- **Tests, lane** (PostgreSQL, `task check:postgres`), in `crates/spindle-cli/tests/spindle-cli/postgres/replicas/adversary_w32_u4.rs` (has `grown_seeded`, `GROWN`, and the SQL-planted records of `records_in_three_tables_two_alike_and_one_different_are_refused` `:228`): `a_seed_left_part_done_resumes_after_the_component_holding_its_record_was_removed`, `another_seed_file_after_the_component_holding_the_record_was_removed_is_refused`, `a_record_in_a_current_table_wins_over_an_orphan_record` (D2 A), `differing_records_in_orphan_tables_exit_1_naming_the_tables` (D3 A). Expected under 10 s each, not timed.
+- **Tests, kernel** (PostgreSQL, `task check:postgres`): `crates/spindle-kernel/tests/spindle-kernel/postgres.rs` (model: `a_seed_record_moves_between_lease_tables_only_under_both_leases` at 937): `an_orphan_lease_table_is_found_by_its_table_name` incl. a hashed prefix (name over 31 bytes), `a_table_matching_the_pattern_without_a_lease_row_is_not_read`, `a_deposed_process_cannot_move_the_seed_record_out_of_a_removed_components_table`, `an_orphan_record_under_another_holders_lease_is_read_not_moved`. Shared schema: assert inclusion, never set equality.
 - **Also likely:** `crates/spindle-cli/src/seed.rs:30-45` doc of D5 B; no code change expected — inferred
 - **Documents:** `crates/spindle-cli/src/cli.rs:555-575`, `website/docs/reference/cli.md:153`, `website/docs/concepts/environment-and-admission.md:307-336` — cited; `docs/design/spindle.md:437`, `CHANGELOG.md`, `AGENTS.md:40` — inferred
-- **Would collide with:** units on `spindle-kernel/src/postgres.rs` around `Lease` (fence, `TAKE`/`RENEW`, statement timeouts), the `run --seed` help and docs, `CHANGELOG.md`, `AGENTS.md`
+- **Documents:** the "Seed at start" row of `crates/spindle-docs/src/status.rs` (`:487-488`; `:488` says "a store kept elsewhere records nothing"), changed if it states where the record is read or the removed-component case, and the regenerated `website/docs/status.md` (`:77`) and `website/data/status.json` (`:422`); U4 of wave 33 edits another row of the same file (`:145`) — inferred
+- **Would collide with:** units on `spindle-kernel/src/postgres.rs` around `Lease` (fence, `TAKE`/`RENEW`, statement timeouts), the `run --seed` help and docs, the status rows of `spindle-docs/src/status.rs`, `CHANGELOG.md`, `AGENTS.md`
 - **Safety fact:** the gather writes nothing unless every lease row it names carries the mover's token and `pg_backend_pid()`, all locked in one statement (`seed_gathering`, `postgres.rs:913-960`) — step 2, unproven
 - **Checked when planned (2026-11-28, read against 276298bb):** the fixtures are
   `crates/spindle-cli/tests/fixtures/adversary-w32-u4-grown` and
   `crates/spindle-cli/tests/fixtures/ingress`; the link in the `--seed` help is at `cli.rs:569`, not
   `:567`; the check that records differ is in `Leases::read` (`database.rs:520-531`); `Lease::table`
   migrates only on an isolated database (no CA, `postgres.rs:534`) — cited
+- **Revised after plan-critic round 1 (2026-11-28, read against fc19c7d9):** two lane tests added
+  (D2 A, D3 A); the status row and its generated pages added — cited

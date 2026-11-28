@@ -33,7 +33,7 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 9
+revision: 11
 ---
 ## Outcome
 
@@ -78,6 +78,13 @@ existing `spec_change.rs` cases.
   are unchanged.
 - `an_entity_invariant_every_stored_row_holds_starts` (same file, same fixture): every stored book
   holds the invariant, and the run listens.
+- `an_entity_invariant_a_stored_row_breaks_refuses_a_stdin_run` (same file, default test step,
+  SQLite, through the file's `stdin_run` helper as `a_stdin_run_refuses_a_misfit_state_file`
+  `:281` uses it): a stdin `run --state` with `spec-change-before` shelves a book that breaks the
+  invariant (`archive.shelf.ShelveBook`); a stdin `run --state` on the same file with
+  `spec-change-invariant` exits 3 before reading stdin, its stdout names `archive.shelf.Book`, the
+  statement and 1 row, and the recorded specification and the row are unchanged. The test waits
+  only on the child's exit; it ends well within the 60 s bound.
 - `an_entity_invariant_a_stored_row_breaks_exits_before_listening_on_postgres`
   (`crates/spindle-cli/tests/spindle-cli/postgres.rs`, `#[ignore]`, `task check:postgres`): the
   first `spec_change.rs` case on PostgreSQL, with the same outcome.
@@ -112,14 +119,16 @@ Derived 2026-11-28 by `story-scoper` on `plan/wave-33` (276298bb). Every line is
 - **Symbols:** `Facts::row` (`crates/spindle-kernel/src/facts.rs:112`) and `Predicate::evaluate`, as `rests` uses them (`crates/spindle-kernel/src/execute.rs:60-79`): each stored row judged as `at_rest` judges it, `Unknown` concluding nothing — cited
 - **Also likely:** `crates/spindle-kernel/src/execute.rs` only if `rests` becomes pub(crate) — inferred
 - **Tests:** `crates/spindle-kernel/tests/spindle-kernel/fit.rs`: `an_entity_invariant_a_stored_row_breaks_misfits`, `an_entity_invariant_every_stored_row_holds_fits`, `an_entity_invariant_a_stored_row_leaves_unknown_fits` (SQLite temp dir) — inferred
-- **Tests:** `crates/spindle-cli/tests/spindle-cli/spec_change.rs`: `an_entity_invariant_a_stored_row_breaks_exits_before_listening` (exit 3, stdout names `archive.shelf.Book` and 1 row, record and row unchanged), `an_entity_invariant_every_stored_row_holds_starts` — inferred
+- **Tests:** `crates/spindle-cli/tests/spindle-cli/spec_change.rs`: `an_entity_invariant_a_stored_row_breaks_exits_before_listening` (exit 3, stdout names `archive.shelf.Book` and 1 row, record and row unchanged), `an_entity_invariant_every_stored_row_holds_starts`, `an_entity_invariant_a_stored_row_breaks_refuses_a_stdin_run` (the stdin `run --state` path, through `stdin_run` `:255`, as `a_stdin_run_refuses_a_misfit_state_file` `:281`; the stdin store is opened and fitted in `crates/spindle-cli/src/main.rs:983-990`, its own call apart from the served path) — inferred
 - **Tests:** `crates/spindle-cli/tests/spindle-cli/postgres.rs`: `an_entity_invariant_a_stored_row_breaks_exits_before_listening_on_postgres` (`#[ignore]`, `task check:postgres`) — inferred
 - **Fixture:** `crates/spindle-cli/tests/fixtures/spec-change-invariant/` (`system.yaml`, `domains/shelf.yaml`): `spec-change-before` plus an invariant on `archive.shelf.Book`, e.g. `title.count <= 10` — inferred
 - **Documents:** `website/docs/concepts/environment-and-admission.md:676-692` (add the misfit, drop the sentence at 692), `website/docs/reference/cli.md:123` (misfit kinds) — cited
-- **Documents:** `crates/spindle-docs/src/status.rs:145`, regenerated `website/docs/status.md:28` and `website/data/status.json`, `CHANGELOG.md` `### Fixed` — inferred
+- **Documents:** `crates/spindle-docs/src/status.rs:145`, regenerated `website/docs/status.md:28` and `website/data/status.json`, `CHANGELOG.md` `### Fixed` — inferred; U3 of wave 33 may edit the "Seed at start" row of the same file (`:488`)
 - **Would collide with:** `fit.rs`/`Misfit`, the spec-change section of `environment-and-admission.md`, the run section of `cli.md`, status rows, `CHANGELOG.md`
 - **Safety fact:** every durable open under another specification reaches `Shapes::misfits` through `LogStore::check` (`crates/spindle-kernel/src/sqlite.rs:2016-2020`); callers `host.rs:3077`, `host.rs:3129`, `spindle-cli/src/main.rs:987`, `spindle-cli/src/database.rs:194`; outside `fit.rs` `Misfit` is only displayed (`database.rs:52`, `HostError::Misfit`) — level 2, unproven
 - **Checked when planned (2026-11-28, read against 276298bb):** the claims hold; the lines moved:
   `Shape` `fit.rs:79-85`, `Shapes::misfits` `:142-247`, `Misfit` `:268-350`, its `Display`
   `:352-404`, `Held` `:443-481`. Added: `crates/spindle-cli/src/cli.rs` (`:298`, `run`'s
   description, from which `website/docs/reference/cli.md:123` is generated) — cited
+- **Revised after plan-critic round 1 (2026-11-28, read against fc19c7d9):** the stdin `run --state`
+  test added (default taken over a `## Not covered` line) — cited

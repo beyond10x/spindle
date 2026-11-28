@@ -33,7 +33,7 @@ scope:
   path: website/docs/concepts/environment-and-admission.md
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 10
+revision: 11
 ---
 ## Outcome
 
@@ -136,7 +136,7 @@ Derived 2026-11-28 by `story-scoper` on `plan/wave-33` (276298bb). Every line is
 - **Files:** `crates/spindle-ingress/src/answer.rs:565-573` (`ExecuteError::Store` → `Answer::unfinished`, the 501) — cited
 - **Files:** `crates/spindle-kernel/src/store.rs:322-341` (`StoreError`: only `Conflict` and `Backend(String)`) — cited
 - **Files:** `crates/spindle-kernel/src/sqlite.rs:2960-2965` (`backend`: every `EventLogError` but `GuardRefused` → `Backend(to_string())`) — cited
-- **Files:** `crates/spindle-cli/tests/spindle-cli/adversary_w31_u6.rs:379-420` (`a_resumed_leader_posts_no_event_the_new_leader_committed`: `t2` may answer 503 and is retried until 201 within 10 s) — cited
+- **Files:** `crates/spindle-cli/tests/spindle-cli/adversary_w31_u6.rs:379-420` (`a_resumed_leader_posts_no_event_the_new_leader_committed`: `t2` is asserted `201` with no retry, `assert_eq!(status, 201)` at `:400`; this story adds the retry of a `503` until `201` within 10 s) — cited
 - **Symbols:** `StoreError` (new variant), `backend`, `Answer::unfinished`, `EventLogError::Deadline` (SQLSTATE 57014/55P03) — cited
 - **Also likely:** `crates/spindle-ingress/tests/spindle-ingress/busy_store.rs` (new) and its `mod` line in `main.rs`; stub `Store` as `concurrent_reads.rs:66` — inferred
 - **Also likely:** `crates/spindle-kernel/tests/spindle-kernel/postgres.rs`; `crates/spindle-cli/tests/spindle-cli/postgres/replicas.rs` — inferred
@@ -150,6 +150,12 @@ Derived 2026-11-28 by `story-scoper` on `plan/wave-33` (276298bb). Every line is
   `status != 503` for a write behind a foreign table lock (`:1889`), which D1 A turns into `503`; it
   is rewritten here — cited. `website/docs/reference/cli.md:107` is generated from
   `crates/spindle-cli/src/cli.rs:211-215`, so a change to it is a change there — inferred
+- **Revised after plan-critic round 1 (2026-11-28, read against fc19c7d9):** the retry in
+  `a_resumed_leader_posts_no_event_the_new_leader_committed` is added, not already there
+  (`adversary_w31_u6.rs:400`). In wave 33 `crates/spindle-ingress/src/answer.rs` is this story's
+  alone: `story:listener-limits` builds its queued-request `503` in `listener.rs` and does not edit
+  it. `story:postgres-lane-margin` merges first and may edit lane tests of `adversary_w31_u6.rs`;
+  the two cases rewritten here are rebased onto it — cited
 
 ## Not covered
 
