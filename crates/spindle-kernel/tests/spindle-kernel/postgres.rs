@@ -846,6 +846,226 @@ fn a_commit_under_a_taken_lease_is_refused() {
     drop(second);
 }
 
+/// `story:seed-under-a-lease` (D3 A): the row `seed` of a component's lease table is written only
+/// while the lease row names the writer's token and session. Handle A holds the lease at token 1
+/// and records the seed; once its lease ran out and handle B took it at token 2, A's write of the
+/// row and its removal of it are refused by name, and the row stays as A last wrote it.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_deposed_process_cannot_write_the_seed_record() {
+    let database = database();
+    let component = fresh("seeded");
+    let term = Duration::from_secs(1);
+    let mut first = Lease::connect(&database, term).expect("A connects for the lease");
+    let token = first
+        .take(&component)
+        .expect("the lease is read")
+        .expect("no process holds the lease: A takes it");
+    assert_eq!(token, 1);
+    assert_eq!(
+        first.seed_record(&component).expect("the row is read"),
+        None,
+        "no seed is recorded yet"
+    );
+    let written = json!({"digest": "sha256:aa", "done": 1, "rejected": []});
+    first
+        .record_seed(&component, token, &written)
+        .expect("A writes the row under its lease");
+    assert_eq!(
+        first.seed_record(&component).expect("the row is read"),
+        Some(written.clone())
+    );
+
+    let mut second = Lease::connect(&database, term).expect("B connects for the lease");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let taken = loop {
+        if let Some(taken) = second.take(&component).expect("the lease is read") {
+            break taken;
+        }
+        assert!(Instant::now() < deadline, "B never took the lease");
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(taken, 2, "B takes the lease at token 2");
+
+    let refused = first
+        .record_seed(
+            &component,
+            token,
+            &json!({"digest": "sha256:aa", "done": 2, "rejected": []}),
+        )
+        .expect_err("A's write is refused once B holds the lease")
+        .to_string();
+    assert!(
+        refused.contains("lease") && refused.contains(&component) && refused.contains("seed"),
+        "the refusal names the lease, the component and the seed record: {refused}"
+    );
+    let removal = first
+        .forget_seed(&component, token)
+        .expect_err("A's removal is refused once B holds the lease")
+        .to_string();
+    assert!(
+        removal.contains("lease") && removal.contains(&component),
+        "{removal}"
+    );
+    assert_eq!(
+        second.seed_record(&component).expect("the row is read"),
+        Some(written),
+        "the row is as A last wrote it under its lease"
+    );
+    let renewed = json!({"digest": "sha256:aa", "done": 2, "rejected": []});
+    second
+        .record_seed(&component, taken, &renewed)
+        .expect("B writes the row under its lease");
+    assert_eq!(
+        second.seed_record(&component).expect("the row is read"),
+        Some(renewed)
+    );
+    second
+        .forget_seed(&component, taken)
+        .expect("B removes the row under its lease");
+    assert_eq!(
+        second.seed_record(&component).expect("the row is read"),
+        None
+    );
+}
+
+/// `story:seed-under-a-lease`, round 2 (F1): the record moves from the lease table of one
+/// component to another's in one statement, only while both lease rows name the mover's tokens
+/// and session. A table that does not exist reads no record and is not created by the read.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_seed_record_moves_between_lease_tables_only_under_both_leases() {
+    let database = database();
+    let old = fresh("moved");
+    let new = fresh("moved");
+    let absent = fresh("absent");
+    assert_eq!(
+        Lease::connect(&database, Duration::from_secs(1))
+            .expect("a run connects for the lease")
+            .seed_record(&absent)
+            .expect("a table that does not exist reads no record"),
+        None
+    );
+    let term = Duration::from_secs(1);
+    let mut first = Lease::connect(&database, term).expect("A connects for the leases");
+    let old_token = first
+        .take(&old)
+        .expect("the lease is read")
+        .expect("A takes the old lease");
+    let new_token = first
+        .take(&new)
+        .expect("the lease is read")
+        .expect("A takes the new lease");
+    let recorded = json!({"digest": "sha256:bb", "done": 1, "rejected": []});
+    first
+        .record_seed(&old, old_token, &recorded)
+        .expect("A records the seed in the old table");
+    let moved = json!({"digest": "sha256:bb", "done": 2, "rejected": []});
+    first
+        .move_seed((&old, old_token), (&new, new_token), &moved)
+        .expect("A moves the record under both leases");
+    assert_eq!(first.seed_record(&old).expect("read"), None);
+    assert_eq!(first.seed_record(&new).expect("read"), Some(moved.clone()));
+
+    first
+        .record_seed(&old, old_token, &recorded)
+        .expect("A records the seed in the old table again");
+    let mut second = Lease::connect(&database, term).expect("B connects for the lease");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while second.take(&old).expect("the lease is read").is_none() {
+        assert!(Instant::now() < deadline, "B never took the old lease");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let refused = first
+        .move_seed(
+            (&old, old_token),
+            (&new, new_token),
+            &json!({"digest": "sha256:bb", "done": 3, "rejected": []}),
+        )
+        .expect_err("A's move is refused once B holds the old lease")
+        .to_string();
+    assert!(
+        refused.contains("lease") && refused.contains(&old),
+        "the refusal names the lease taken: {refused}"
+    );
+    assert_eq!(
+        second.seed_record(&old).expect("read"),
+        Some(recorded),
+        "the old row is as it was"
+    );
+    assert_eq!(
+        second.seed_record(&new).expect("read"),
+        Some(moved),
+        "the new row is as it was"
+    );
+}
+
+/// `story:seed-under-a-lease`, round 3: records alike in several lease tables are gathered into
+/// one in one statement, only while every lease row involved names the gatherer's token and
+/// session; once one of those leases is taken, the gathering lands nothing in any table.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn seed_records_alike_in_several_lease_tables_are_gathered_into_one() {
+    let database = database();
+    let [into, one, two] = [fresh("gathered"), fresh("gathered"), fresh("gathered")];
+    let term = Duration::from_secs(1);
+    let mut first = Lease::connect(&database, term).expect("A connects for the leases");
+    let mut take = |component: &str| {
+        first
+            .take(component)
+            .expect("the lease is read")
+            .expect("A takes the lease")
+    };
+    let tokens = [take(&into), take(&one), take(&two)];
+    let recorded = json!({"digest": "sha256:cc", "done": 1, "rejected": []});
+    for (component, token) in [(&into, tokens[0]), (&one, tokens[1]), (&two, tokens[2])] {
+        first
+            .record_seed(component, token, &recorded)
+            .expect("A records the seed");
+    }
+    let gathered = json!({"digest": "sha256:cc", "done": 2, "rejected": []});
+    first
+        .gather_seed(
+            &[(&one, tokens[1]), (&two, tokens[2])],
+            (&into, tokens[0]),
+            &gathered,
+        )
+        .expect("A gathers the records under every lease");
+    assert_eq!(
+        first.seed_record(&into).expect("read"),
+        Some(gathered.clone())
+    );
+    assert_eq!(first.seed_record(&one).expect("read"), None);
+    assert_eq!(first.seed_record(&two).expect("read"), None);
+
+    for (component, token) in [(&one, tokens[1]), (&two, tokens[2])] {
+        first
+            .record_seed(component, token, &recorded)
+            .expect("A records the seed again");
+    }
+    let mut second = Lease::connect(&database, term).expect("B connects for the lease");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while second.take(&two).expect("the lease is read").is_none() {
+        assert!(Instant::now() < deadline, "B never took the lease");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let refused = first
+        .gather_seed(
+            &[(&one, tokens[1]), (&two, tokens[2])],
+            (&into, tokens[0]),
+            &json!({"digest": "sha256:cc", "done": 3, "rejected": []}),
+        )
+        .expect_err("A's gathering is refused once B holds one lease")
+        .to_string();
+    assert!(refused.contains("lease"), "{refused}");
+    assert_eq!(second.seed_record(&into).expect("read"), Some(gathered));
+    assert_eq!(
+        second.seed_record(&one).expect("read"),
+        Some(recorded.clone())
+    );
+    assert_eq!(second.seed_record(&two).expect("read"), Some(recorded));
+}
+
 /// `story:leader-exits-promptly-on-sigterm` (D3 A): the release of a lease, as a run makes it at
 /// exit, waits at most 1 s for its statement and for the lease row's lock whatever the lease's
 /// term, where a renewal waits up to a third of it: under a lease of an hour, with another session

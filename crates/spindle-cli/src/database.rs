@@ -266,15 +266,21 @@ fn lease_term() -> Result<Option<Duration>> {
 const RETRY: Duration = Duration::from_millis(50);
 
 /// The leases of every component of a served run bound to `postgres`, taken in name order through
-/// one connection of their own, which reads and takes only the lease rows and opens no store.
+/// one connection of their own, which reads and takes only the lease rows and the seed's record
+/// beside them, and opens no store.
 pub(crate) struct Leases {
     lease: Lease,
+    /// The schema the components' tables are in.
+    schema: String,
     /// The components, in name order.
     components: Vec<String>,
     /// The token of each lease taken, by component.
     held: BTreeMap<String, u64>,
     /// The trouble of the lease connection last told on stderr ([`Leases::told`]).
     told: Option<String>,
+    /// The components other than the first whose lease tables the seed's record was read from,
+    /// which the next write removes it from as it writes the first one's ([`Leases::answer`]).
+    elsewhere: Vec<String>,
 }
 
 impl Leases {
@@ -296,9 +302,11 @@ impl Leases {
         let lease = Lease::connect(&database, term).context("connecting for the leases")?;
         Ok(Some(Self {
             lease,
+            schema: database.schema,
             components,
             held: BTreeMap::new(),
             told: None,
+            elsewhere: Vec::new(),
         }))
     }
 
@@ -384,36 +392,166 @@ impl Leases {
     }
 
     /// Keeps every lease held on a thread of its own, renewing each every [`Leases::renewal`], until
-    /// the [`Kept`] is dropped, which releases them.
+    /// the [`Kept`] is dropped, which releases them. The same thread reads and writes the seed's
+    /// record on the lease connection when asked ([`SeedRow`]).
     ///
     /// # Errors
     /// The thread cannot start.
     pub(crate) fn keep(self) -> Result<Kept> {
         let term = self.lease.term();
-        let tokens = self.held.clone();
         let shared = Arc::new(Mutex::new(Renewal {
             lost: None,
             renewed: Instant::now(),
         }));
-        let (stop, stopped) = mpsc::channel::<()>();
+        let (asks, asked) = mpsc::channel::<Ask>();
+        let first = self.components.first().cloned().unwrap_or_default();
+        let row = SeedRow {
+            asks: asks.clone(),
+            // The thread answers between two renewals: at most one statement per lease before the
+            // one asked, each bounded by the connection's statement timeout, and one more to
+            // connect again.
+            wait: self
+                .lease
+                .statement_wait()
+                .saturating_mul(u32::try_from(self.components.len() + 2).unwrap_or(u32::MAX)),
+            table: self.table_of(&first),
+        };
         let noted = Arc::clone(&shared);
         let thread = std::thread::Builder::new()
             .name("spindle-lease".to_owned())
-            .spawn(move || self.renewing(&stopped, &noted))
+            .spawn(move || self.renewing(&asked, &noted))
             .context("starting the lease thread")?;
         Ok(Kept {
             shared,
             term,
-            tokens,
-            stop: Some(stop),
+            row,
+            stop: Some(asks),
             thread: Some(thread),
         })
     }
 
-    /// Renews every lease held until `stopped` reads, then releases them; notes on `shared` when
-    /// each renewal began that landed, and why a lease was lost: another process took it, or no
-    /// renewal landed for a whole lease.
-    fn renewing(mut self, stopped: &mpsc::Receiver<()>, shared: &Mutex<Renewal>) {
+    /// Answers `ask` about the seed's record (`story:seed-under-a-lease`, D3 A, D4 A). It is kept
+    /// in the lease table of the first component in name order, under the token this run took
+    /// that lease at. A read looks in every component's lease table, a table not created yet
+    /// holding none, so a record a run of an earlier specification kept under another first
+    /// component is found. Records found alike in several tables, as a release rolled back and
+    /// forward across a change of components leaves them, are one record; records that differ
+    /// are refused, naming the tables. The next write gathers a record found elsewhere into the
+    /// first component's table, in one statement under every lease involved; a removal removes
+    /// it from every table.
+    fn answer(&mut self, ask: Ask) {
+        let held: Vec<(String, u64)> = self
+            .components
+            .iter()
+            .filter_map(|component| {
+                self.held
+                    .get(component)
+                    .map(|token| (component.clone(), *token))
+            })
+            .collect();
+        let Some((first, token)) = held.first().cloned() else {
+            let none = "this run holds no lease".to_owned();
+            match ask {
+                Ask::Stop => {}
+                Ask::Read(reply) => drop(reply.send(Err(none))),
+                Ask::Write(_, reply) | Ask::Forget(reply) => drop(reply.send(Err(none))),
+            }
+            return;
+        };
+        match ask {
+            Ask::Stop => {}
+            Ask::Read(reply) => {
+                let _ = reply.send(self.read(&held));
+            }
+            Ask::Write(body, reply) => {
+                let written = if self.elsewhere.is_empty() {
+                    self.lease.record_seed(&first, token, &body)
+                } else {
+                    let from: Vec<(&str, u64)> = self
+                        .elsewhere
+                        .iter()
+                        .map(|old| {
+                            (
+                                old.as_str(),
+                                self.held.get(old).copied().unwrap_or_default(),
+                            )
+                        })
+                        .collect();
+                    let gathered = self.lease.gather_seed(&from, (&first, token), &body);
+                    if gathered.is_ok() {
+                        self.elsewhere.clear();
+                    }
+                    gathered
+                };
+                let _ = reply.send(written.map_err(|error| error.to_string()));
+            }
+            Ask::Forget(reply) => {
+                let mut removed = Ok(());
+                for (component, token) in &held {
+                    if let Err(error) = self.lease.forget_seed(component, *token) {
+                        removed = Err(error.to_string());
+                        break;
+                    }
+                }
+                if removed.is_ok() {
+                    self.elsewhere.clear();
+                }
+                let _ = reply.send(removed);
+            }
+        }
+    }
+
+    /// The seed's record, looked for in the lease table of each component of `held`, in name
+    /// order; notes where it was found other than in the first component's table.
+    fn read(&mut self, held: &[(String, u64)]) -> Result<Option<serde_json::Value>, String> {
+        let mut found = Vec::new();
+        for (component, _) in held {
+            if let Some(body) = self
+                .lease
+                .seed_record(component)
+                .map_err(|error| error.to_string())?
+            {
+                found.push((component.clone(), body));
+            }
+        }
+        let Some((_, body)) = found.first().cloned() else {
+            return Ok(None);
+        };
+        if found.iter().any(|(_, other)| *other != body) {
+            let tables: Vec<String> = found
+                .iter()
+                .map(|(component, _)| self.table_of(component))
+                .collect();
+            return Err(format!(
+                "the seed is recorded differently in more than one lease table, {}, as a release \
+                 rolled back across a change of its components may leave it: keep the row `seed` \
+                 of one of them and remove the others, so a start knows which entries are done",
+                tables.join(" and ")
+            ));
+        }
+        let first = held.first().map(|(component, _)| component.as_str());
+        self.elsewhere = found
+            .into_iter()
+            .map(|(component, _)| component)
+            .filter(|component| Some(component.as_str()) != first)
+            .collect();
+        Ok(Some(body))
+    }
+
+    /// The lease table of `component`, `<schema>.<prefix>_p_lease`.
+    fn table_of(&self, component: &str) -> String {
+        format!(
+            "{}.{}_p_lease",
+            self.schema,
+            spindle_kernel::postgres_prefix(component)
+        )
+    }
+
+    /// Renews every lease held until `asked` reads [`Ask::Stop`], then releases them; notes on
+    /// `shared` when each renewal began that landed, and why a lease was lost: another process
+    /// took it, or no renewal landed for a whole lease. Between two renewals it answers each ask
+    /// about the seed's record.
+    fn renewing(mut self, asked: &mpsc::Receiver<Ask>, shared: &Mutex<Renewal>) {
         let term = self.lease.term();
         let mut renewed = Instant::now();
         let lose = |why: String| {
@@ -425,10 +563,17 @@ impl Leases {
         // holding the row lands as the write ends.
         let mut next = Instant::now() + self.renewal();
         let mut retry = RETRY;
-        // A message or a dropped sender stops the renewals.
-        while let Err(mpsc::RecvTimeoutError::Timeout) =
-            stopped.recv_timeout(next.saturating_duration_since(Instant::now()))
-        {
+        // A stop or a dropped sender stops the renewals; an ask about the seed's record is
+        // answered at once.
+        loop {
+            match asked.recv_timeout(next.saturating_duration_since(Instant::now())) {
+                Ok(Ask::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                Ok(ask) => {
+                    self.answer(ask);
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+            }
             let began = Instant::now();
             let mut failed = None;
             for (component, &token) in &self.held {
@@ -480,6 +625,82 @@ impl Leases {
     }
 }
 
+/// What the run's thread asks the lease thread ([`Leases::renewing`]).
+enum Ask {
+    /// Release the leases and end.
+    Stop,
+    /// Read the seed's record.
+    Read(mpsc::Sender<Result<Option<serde_json::Value>, String>>),
+    /// Write the seed's record.
+    Write(serde_json::Value, mpsc::Sender<Result<(), String>>),
+    /// Remove the seed's record.
+    Forget(mpsc::Sender<Result<(), String>>),
+}
+
+/// Where a leading run records its seed (`story:seed-under-a-lease`): the row `seed` of the lease
+/// table of its first component in name order, read and written by the lease thread on the lease
+/// connection, each write landing only while the lease row names the token this run took (D3 A).
+/// The run's thread waits for each answer, at most the statements the lease thread may run
+/// before it ([`Leases::keep`]); no connection is opened for it.
+#[derive(Clone)]
+pub(crate) struct SeedRow {
+    asks: mpsc::Sender<Ask>,
+    wait: Duration,
+    /// The lease table, `<schema>.<prefix>_p_lease`.
+    table: String,
+}
+
+impl SeedRow {
+    /// The lease table the record is a row of.
+    pub(crate) fn table(&self) -> &str {
+        &self.table
+    }
+
+    /// What the row holds, `None` where there is none.
+    ///
+    /// # Errors
+    /// A row that cannot be read, or a lease thread that has ended or did not answer in time.
+    pub(crate) fn read(&self) -> Result<Option<serde_json::Value>> {
+        self.asked(Ask::Read)
+    }
+
+    /// Writes `body` as the row.
+    ///
+    /// # Errors
+    /// A row that cannot be written, a lease another process took, or a lease thread that has
+    /// ended or did not answer in time.
+    pub(crate) fn write(&self, body: serde_json::Value) -> Result<()> {
+        self.asked(|reply| Ask::Write(body, reply))
+    }
+
+    /// Removes the row.
+    ///
+    /// # Errors
+    /// As [`SeedRow::write`].
+    pub(crate) fn forget(&self) -> Result<()> {
+        self.asked(Ask::Forget)
+    }
+
+    /// Sends the ask `ask` makes of a reply channel and waits for its answer.
+    fn asked<T>(&self, ask: impl FnOnce(mpsc::Sender<Result<T, String>>) -> Ask) -> Result<T> {
+        let (reply, answer) = mpsc::channel();
+        self.asks
+            .send(ask(reply))
+            .ok()
+            .context("the lease thread has ended, so the seed's record is not read or written")?;
+        match answer.recv_timeout(self.wait) {
+            Ok(answered) => answered.map_err(|why| anyhow::anyhow!(why)),
+            Err(mpsc::RecvTimeoutError::Timeout) => bail!(
+                "the lease thread did not answer about the seed's record within {:?}",
+                self.wait
+            ),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                bail!("the lease thread has ended, so the seed's record is not read or written")
+            }
+        }
+    }
+}
+
 /// What the lease thread notes for the run's thread ([`Kept`]).
 struct Renewal {
     /// Why a lease was lost, once one was.
@@ -492,9 +713,9 @@ struct Renewal {
 pub(crate) struct Kept {
     shared: Arc<Mutex<Renewal>>,
     term: Duration,
-    /// The token of each lease, by component, as this run took it.
-    tokens: BTreeMap<String, u64>,
-    stop: Option<mpsc::Sender<()>>,
+    /// Where the run records its seed.
+    row: SeedRow,
+    stop: Option<mpsc::Sender<Ask>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -534,20 +755,17 @@ impl Kept {
         })
     }
 
-    /// The first component, in name order, whose lease this run took at a token above the
-    /// first, with that token: a lease another process held before.
-    pub(crate) fn taken_again(&self) -> Option<(&str, u64)> {
-        self.tokens
-            .iter()
-            .find(|(_, token)| **token > 1)
-            .map(|(component, token)| (component.as_str(), *token))
+    /// Where the run records its seed, whatever token it took each lease at
+    /// (`story:seed-under-a-lease`).
+    pub(crate) fn seed_row(&self) -> SeedRow {
+        self.row.clone()
     }
 }
 
 impl Drop for Kept {
     fn drop(&mut self) {
         if let Some(stop) = self.stop.take() {
-            let _ = stop.send(());
+            let _ = stop.send(Ask::Stop);
         }
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();

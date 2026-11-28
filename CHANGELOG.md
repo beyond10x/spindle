@@ -49,6 +49,26 @@ are Spindle's releases.
   (`spindle_host::Reader::stopped_by`, `HostError::ReadStopped`, and the reading handle's
   `events_after_unless_stopped` and `events_head_unless_stopped`, which return `None` only for a
   read they gave up) (`story:leader-exits-promptly-on-sigterm`).
+- A `run` on PostgreSQL given `database_lease` and a seed decides the seed from a record of its
+  progress in the store, whatever lease token it took, as a `--state` run decides it from
+  `seed.json`. Before, the seed ran only while every lease was at its first token, so a restart of
+  the only process, a changed seed file and a first process that took its leases and exited before
+  seeding (exit 3 on a misfit) never seeded again. The record is the row `seed` of the first
+  component's `<prefix>_p_lease` table, `{"digest", "done", "rejected"}`, which `store migrate`
+  already creates: written by the lease thread on the lease connection only while the lease row
+  names the run's token and session (`spindle_kernel::Lease::seed_record`, `record_seed`,
+  `forget_seed`), so no connection is added. A start looks for it in every component's lease
+  table, so a record kept before a component that sorts first was added is found, and the next
+  write moves it to the first one's in one statement under both leases (`Lease::move_seed`); a
+  records alike in several tables, as a rollback across a release that changed the components
+  leaves them, are used as one and gathered into the first one's table (`Lease::gather_seed`),
+  while records that differ exit 1 naming the tables. With no record and no row the whole seed is
+  sent; with the same file part done the rest is sent, rejected entries first; once done, one line
+  names the store and nothing is sent; another file exits 1 before the run serves a request, naming both
+  digests, unless the store holds no row. A store with rows and no record (seeded by 0.26.0, or
+  filled by `state move`) is taken as seeded: one line, nothing sent, and a complete record
+  written. Resets write the record as they do `seed.json`, and one by a leased run without a seed
+  removes it. Without `database_lease` nothing is recorded, as before (`story:seed-under-a-lease`).
 
 ## [0.26.0] - 2026-11-28
 
