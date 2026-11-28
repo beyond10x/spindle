@@ -11,7 +11,7 @@
 //! - every scan, on the store, its reading handle and a second handle on the same file, answers
 //!   what the whole feed answers after any drawn sequence of writes, refused groups, writes by the
 //!   other handle, restarts and resets, on a new file and on one the 0.10.0 release wrote;
-//! - opening a log of 1,300 rows of 1 MiB holds the rows that rest, not their history.
+//! - opening a log of 400 rows of 1 MiB holds the rows that rest, not their history.
 //!
 //! `tests/fixtures/released-0.10.0/books.sqlite` was written by the 0.10.0 release binary
 //! (`b10x-spindle-0.10.0-x86_64-unknown-linux-gnu.tar.gz`, SHA-256 `df4d1b2c…dd3f2`, checked
@@ -727,16 +727,16 @@ const LARGE: &str = "probe.rest.Page";
 /// How many rows of 1 MiB the large state writes, and how many of them rest at 1 MiB once the
 /// rest are written again small.
 #[cfg(target_os = "linux")]
-const LARGE_ROWS: usize = 1_300;
+const LARGE_ROWS: usize = 400;
 #[cfg(target_os = "linux")]
-const LARGE_RESTING: usize = 100;
+const LARGE_RESTING: usize = 30;
 #[cfg(target_os = "linux")]
 const MIB: u64 = 1 << 20;
 
 /// Writes the large state at `path` as the store writes a row, one `spindle.row` event on the
 /// instance's stream, straight to the log: each request hashed by its instance and round rather
-/// than its 1 MiB body, which a debug build hashes at a few MiB a second. 1,300 rows of 1 MiB,
-/// then 1,200 of them again as small rows.
+/// than its 1 MiB body, which a debug build hashes at a few MiB a second. 400 rows of 1 MiB,
+/// then 370 of them again as small rows.
 #[cfg(target_os = "linux")]
 fn write_large_rows(path: &Path) {
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -812,12 +812,13 @@ fn large_rows_child_opens_and_reads() {
     );
 }
 
-/// A log of 1,300 rows of 1 MiB, 1,200 of them then written again small: more than 1.3 GiB of
-/// history, 100 MiB resting. A process that opens it, scans it on the store and its reading
-/// handle and counts it holds at most the resting rows and a margin afterwards, never the
-/// history. Measured in a process of its own, with every allocation of 128 KiB or more mapped
-/// and handed back to the system when freed (`MALLOC_MMAP_THRESHOLD_`), so the resident set
-/// shows what is held.
+/// A log of 400 rows of 1 MiB, 370 of them then written again small: 400 MiB of history, 30 MiB
+/// resting. A process that opens it, scans it on the store and its reading handle and counts it
+/// holds at most the resting rows and a margin of 160 MiB afterwards (190 MiB), never the
+/// history, which alone is 210 MiB over that. 1,300 rows (1.3 GiB) took 15 to 21 s of a 4-CPU
+/// runner (`story:test-step-within-budget`). Measured in a process of its own, with every
+/// allocation of 128 KiB or more mapped and handed back to the system when freed
+/// (`MALLOC_MMAP_THRESHOLD_`), so the resident set shows what is held.
 #[cfg(target_os = "linux")]
 #[test]
 fn opening_a_log_of_large_rows_holds_the_rows_that_rest_not_their_history() {

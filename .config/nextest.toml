@@ -1,4 +1,5 @@
 [profile.default]
+test-threads = 8
 slow-timeout = { period = "30s", terminate-after = 2 }
 final-status-level = "slow"
 fail-fast = false
