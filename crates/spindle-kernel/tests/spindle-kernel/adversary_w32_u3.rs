@@ -197,4 +197,98 @@ mod postgres {
             "the renewal waited {waited:?} for the lock held 2.5 s from the release's start"
         );
     }
+
+    /// Another session holding a transaction with an id open for `held`.
+    fn older_transaction(url: String, held: Duration) -> std::thread::JoinHandle<()> {
+        let (opened, older) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("a runtime");
+            let (mut client, connection) = runtime
+                .block_on(tokio_postgres::connect(&url, tokio_postgres::NoTls))
+                .expect("a second connection");
+            let driver = runtime.spawn(connection);
+            let transaction = runtime
+                .block_on(client.transaction())
+                .expect("a transaction");
+            runtime
+                .block_on(transaction.simple_query("SELECT pg_current_xact_id()"))
+                .expect("the transaction takes an id");
+            opened.send(()).expect("the test waits");
+            std::thread::sleep(held);
+            runtime
+                .block_on(transaction.commit())
+                .expect("the transaction ends");
+            drop(client);
+            let _ = runtime.block_on(driver);
+        });
+        older.recv().expect("the older transaction is open");
+        holder
+    }
+
+    /// Round 3, the boundary of the new rule on PostgreSQL: with the stop flag set before the
+    /// read, a read that has nothing to wait for (its turn free, the feed answering every write of
+    /// the store) completes: `Some` with every event, and the head. The same reads once a write of
+    /// the store is withheld behind another session's open transaction are given up: `None`,
+    /// within 0.5 s, the transaction still open.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_read_asked_with_the_flag_set_completes_unless_it_has_to_wait() {
+        use spindle_kernel::Store;
+        use std::sync::atomic::AtomicBool;
+
+        let database = database();
+        let mut store = spindle_kernel::PostgresStore::open(&database, &fresh("boundary"), 1)
+            .expect("the store opens");
+        let reading = store
+            .reading()
+            .expect("a PostgreSQL store reads beside its writer");
+        store
+            .commit(&super::opened("one"))
+            .expect("the first match is created");
+        // Another test of the lane may hold a transaction open: a read without the flag waits
+        // until the feed answers the write, so the reads below have nothing to wait for.
+        let answered = reading.events_after(0, 64).expect("the feed is read");
+        assert_eq!(answered.len(), 1, "{answered:?}");
+        let set = AtomicBool::new(true);
+        let read = reading
+            .events_after_unless_stopped(0, 64, &set)
+            .expect("the read answers");
+        assert_eq!(
+            read.as_ref().map(Vec::len),
+            Some(1),
+            "a read with nothing to wait for completes, the flag set: {read:?}"
+        );
+        let head = reading
+            .events_head_unless_stopped(&set)
+            .expect("the head answers");
+        assert!(
+            head.is_some_and(|head| head > 0),
+            "the head with nothing to wait for is read, the flag set: {head:?}"
+        );
+
+        let holder = older_transaction(database.url.clone(), Duration::from_secs(3));
+        store
+            .commit(&super::opened("two"))
+            .expect("the second match is created behind the open transaction");
+        let started = Instant::now();
+        let read = reading
+            .events_after_unless_stopped(0, 64, &set)
+            .expect("the read answers");
+        let head = reading
+            .events_head_unless_stopped(&set)
+            .expect("the head answers");
+        let took = started.elapsed();
+        holder.join().expect("the older transaction ends");
+        assert!(
+            read.is_none() && head.is_none(),
+            "reads that have to wait are given up: {read:?} {head:?}"
+        );
+        assert!(
+            took < Duration::from_millis(500),
+            "the two given-up reads took {took:?}"
+        );
+    }
 }
