@@ -165,3 +165,57 @@ fn a_seed_left_part_done_resumes_on_the_same_components() {
     let record = recorded(&schema, "board").expect("the seed is recorded");
     assert_eq!(record["done"], 3, "{record}");
 }
+
+/// Round 2: a release rolled back and then forward again, every start with the same seed file
+/// that has run whole. The release that adds `audit` moves the record into `audit`'s lease table;
+/// the release rolled back to does not read that table, takes the store as seeded (D5 B, the case
+/// the coordinator parked) and writes a complete record of the same file into `board`'s. Rolled
+/// forward again, the run finds two records, equal, of the file it was given: the Outcome asks
+/// that "once one process has completed it, it skips", and the acceptance's restart prints the
+/// "already ran" line and reads ready. It exits 1 instead, and every restart meets the same exit
+/// until a person removes a row.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_release_rolled_back_and_forward_with_the_same_seed_skips_it() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let seed = seed_file(directory.path(), "seed.json", &["s1"]);
+    let schema = super::super::schema();
+    let mut first = Replica::start(seeded(&environment, &schema, &seed));
+    assert!(
+        first
+            .line_by("ended: 1 sent, 1 applied", Instant::now() + super::ANSWER)
+            .is_some(),
+        "{}",
+        first.printed()
+    );
+    first.stop();
+
+    let mut forward = Replica::start(grown_seeded(&environment, &schema, &seed));
+    forward.ready_by(Instant::now() + super::ANSWER);
+    forward.stop();
+    let record = recorded(&schema, "audit").expect("the record moved to audit's table");
+    assert_eq!(recorded(&schema, "board"), None, "{}", forward.printed());
+
+    let mut back = Replica::start(seeded(&environment, &schema, &seed));
+    back.ready_by(Instant::now() + super::ANSWER);
+    back.stop();
+    assert_eq!(
+        recorded(&schema, "board"),
+        Some(record.clone()),
+        "the release rolled back to records the same file complete: {}",
+        back.printed()
+    );
+
+    match super::super::started(grown_seeded(&environment, &schema, &seed)) {
+        Ok(served) => {
+            let (status, body) = super::call(served.address, "GET", "/__spindle/ready", None);
+            assert_eq!(status, 200, "{body}");
+        }
+        Err(refused) => panic!(
+            "rolled forward with the same file, both records {record}, the run exited {} \
+             instead of skipping the seed: {}",
+            refused.status, refused.stderr
+        ),
+    }
+}

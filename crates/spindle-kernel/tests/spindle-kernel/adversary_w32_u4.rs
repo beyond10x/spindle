@@ -2,6 +2,10 @@
 //! lands only while the lease row names the writer's token, the row held locked while it writes.
 //! A write of the record that is in flight while another process's take of the lease holds the
 //! lease row, and that take then commits a later token, lands nothing.
+//!
+//! Round 2 (`Lease::move_seed`): a move of the record from one component's lease table to
+//! another's lands nothing, in either table, once the lease of the table it moves to was taken,
+//! or while a take of the lease of the table it moves from is in flight and then commits.
 
 /// The PostgreSQL lane (`task check:postgres`).
 #[cfg(feature = "postgres")]
@@ -116,6 +120,109 @@ mod postgres {
             lease.seed_record(&component).expect("the row is read"),
             Some(first),
             "the record is as token 1 last wrote it"
+        );
+    }
+
+    /// A holds the leases of `old` and `new` and the record is in `old`'s table; B takes the lease
+    /// of `new`, the table the record moves to. A's move is refused, and neither row changes.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_move_is_refused_once_the_lease_it_moves_to_was_taken() {
+        let database = database();
+        let old = fresh("moving");
+        let new = fresh("moving");
+        let term = Duration::from_secs(1);
+        let mut first = Lease::connect(&database, term).expect("A connects for the leases");
+        let old_token = first
+            .take(&old)
+            .expect("the lease is read")
+            .expect("A takes the old lease");
+        let new_token = first
+            .take(&new)
+            .expect("the lease is read")
+            .expect("A takes the new lease");
+        let recorded = json!({"digest": "sha256:cc", "done": 1, "rejected": []});
+        first
+            .record_seed(&old, old_token, &recorded)
+            .expect("A records the seed in the old table");
+        let mut second = Lease::connect(&database, term).expect("B connects for the lease");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while second.take(&new).expect("the lease is read").is_none() {
+            assert!(Instant::now() < deadline, "B never took the new lease");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let moved = first.move_seed(
+            (&old, old_token),
+            (&new, new_token),
+            &json!({"digest": "sha256:cc", "done": 2, "rejected": []}),
+        );
+        assert!(
+            moved.is_err(),
+            "A's move is refused once B holds the lease of the table it moves to"
+        );
+        assert_eq!(
+            second.seed_record(&old).expect("read"),
+            Some(recorded),
+            "the old row is as it was"
+        );
+        assert_eq!(
+            second.seed_record(&new).expect("read"),
+            None,
+            "nothing was moved in"
+        );
+    }
+
+    /// The move starts while a take of the lease of `old`, the table it moves from, holds that
+    /// lease row, waits for it, and lands nothing in either table once the take commits a later
+    /// token: one statement, so no row is lost and none is doubled.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_move_in_flight_during_a_takeover_of_its_source_lands_nothing() {
+        let database = database();
+        let old = fresh("inflight");
+        let new = fresh("inflight");
+        let mut lease =
+            Lease::connect(&database, Duration::from_secs(3)).expect("A connects for the leases");
+        let old_token = lease
+            .take(&old)
+            .expect("the lease is read")
+            .expect("A takes the old lease");
+        let new_token = lease
+            .take(&new)
+            .expect("the lease is read")
+            .expect("A takes the new lease");
+        let recorded = json!({"digest": "sha256:dd", "done": 1, "rejected": []});
+        lease
+            .record_seed(&old, old_token, &recorded)
+            .expect("A records the seed in the old table");
+        let table = format!("{}.{}_p_lease", database.schema, postgres_prefix(&old));
+        let held = Duration::from_millis(300);
+        let take = taking(database.url.clone(), table, held);
+        let started = Instant::now();
+        let moved = lease.move_seed(
+            (&old, old_token),
+            (&new, new_token),
+            &json!({"digest": "sha256:dd", "done": 2, "rejected": []}),
+        );
+        let waited = started.elapsed();
+        take.join().expect("the take ends");
+        assert!(
+            waited >= held / 2,
+            "the move was in flight, waiting for the take's lock: {waited:?}"
+        );
+        assert!(
+            moved.is_err(),
+            "the move is refused once the take committed"
+        );
+        assert_eq!(
+            lease.seed_record(&old).expect("read"),
+            Some(recorded),
+            "the old row stays"
+        );
+        assert_eq!(
+            lease.seed_record(&new).expect("read"),
+            None,
+            "nothing was moved in"
         );
     }
 }
