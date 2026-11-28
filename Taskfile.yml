@@ -213,6 +213,16 @@ tasks:
       - sh scripts/check-postgres-options.sh
       - sh scripts/check-postgres-options.sh test
 
+  check:postgres-options-adversary:
+    desc: The adversary's cases of scripts/check-postgres-options.sh, each a copy of ci.yml or scripts/postgres-lane.sh that sets a server option outside the script in another form, or reads the options and does not pass them
+    cmds:
+      - sh scripts/postgres-lane.adversary-test.sh options
+
+  check:postgres-lane-adversary:
+    desc: The adversary's cases of scripts/postgres-lane.sh on PostgreSQL's binaries from SPINDLE_PG_BIN or PATH (it fails without them), lane's own left-behind check, SIGTERM, Ctrl-C through lane, a failing initdb and pg_ctl start, a port another lane holds, and an empty SPINDLE_TEST_DATABASE_URL
+    cmds:
+      - sh scripts/postgres-lane.adversary-test.sh lane
+
   check:vm:
     desc: The VM tests, on a host with KVM
     cmds:
