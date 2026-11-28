@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-28
+
 ### Added
 
 - A served `run` given `--tls-cert <FILE>` and `--tls-key <FILE>` serves HTTPS on its listener,

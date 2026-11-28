@@ -1,0 +1,12 @@
+{
+  "at": "2026-11-28T01:33:47Z",
+  "actor": "human:operator",
+  "artifact": "story:several-writers-one-postgres",
+  "kind": "story",
+  "revision": 19,
+  "change": {
+    "change": "evidence",
+    "kind": "test_result",
+    "source": "https://github.com/beyond10x/spindle/actions/runs/46086368337 (PR 101 Gate, PostgreSQL, macOS green on d81af36f; merged bf203e6d6c0bc419fe1ad04e8cba507a3d14997a)"
+  }
+}
