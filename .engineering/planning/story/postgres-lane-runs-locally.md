@@ -19,7 +19,9 @@ scope:
   path: scripts/check-postgres-options.sh
 - confidence: inferred
   path: scripts/postgres-lane.sh
-revision: 3
+- confidence: inferred
+  path: scripts/postgres-lane.test.sh
+revision: 4
 ---
 ## Outcome
 
@@ -29,7 +31,9 @@ the same server options as the CI job (`.github/workflows/ci.yml`, the postgres 
 the repository holds those options and both the task and the CI job read them (D1 A). The cluster is
 PostgreSQL 13 or later from `PATH` or `SPINDLE_PG_BIN`; the script prints its major version and
 warns when it is not CI's 17 (D3 A). With `SPINDLE_TEST_DATABASE_URL` set, the task starts nothing
-and runs as in 0.26.0 (D2 A).
+and runs as in 0.26.0 (D2 A). `max_connections` holds the lane's peak of open connections with
+`.config/nextest.toml` as `main` has it once `integration/2026-11-28-1` has landed (the postgres
+profile's `test-threads = 12`, heavy group `max-threads = 3`).
 
 ## Why
 
@@ -42,17 +46,31 @@ gate equals the forge" asks for runner differences to be written in the reposito
 
 - With `initdb` and `pg_ctl` of PostgreSQL 13 or later on `PATH` or in `SPINDLE_PG_BIN`, and no
   `SPINDLE_TEST_DATABASE_URL`, `task check:postgres` passes and leaves no cluster process or
-  directory behind, also when a test fails or the run gets SIGINT: at its end the task asserts that
-  the cluster directory under `target/` is gone and the postmaster PID is not alive (D7 A). The
-  nextest run inside it stays under `scripts/within.sh 120` (each test killed at 60 s); the cluster
-  start is outside that bound.
+  directory behind: at its end the task asserts that the cluster directory under `target/` is gone
+  and the postmaster PID is not alive (D7 A). The nextest run inside it stays under
+  `scripts/within.sh 120` (each test killed at 60 s); the cluster start is outside that bound.
+- `scripts/postgres-lane.test.sh` (POSIX sh, task `check:postgres-lane-script`, on a host with
+  `initdb` and `pg_ctl`, under 60 s) runs the lane script twice: around `false`, where the script
+  exits non-zero, and around `sleep 30`, sent SIGINT once the cluster answers `pg_isready`. After
+  each it asserts that the cluster directory is gone and the postmaster PID is not alive; red first
+  on a copy of the script without its `trap`.
+- The same check observes the version handling (D3 A): with binaries of a major other than 17 on
+  `PATH`, the script prints that major and a warning naming 17; with `SPINDLE_PG_BIN` naming a
+  directory of wrappers that log each call and report major 17, the log shows the cluster was made
+  and started by those wrappers, and no warning is printed.
 - With `SPINDLE_TEST_DATABASE_URL` set, `task check:postgres` starts no cluster (no `initdb` or
   `pg_ctl` process, no directory under `target/postgres-lane.*`).
 - The script exports `SPINDLE_TEST_DATABASE_CA`, the CA of a server certificate it issued for
   `localhost` and `127.0.0.1`, and the hosted (TLS, `sslmode=require`) cases run in the lane.
-- A check in `task check` (no database) fails when the CI PostgreSQL step names a `-c` server option
-  other than through the script, or when the script lacks `ssl=on`, `max_locks_per_transaction=256`
-  or `max_connections=300`; red first on a copy of `ci.yml` with a literal `-c max_connections=100`.
+- `scripts/check-postgres-options.sh` in `task check` (no database) fails when the CI PostgreSQL
+  step names a `-c` server option other than through the script, when the script lacks `ssl=on` or
+  `max_locks_per_transaction=256`, or when its `max_connections` is below 300, so script and CI
+  carry one value; red first on a copy of `ci.yml` with a literal `-c max_connections=100` and on a
+  copy of the script with `max_connections=200`.
+- One `task check:postgres` run on the script's cluster, after `integration/2026-11-28-1` has
+  landed, samples the count of `pg_stat_activity` rows every 0.5 s (a sampler beside the run,
+  without the `slot` prefix); its peak, below the script's `max_connections`, is written in the
+  story's closing record.
 
 ## Decided when scoped
 

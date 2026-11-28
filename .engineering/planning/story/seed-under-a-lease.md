@@ -28,20 +28,24 @@ scope:
   path: crates/spindle-cli/tests/spindle-cli/postgres/replicas.rs
 - confidence: inferred
   path: crates/spindle-kernel/src/postgres.rs
+- confidence: inferred
+  path: crates/spindle-kernel/tests/spindle-kernel/postgres.rs
 - confidence: cited
   path: docs/design/spindle.md
 - confidence: cited
   path: website/docs/concepts/environment-and-admission.md
 - confidence: cited
   path: website/docs/reference/cli.md
-revision: 3
+revision: 4
 ---
 ## Outcome
 
-A run on PostgreSQL with `database_lease` set submits its seed when the store holds no record of a
-completed seed of that file, whatever lease token it took, and skips it once one process has
-completed it: the seed's progress is kept in the component's tables, as `seed.json` keeps it for a
-`--state` directory. This replaces D5 A of `story:several-writers-one-postgres` (D2 A).
+A run on PostgreSQL with `database_lease` set decides its seed from a record of the seed's progress
+kept in the component's tables, whatever lease token it took, as `seed.json` keeps it for a
+`--state` directory: with no record and no rows it submits the seed from entry 1; with a record of
+the same file part done it resumes after the count; once one process has completed it, it skips;
+with no record and rows it writes a complete record and skips (D5 B). This replaces D5 A of
+`story:several-writers-one-postgres` (D2 A).
 
 The record is a row `seed` in the `<prefix>_p_lease` read model of the first component in name
 order, holding `{"digest", "done", "rejected"}` as `seed.json`'s `Recorded` does (D4 A); the lease
@@ -62,8 +66,9 @@ lease.
 
 ## Acceptance
 
-Each test below is a PostgreSQL-lane test (`#[ignore]`, run by `task check:postgres`) in
-`spindle-cli` `postgres/replicas.rs`, with `database_lease` set, each under the 60 s bound.
+Each test below is a PostgreSQL-lane test (`#[ignore]`, run by `task check:postgres`) with
+`database_lease` set, each under the 60 s bound, in `spindle-cli` `postgres/replicas.rs` except
+`a_deposed_process_cannot_write_the_seed_record`.
 
 - `a_seed_after_a_lease_taken_without_seeding_runs`: the test takes token 1 through
   `spindle_kernel::Lease::take` and releases it, as a process that exited 3 on a misfit leaves it
@@ -72,9 +77,12 @@ Each test below is a PostgreSQL-lane test (`#[ignore]`, run by `task check:postg
 - `a_restart_after_a_completed_seed_skips_it`: a restart with the same file prints the "already
   ran … no entry is sent" line naming the store rather than a path, prints no `ended:` line, and
   `/__spindle/ready` answers `200` within 10 s.
-- `another_seed_file_is_refused_before_serving`: a restart with another file exits 1 before it
-  serves a request, naming both digests; on a store that holds no row it seeds from the first
-  entry instead (D7 A).
+- `another_seed_file_is_refused_before_serving`: on a store with rows and a complete record of one
+  file, a restart with another file exits 1 before it serves a request, naming both digests, prints
+  no `ended:` line, and leaves the rows and the record unchanged (D7 A).
+- `another_seed_file_on_an_empty_store_seeds_from_the_first_entry`: on a store with no row and a
+  record of one file, a restart with another file sends every entry from the first, prints
+  `ended: N sent, N applied`, and the record then holds the new file's digest (D2 A).
 - `a_standby_that_takes_over_after_the_seed_skips_it`: after the leader completed the seed and is
   killed, the standby leads and skips the seed on the record, with the line that names the store,
   not a token.
@@ -83,6 +91,14 @@ Each test below is a PostgreSQL-lane test (`#[ignore]`, run by `task check:postg
 - `a_store_seeded_without_a_record_skips_and_records`: a store with rows and no record (as 0.26.0
   leaves it) skips the seed with one line and writes a complete record; the next start with the
   same file skips on that record (D5 B).
+- `a_reset_of_a_leased_run_rewrites_the_record`: after `POST /api/reset` with no world, the `seed`
+  row reads `done` 0 before the first entry is sent and the full count once the seed has ended;
+  after `POST /api/reset` with a world, it reads every entry done and no entry is sent (D6 A).
+- `a_reset_by_a_run_without_a_seed_deletes_the_record`: a leased run started without `--seed` on a
+  store with a record answers `POST /api/reset`, and the `seed` row is gone after it (D6 A).
+- `a_deposed_process_cannot_write_the_seed_record` (`spindle-kernel` `postgres.rs`): handle A holds
+  the lease at token 1, handle B takes it at token 2, and A's write of the `seed` row is refused by
+  name with the row unchanged (D3 A).
 - The three tests of `adversary_w31_u6.rs` that check D5 A (`the_seed_runs_only_under_the_first_token`
   `:549-595`, `a_seed_with_one_lease_taken_before_is_skipped_naming_it` `:842-880`,
   `a_restart_after_a_clean_stop_skips_the_seed` `:882-914`) are each rewritten to this story's rule

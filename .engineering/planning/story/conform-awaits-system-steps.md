@@ -11,6 +11,8 @@ scope:
   path: CHANGELOG.md
 - confidence: inferred
   path: crates/spindle-cli/src/replay.rs
+- confidence: inferred
+  path: crates/spindle-cli/tests/spindle-cli/replay.rs
 - confidence: cited
   path: crates/spindle-conformance/src/target.rs
 - confidence: inferred
@@ -21,7 +23,7 @@ scope:
   path: crates/spindle-conformance/tests/spindle-conformance/main.rs
 - confidence: inferred
   path: docs/design/spindle.md
-revision: 3
+revision: 4
 ---
 ## Outcome
 
@@ -44,20 +46,26 @@ await scenarios. `HostTarget` does not implement `await_outcome`; the default of
 
 ## Acceptance
 
-All tests below are in `crates/spindle-conformance/tests/spindle-conformance/await_system_steps.rs`,
-default test step, each under the 60 s bound, over the neutral fixture
+The tests below run in the default test step, each under the 60 s bound, over the neutral fixture
 `crates/spindle-conformance/tests/fixtures/await-system/`: a specification with a command every
 grant of which is a `system: true` actor (ess/27 or later), awaited once with `await_within:` and
-once without.
+once without. The command has a stated input (one the scenario compares), an `Optional` input and a
+`when_related:` input, and the branch it reaches depends on each, so a host that mints every input
+answers differently from the interpreter. The first four are in
+`crates/spindle-conformance/tests/spindle-conformance/await_system_steps.rs`.
 
 - `an_awaited_system_step_is_observed`: the fixture's synthesized await scenarios pass under
-  `conform`, and each answer of `HostTarget::await_outcome` equals `Interpreted::for_model`'s on the
-  same steps.
+  `conform`, and each answer of `HostTarget::await_outcome` (input used, outcome, events) equals
+  `Interpreted::for_model`'s on the same steps, which checks D1 A's input order.
 - `a_refused_system_step_is_not_issued`: the synthesized `expect_not_issued` scenario for a state
   that refuses the command passes.
 - `an_await_answered_not_issued_fails`: against a wrapper target that answers `NotIssued`, the await
   scenario fails with `ESS-CF-AWAIT` (the red side of the first line).
-- `conform` over the fixture reports 0 skipped, and `conformance.toml` keeps `skipped = 0` (D5 A).
+- `no_await_scenario_of_the_fixture_is_skipped`: `conform` over the fixture reports 0 skipped
+  (D5 A); red first on 0.26.0, where every await scenario is skipped.
+- `a_replayed_scenario_runs_its_await` (`crates/spindle-cli/tests/spindle-cli/replay.rs`):
+  `run --scenario` over one of the fixture's await scenarios exits 0 and prints the await act, with
+  no outcome beside it (D4 A).
 - The ESS pin stays at 0.99.2: ESS's `crates/verify/ess-conformance/src/target.rs`, which holds
   `AwaitRequest`, is byte-identical from 0.99.2 through 0.99.10.
 
@@ -129,3 +137,11 @@ Derived 2026-11-28 by `story-scoper`. Every line is **cited** (read from the sto
 ## Not covered
 
 - Await scenarios on a browser or Node host.
+- Awaiting a deadline, a tick or an event binding's command, which the draft named: ESS 0.99.2
+  refuses a binding whose `invoke:` names a system-issued command (`ess-domain/src/system_issued.rs:19`),
+  and an await on a model with a periodic binding answers `unsupported`, as the interpreter does
+  (D3 A).
+- An await skip count for the repository's own suite and a count printed by `check:conformance`,
+  which the draft named: Spindle's own `ess/` model has no `system: true` actor, so its suite has
+  no await scenario (`conformance.toml` holds `skipped = 0`), and the printed count (D5 C) is not
+  taken; the count is taken on the fixture (D5 A).

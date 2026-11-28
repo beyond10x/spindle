@@ -6,6 +6,7 @@ status: draft
 title: A leader on PostgreSQL exits promptly on SIGTERM under load
 relations:
 - serves: vision:spindle
+- depends_on: story:postgres-lane-runs-locally
 scope:
 - confidence: inferred
   path: CHANGELOG.md
@@ -55,19 +56,36 @@ tests were open on the cluster at the time. The cause inside the process is not 
 
 ## Acceptance
 
-- The in-process wait that holds the exit after SIGTERM is named in the story's closing record
-  (the scoper's candidate, unproven: the egress lane's read in `LogStore::published`, up to
-  `PUBLISH_WAIT` = 30 s, `crates/spindle-kernel/src/sqlite.rs:1201-1232`), with a kernel test in
-  `spindle-kernel` `postgres.rs` (PostgreSQL lane, under 60 s), red first on 0.26.0: a stopped
-  `events_placed_after` returns while an older transaction is open on the server.
-- An end-to-end test in `spindle-cli` `postgres/replicas.rs` (PostgreSQL lane, under 60 s), red
-  first on 0.26.0: the webhook answers `500` for t1; another session (any role) opens a transaction
-  with a transaction id and holds it, at most 10 s, from before the leader's last egress cursor save
-  until past the bound; the webhook then answers `200`; after SIGTERM the leader exits within the
-  bound `run --help` names, the standby prints `took the lease of <component>` within two thirds of
-  the lease of that exit, and it answers ready `200` within 10 s.
+All tests below are PostgreSQL-lane tests (`#[ignore]`, run by `task check:postgres`), each under
+the 60 s bound.
+
+- The `CHANGELOG.md` `[Unreleased]` entry names the in-process wait that held the exit after
+  SIGTERM (the scoper's candidate, unproven: the egress lane's read in `LogStore::published`, up to
+  `PUBLISH_WAIT` = 30 s, `crates/spindle-kernel/src/sqlite.rs:1201-1232`).
+- `a_leader_exits_within_the_bound_under_an_open_transaction` (`spindle-cli` `postgres/replicas.rs`),
+  red first on 0.26.0, where the exit comes past the bound. The test's numbers: `database_lease` 2 s
+  (`LEASE`); `--drain` at its default 20 s, which adds 0 s since no request is queued; the egress
+  call's `timeout_ms` 2000 (`crates/spindle-cli/tests/spindle-cli/egress.rs:191`); so the bound is
+  0 + 2 + 5 = 7 s from SIGTERM. Steps: the webhook answers `500` for t1; another session (any role)
+  opens a transaction with a transaction id at T0 and holds it 10 s, to T0 + 10 s; the webhook then
+  answers `200`, so the leader saves its cursor after T0; the test sends SIGTERM at most 2 s after T0,
+  so the hold outlasts the bound by at least 1 s. Asserted: the leader exits within 7 s of SIGTERM;
+  the standby prints `took the lease of <component>` within 1.33 s (two thirds of the 2 s lease)
+  counted from the instant the test reads the old leader's exit status, and answers ready `200`
+  within 10 s of it; 3 s after that, the webhook has received t1 from the old leader only (its
+  `500` and its `200`) and never from the new leader. If D2 A's 5 s allowance is adjusted before
+  merge, the 7 s, the SIGTERM instant and the hold change with it in the same change, the hold
+  staying at most 10 s and ending at least 1 s past the bound.
 - That end-to-end test passes in 20 of 20 separate runs, each its own nextest call under the 60 s
-  bound, recorded as evidence; the 20 runs are not part of the gate.
+  bound, on the lane `story:postgres-lane-runs-locally` starts, recorded as evidence; the 20 runs
+  are not part of the gate.
+- `a_release_under_a_long_lease_waits_at_most_one_second` (`spindle-kernel` `postgres.rs`), red
+  first on 0.26.0 (a third of the lease, 1200 s, per statement; killed at 60 s): with a lease of
+  3600 s and another session holding the lease row `FOR UPDATE`, the release at exit returns an
+  error within 1.5 s (1 s statement and lock timeout, D3 A, plus 0.5 s margin).
+- `a_stopped_feed_read_returns_while_an_older_transaction_is_open` (`spindle-kernel` `postgres.rs`),
+  added with the stop D1 A introduces, so not red first: with a transaction held open by another
+  session, an `events_placed_after` whose stop flag is set returns within 0.5 s.
 - `run --help` and the generated `website/docs/reference/cli.md` name the exit bound after a signal.
 
 ## Decided when scoped
