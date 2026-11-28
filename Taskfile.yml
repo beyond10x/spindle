@@ -197,7 +197,7 @@ tasks:
       - '{{.NEXTEST}} --no-run'
       - defer: { task: test:slowest, vars: { NEXTEST_PROFILE: postgres } }
       - "sh scripts/within.sh 100 {{.NEXTEST}} --run-ignored all -E '{{.TESTS}}'"
-      - "sh scripts/within.sh 20 cargo nextest run --locked -p spindle-kernel --test spindle-kernel --run-ignored all -E 'binary_id(=spindle-kernel::spindle-kernel) and test(={{.ALONE}})'"
+      - "sh scripts/within.sh 20 {{.NEXTEST}} --run-ignored all -E 'binary_id(=spindle-kernel::spindle-kernel) and test(={{.ALONE}})'"
 
   check:vm:
     desc: The VM tests, on a host with KVM
