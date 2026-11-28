@@ -56,6 +56,17 @@ ci_edited() {
     expect_refused "$1" .github/workflows/ci.yml
 }
 
+# ci_awk_copy <name> <awk program> <text>: the copy's ci.yml through that program, the text in its
+# variable add (taken as written: ENVIRON, not -v). ci_awk: the same, and the check must refuse it.
+ci_awk_copy() {
+    options_copy "$1"
+    add=$3 awk "BEGIN { add = ENVIRON[\"add\"] } $2" "$root/.github/workflows/ci.yml" >"$work/$1/.github/workflows/ci.yml"
+}
+ci_awk() {
+    ci_awk_copy "$@"
+    expect_refused "$1" .github/workflows/ci.yml
+}
+
 # script_edited <name> <sed expression>: the copy's postgres-lane.sh with that edit; refused.
 script_edited() {
     options_copy "$1"
@@ -100,6 +111,42 @@ options_cases() {
     # The script names max_locks_per_transaction=256 and then a smaller value, which postgres takes.
     script_edited locks-overridden 's/^    echo "max_connections=300"$/&\
     echo "max_locks_per_transaction=64"/'
+
+    # Round 2. A second job that starts its own PostgreSQL with a literal option and runs the lane.
+    ci_awk second-job '{ print } END { print add }' '  postgres-13:
+    name: PostgreSQL 13
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: PostgreSQL 13 on loopback
+        run: |
+          set -euo pipefail
+          docker run -d --name postgres -p 127.0.0.1:5432:5432 -e POSTGRES_USER=owner -e POSTGRES_PASSWORD=owner -e POSTGRES_DB=spindle postgres:13 -c max_connections=100
+          echo "SPINDLE_TEST_DATABASE_URL=postgres://owner:owner@127.0.0.1:5432/spindle" >> "$GITHUB_ENV"
+      - name: The PostgreSQL store
+        run: task check:postgres'
+    # A service container in the postgres job, image defaults (no TLS, 100 connections), and the
+    # lane pointed at it; the checked docker run still starts, unused.
+    ci_awk_copy service-container '
+        /^  postgres:/ { job = 1 }
+        { print }
+        job && /^    timeout-minutes:/ { print add; job = 0 }
+        ' '    services:
+      db:
+        image: postgres:17
+        env:
+          POSTGRES_USER: owner
+          POSTGRES_PASSWORD: owner
+          POSTGRES_DB: spindle
+        ports:
+          - 127.0.0.1:5433:5432'
+    sed 's/127\.0\.0\.1:5432\/spindle/127.0.0.1:5433\/spindle/' "$work/service-container/.github/workflows/ci.yml" \
+        >"$work/service-container.yml"
+    mv "$work/service-container.yml" "$work/service-container/.github/workflows/ci.yml"
+    expect_refused service-container .github/workflows/ci.yml
 
     finish
 }
