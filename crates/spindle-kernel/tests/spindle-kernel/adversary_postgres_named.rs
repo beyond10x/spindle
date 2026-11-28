@@ -284,11 +284,11 @@ fn scans(store: &mut dyn Store) -> Vec<Result<Scan, String>> {
 }
 
 /// The groups [`adv3_drawn_command_sequences_scan_as_sqlite_does`] draws.
-const DRAWN_GROUPS: usize = 400;
+const DRAWN_GROUPS: usize = 200;
 
 /// The writes of [`SEED`] that bring `ALPHA`'s version near the end of its stream's first page
 /// before the drawn groups start.
-const SEEDED: usize = 800;
+const SEEDED: usize = 900;
 
 /// The identity of `ALPHA` the [`SEEDED`] writes update one after another, none of the drawn
 /// identities.
@@ -326,10 +326,10 @@ fn seeded_by_sql(component: &str, count: usize) {
 /// PostgreSQL store: both land or both are refused, after every group. Both scan `ALPHA` and
 /// `BETA` alike (rows, versions, the entity's version) before the first group, after every
 /// twentieth, after every group that leaves `ALPHA`'s version within [`PAGE_EDGE`] of a
-/// multiple of [`PAGE`], and after the last; a PostgreSQL store opened anew every 200 groups
+/// multiple of [`PAGE`], and after the last; a PostgreSQL store opened anew every 100 groups
 /// scans them alike too. `ALPHA`'s stream outgrows one page: [`SEEDED`] writes of [`SEED`]
 /// stand in it before the first group, committed to SQLite and appended to PostgreSQL's table
-/// as its writes append them, and the drawn groups take it from 800 across the page edge.
+/// as its writes append them, and the drawn groups take it from 900 across the page edge.
 ///
 /// A scan of the PostgreSQL store reads `ALPHA`'s whole stream, so a scan after every one of
 /// 2,400 groups made the case quadratic in that stream: 46 of its 61 s. A stored state that
@@ -340,7 +340,9 @@ fn seeded_by_sql(component: &str, count: usize) {
 ///
 /// The case drew 1,350 groups to take `ALPHA` across the page edge by drawn groups alone: 12 s
 /// alone on 4 CPUs of 2 cores and 15 to 33 s in the lane, most of it a commit of every group to
-/// both stores (`story:postgres-lane-margin`).
+/// both stores (`story:postgres-lane-margin`). From 800, 400 groups took 3 s alone and 10 to
+/// 18 s in the lane, most of it again a commit of every group to both stores; from 900, 200
+/// groups cross the same edge (`story:postgres-lane-margin-ci`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv3_drawn_command_sequences_scan_as_sqlite_does() {
@@ -416,7 +418,7 @@ fn adv3_drawn_command_sequences_scan_as_sqlite_does() {
                 break;
             }
         }
-        if step % 200 == 199 {
+        if step % 100 == 99 {
             let reopened = scans(&mut open(&database, &component));
             if reopened != expected {
                 diverged.push(format!("step {step}, reopened: {reopened:?}"));
@@ -429,7 +431,7 @@ fn adv3_drawn_command_sequences_scan_as_sqlite_does() {
         versions.get(ALPHA)
     );
     assert!(diverged.is_empty(), "{}", diverged.join("\n"));
-    assert!(landed > 300, "only {landed} groups landed");
+    assert!(landed > 150, "only {landed} groups landed");
     assert!(versions[ALPHA] > PAGE, "ALPHA's stream stays in one page");
 }
 
@@ -469,7 +471,9 @@ fn adv3_each_escaped_identity_scans_as_on_sqlite() {
 /// A scan while another process commits a fixed script of groups (creations, updates,
 /// removals, re-creations, instances of both entities in one group, one instance twice in a
 /// group): every scan of `ALPHA` answers exactly what SQLite answered, after the same script, at
-/// the version the scan names.
+/// the version the scan names. The script is the first 200 groups of its seed: 400 took 2 s alone
+/// and 7 to 13 s in the lane, the scans running back to back for as long as the writer
+/// (`story:postgres-lane-margin-ci`).
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn adv3_a_scan_beside_removals_and_recreations_holds_the_state_at_its_version() {
@@ -481,7 +485,7 @@ fn adv3_a_scan_beside_removals_and_recreations_holds_the_state_at_its_version() 
     let mut script = Vec::new();
     let mut at = BTreeMap::<u64, Scan>::new();
     at.insert(0, reference.scan(ALPHA).expect("scans"));
-    for step in 0..400 {
+    for step in 0..200 {
         let (writes, after) = group(&mut rng, step, &pool, &model, &versions);
         if reference.commit_all(&writes).is_err() {
             continue;
