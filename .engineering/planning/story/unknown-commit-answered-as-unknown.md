@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:unknown-commit-answered-as-unknown
 kind: story
-status: draft
+status: active
 title: A command whose commit outcome is unknown is not answered committed false
 relations:
 - serves: vision:spindle
@@ -25,7 +25,10 @@ scope:
   path: website/docs/concepts/capabilities.md
 - confidence: inferred
   path: website/docs/concepts/environment-and-admission.md
-revision: 11
+revision: 13
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-28T14:14:07Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "proposed", to: "active", at: "2026-11-28T14:14:07Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":8}}}
 ---
 ## Outcome
 

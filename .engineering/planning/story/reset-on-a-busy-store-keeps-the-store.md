@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:reset-on-a-busy-store-keeps-the-store
 kind: story
-status: draft
+status: active
 title: A reset on a busy store answers 503 and keeps the store
 relations:
 - serves: vision:spindle
@@ -29,7 +29,10 @@ scope:
   path: website/docs/concepts/capabilities.md
 - confidence: cited
   path: website/docs/concepts/environment-and-admission.md
-revision: 22
+revision: 24
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-28T14:14:08Z", actor: "human:operator", revision: 23, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "proposed", to: "active", at: "2026-11-28T14:14:08Z", actor: "human:operator", revision: 24, decided_on: {"recorded":{"review_outcome":8}}}
 ---
 ## Outcome
 

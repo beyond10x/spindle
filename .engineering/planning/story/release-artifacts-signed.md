@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:release-artifacts-signed
 kind: story
-status: draft
+status: active
 title: Release artifacts are signed and carry a provenance attestation
 summary: Every release archive, the SBOM and the image carry a cosign signature and a SLSA provenance attestation.
 relations:
@@ -25,7 +25,10 @@ scope:
   path: scripts/release-linux-binary.adversary-test.sh
 - confidence: inferred
   path: scripts/release-linux-binary.sh
-revision: 6
+revision: 8
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-28T14:14:07Z", actor: "human:operator", revision: 7, decided_on: {"recorded":{"review_outcome":8}}}
+- {from: "proposed", to: "active", at: "2026-11-28T14:14:07Z", actor: "human:operator", revision: 8, decided_on: {"recorded":{"review_outcome":8}}}
 ---
 # Release artifacts are signed and carry a provenance attestation
 
