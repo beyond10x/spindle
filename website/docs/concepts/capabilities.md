@@ -239,6 +239,8 @@ makes, as ESS's served application makes them, are `{"refused": "<why>"}`:
 A command the runtime cannot complete answers `501` with `{"refused", "committed"}`. A command
 whose PostgreSQL store did not answer within its deadline, as a write held behind a lock another
 database session holds, answers `503` with `{"refused", "committed": false}`: nothing was written,
-and the same request is safe to send again. A SQLite store reports no deadline: a write it finds
-busy answers `501`. A read held so is not answered `503`: a view answers `501` `{"refused"}`, and
-`GET /api/events` and `GET /api/history` answer `500` `{"refused"}`.
+and the same request is safe to send again. A SQLite store reports no deadline: a command whose
+write it finds busy answers `501`. A read held so is not answered `503`: a view answers `501`
+`{"refused"}`, and `GET /api/events` and `GET /api/history` answer `500` `{"refused"}`. A
+`POST /api/reset` held so answers `500` and leaves the component's store lost until the run
+restarts (`story:reset-on-a-busy-store-keeps-the-store`).

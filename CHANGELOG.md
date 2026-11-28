@@ -75,14 +75,16 @@ are Spindle's releases.
   eventlog's `Deadline`, which it returns only before a commit begins, reaches the ingress as the
   new `spindle_kernel::StoreError::Busy`, displayed `store: …` as before. Only the PostgreSQL store
   returns it: eventlog-sqlite 0.10.0 never returns `Deadline` (a busy SQLite database is its
-  `Backend` error), so a SQLite write still answers `501`. The case seen: a write to a new leader
-  while the former leader, paused, still held a database session answered `501` "event store
-  deadline exceeded during database statement or lock"; the likely cause, read and not proven, is
-  the component's publication lock, which eventlog's feed read holds exclusive until its
-  transaction ends and every write waits for. Such a write now answers `503` until the paused
-  leader's session ends at the store's idle timeout, at most 10 s; the window is answered, not
-  closed. Reads held so are unchanged: a view answers `501` `{"refused"}`, and `GET /api/events`
-  and `GET /api/history` answer `500` `{"refused"}` (`story:new-leader-write-while-old-paused`).
+  `Backend` error), so a command whose SQLite write is busy still answers `501`. The case seen: a
+  command to a new leader while the former leader, paused, still held a database session answered
+  `501` "event store deadline exceeded during database statement or lock"; the likely cause, read
+  and not proven, is the component's publication lock, which eventlog's feed read holds exclusive
+  until its transaction ends and every write waits for. Such a command now answers `503` until the
+  paused leader's session ends at the store's idle timeout, at most 10 s; the window is answered,
+  not closed. Reads held so are unchanged: a view answers `501` `{"refused"}`, and
+  `GET /api/events` and `GET /api/history` answer `500` `{"refused"}`. A `POST /api/reset` held
+  so answers `500` and leaves the component's store lost until the run restarts, as before
+  (`story:reset-on-a-busy-store-keeps-the-store`) (`story:new-leader-write-while-old-paused`).
 
 ## [0.26.0] - 2026-11-28
 
