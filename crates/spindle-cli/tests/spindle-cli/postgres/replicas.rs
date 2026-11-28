@@ -1419,16 +1419,10 @@ fn a_reset_of_a_leased_run_rewrites_the_record() {
     assert_eq!(ends, 2, "{}", leader.printed());
 }
 
-/// Round 2 (F1): the record is looked for in every component's lease table; one found in two is
-/// refused before the run serves a request, naming both tables, and neither row is touched.
-#[test]
-#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
-fn a_seed_recorded_in_two_lease_tables_is_refused_before_serving() {
-    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
-    let environment = environment(directory.path());
-    let seed = seed_file(directory.path(), "seed.json", &["s1"]);
-    let schema = schema();
-    let mut first = Replica::start(seeded(&environment, &schema, &seed));
+/// The seed `seed` run whole by a leased run in `schema`, and the record copied into `ledger`'s
+/// lease table with `done` set to `done`, or as it is: the record.
+fn recorded_twice(environment: &Path, schema: &str, seed: &Path, done: Option<u64>) -> Value {
+    let mut first = Replica::start(seeded(environment, schema, seed));
     assert!(
         first
             .line_by("ended: 1 sent, 1 applied", Instant::now() + ANSWER)
@@ -1437,12 +1431,50 @@ fn a_seed_recorded_in_two_lease_tables_is_refused_before_serving() {
         first.printed()
     );
     first.stop();
+    let body = done.map_or_else(
+        || "body".to_owned(),
+        |done| format!("jsonb_set(body, '{{done}}', '{done}')"),
+    );
     super::sql(&[format!(
         "INSERT INTO {schema}.spindle_ledger_p_lease (tenant_id, row_key, body) SELECT \
-         tenant_id, row_key, body FROM {schema}.spindle_board_p_lease WHERE row_key = 'seed'"
+         tenant_id, row_key, {body} FROM {schema}.spindle_board_p_lease WHERE row_key = 'seed'"
     )]);
-    let record = recorded(&schema, "board").expect("the seed is recorded");
+    recorded(schema, "board").expect("the seed is recorded")
+}
+
+/// Round 3: a record found alike in two lease tables, as a release rolled back and forward
+/// across a change of components may leave it, is used: the seed is skipped, and the next write
+/// keeps it in the first component's table alone.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_seed_recorded_alike_in_two_lease_tables_is_used_and_kept_in_one() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let seed = seed_file(directory.path(), "seed.json", &["s1"]);
+    let schema = schema();
+    let record = recorded_twice(&environment, &schema, &seed, None);
     assert_eq!(recorded(&schema, "ledger"), Some(record.clone()));
+
+    let next = Replica::start(seeded(&environment, &schema, &seed));
+    next.ready_by(Instant::now() + ANSWER);
+    skipped_on_the_record(&next, &schema);
+    assert_eq!(recorded(&schema, "board"), Some(record));
+    assert_eq!(recorded(&schema, "ledger"), None, "{}", next.printed());
+}
+
+/// Round 2 (F1), round 3: the record is looked for in every component's lease table; records
+/// that differ in two are refused before the run serves a request, naming both tables, and
+/// neither row is touched.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_seed_recorded_differently_in_two_lease_tables_is_refused_before_serving() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let seed = seed_file(directory.path(), "seed.json", &["s1"]);
+    let schema = schema();
+    let record = recorded_twice(&environment, &schema, &seed, Some(0));
+    let other = recorded(&schema, "ledger").expect("the copy is there");
+    assert_eq!(other["done"], 0, "{other}");
 
     let refused = super::refused(seeded(&environment, &schema, &seed));
     assert_eq!(refused.status.code(), Some(1), "{}", refused.stderr);
@@ -1457,8 +1489,8 @@ fn a_seed_recorded_in_two_lease_tables_is_refused_before_serving() {
         refused.stderr
     );
     assert!(!refused.stderr.contains("ended:"), "{}", refused.stderr);
-    assert_eq!(recorded(&schema, "board"), Some(record.clone()));
-    assert_eq!(recorded(&schema, "ledger"), Some(record));
+    assert_eq!(recorded(&schema, "board"), Some(record));
+    assert_eq!(recorded(&schema, "ledger"), Some(other));
 }
 
 /// D6 A: a leased run without `--seed` on a store with a record.

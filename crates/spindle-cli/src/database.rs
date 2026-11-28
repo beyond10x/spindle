@@ -278,9 +278,9 @@ pub(crate) struct Leases {
     held: BTreeMap<String, u64>,
     /// The trouble of the lease connection last told on stderr ([`Leases::told`]).
     told: Option<String>,
-    /// The component other than the first whose lease table the seed's record was read from,
-    /// which the next write moves it out of ([`Leases::answer`]).
-    elsewhere: Option<String>,
+    /// The components other than the first whose lease tables the seed's record was read from,
+    /// which the next write removes it from as it writes the first one's ([`Leases::answer`]).
+    elsewhere: Vec<String>,
 }
 
 impl Leases {
@@ -306,7 +306,7 @@ impl Leases {
             components,
             held: BTreeMap::new(),
             told: None,
-            elsewhere: None,
+            elsewhere: Vec::new(),
         }))
     }
 
@@ -434,9 +434,11 @@ impl Leases {
     /// in the lease table of the first component in name order, under the token this run took
     /// that lease at. A read looks in every component's lease table, a table not created yet
     /// holding none, so a record a run of an earlier specification kept under another first
-    /// component is found; one found in more than one table is refused, naming them. The next
-    /// write moves a record found elsewhere into the first component's table, in one statement
-    /// under both leases; a removal removes it from every table.
+    /// component is found. Records found alike in several tables, as a release rolled back and
+    /// forward across a change of components leaves them, are one record; records that differ
+    /// are refused, naming the tables. The next write gathers a record found elsewhere into the
+    /// first component's table, in one statement under every lease involved; a removal removes
+    /// it from every table.
     fn answer(&mut self, ask: Ask) {
         let held: Vec<(String, u64)> = self
             .components
@@ -462,18 +464,24 @@ impl Leases {
                 let _ = reply.send(self.read(&held));
             }
             Ask::Write(body, reply) => {
-                let written = match self.elsewhere.clone() {
-                    Some(old) => {
-                        let old_token = self.held.get(&old).copied().unwrap_or_default();
-                        let moved = self
-                            .lease
-                            .move_seed((&old, old_token), (&first, token), &body);
-                        if moved.is_ok() {
-                            self.elsewhere = None;
-                        }
-                        moved
+                let written = if self.elsewhere.is_empty() {
+                    self.lease.record_seed(&first, token, &body)
+                } else {
+                    let from: Vec<(&str, u64)> = self
+                        .elsewhere
+                        .iter()
+                        .map(|old| {
+                            (
+                                old.as_str(),
+                                self.held.get(old).copied().unwrap_or_default(),
+                            )
+                        })
+                        .collect();
+                    let gathered = self.lease.gather_seed(&from, (&first, token), &body);
+                    if gathered.is_ok() {
+                        self.elsewhere.clear();
                     }
-                    None => self.lease.record_seed(&first, token, &body),
+                    gathered
                 };
                 let _ = reply.send(written.map_err(|error| error.to_string()));
             }
@@ -486,7 +494,7 @@ impl Leases {
                     }
                 }
                 if removed.is_ok() {
-                    self.elsewhere = None;
+                    self.elsewhere.clear();
                 }
                 let _ = reply.send(removed);
             }
@@ -494,7 +502,7 @@ impl Leases {
     }
 
     /// The seed's record, looked for in the lease table of each component of `held`, in name
-    /// order; notes where it was found when that is not the first component's table.
+    /// order; notes where it was found other than in the first component's table.
     fn read(&mut self, held: &[(String, u64)]) -> Result<Option<serde_json::Value>, String> {
         let mut found = Vec::new();
         for (component, _) in held {
@@ -506,22 +514,28 @@ impl Leases {
                 found.push((component.clone(), body));
             }
         }
-        if found.len() > 1 {
+        let Some((_, body)) = found.first().cloned() else {
+            return Ok(None);
+        };
+        if found.iter().any(|(_, other)| *other != body) {
             let tables: Vec<String> = found
                 .iter()
                 .map(|(component, _)| self.table_of(component))
                 .collect();
             return Err(format!(
-                "the seed is recorded in more than one lease table, {}: keep the row `seed` of \
-                 one of them and remove the others, so a start knows which entries are done",
+                "the seed is recorded differently in more than one lease table, {}, as a release \
+                 rolled back across a change of its components may leave it: keep the row `seed` \
+                 of one of them and remove the others, so a start knows which entries are done",
                 tables.join(" and ")
             ));
         }
         let first = held.first().map(|(component, _)| component.as_str());
-        Ok(found.pop().map(|(component, body)| {
-            self.elsewhere = (Some(component.as_str()) != first).then_some(component);
-            body
-        }))
+        self.elsewhere = found
+            .into_iter()
+            .map(|(component, _)| component)
+            .filter(|component| Some(component.as_str()) != first)
+            .collect();
+        Ok(Some(body))
     }
 
     /// The lease table of `component`, `<schema>.<prefix>_p_lease`.

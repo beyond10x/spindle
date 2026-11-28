@@ -316,7 +316,12 @@ standby that takes over, and a process that leads after one that took the leases
 (one that exited 3 on a misfit) alike. A start looks for the record in every component's lease
 table, so a record kept before a later specification added a component that sorts first is still
 found; the next write moves it to the first component's table, in one statement under both leases.
-A record found in two tables stops the start with exit 1, naming them. The rules above hold, with
+Records found alike in several tables are one record: a rollback to a release with other
+components, and a roll forward again, can leave the same record in two tables, and the next write
+keeps the one in the first component's table, in one statement under every lease involved. Records
+that differ stop the start with exit 1, naming the tables; keep the row `seed` of one of them and
+remove the others. `story:seed-record-after-a-component-is-removed` tracks the record of a
+component a later release removes. The rules above hold, with
 the store in place of the state:
 
 - With the same seed file and every entry done, `run` prints that the seed already ran on the

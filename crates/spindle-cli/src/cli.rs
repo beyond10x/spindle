@@ -563,7 +563,10 @@ pub enum Command {
         /// (`<prefix>_p_lease`), written by the leading process under its lease whatever lease
         /// token it took, and read the same way. It is looked for in every component's lease
         /// table, so one kept before a component that sorts first was added is found, and the
-        /// next write moves it to the first one's; a record in two tables exits 1 naming them. A
+        /// next write moves it to the first one's. Records alike in several tables, as a rollback
+        /// across a release that changed the components may leave them, are used as one, and the
+        /// next write keeps one; records that differ exit 1 naming the tables, see
+        /// story:seed-record-after-a-component-is-removed. A
         /// store with rows and no record (seeded by an earlier release, or filled by `state
         /// move`) is taken as seeded: the record is written with every entry done and none is
         /// sent. Otherwise nothing is recorded and every start sends the whole seed. `POST

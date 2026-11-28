@@ -258,7 +258,7 @@ const LEASE_ROW: &str = "lease";
 
 /// The key of the row of [`LEASE`] that records the seed a run with a lease applied to the
 /// component's store (`story:seed-under-a-lease`, D4 A): `{"digest", "done", "rejected"}`, as
-/// `run --state` records it in `seed.json`. Only [`Lease::record_seed`], [`Lease::move_seed`] and
+/// `run --state` records it in `seed.json`. Only [`Lease::record_seed`], [`Lease::gather_seed`] and
 /// [`Lease::forget_seed`] write it, under the lease; no fence, take or renewal reads it.
 const SEED_ROW: &str = "seed";
 
@@ -772,34 +772,60 @@ impl Lease {
     /// table where it is now kept, or stays where it was (`story:seed-under-a-lease`, round 2).
     ///
     /// # Errors
-    /// [`StoreError::Backend`] where a row cannot be written, and, naming both leases, where a
+    /// [`StoreError::Backend`] where a row cannot be written, and, naming the leases, where a
     /// lease row names another token or session.
     pub fn move_seed(
         &mut self,
-        (from, from_token): (&str, u64),
+        from: (&str, u64),
+        to: (&str, u64),
+        body: &serde_json::Value,
+    ) -> Result<(), StoreError> {
+        self.gather_seed(&[from], to, body)
+    }
+
+    /// Writes `body` as the row `seed` of the lease table of `to`'s component and removes the row
+    /// `seed` of each of `from`'s, in one statement that does all of it only while each of those
+    /// lease rows names its token and this connection's session, every one locked meanwhile: the
+    /// records end in the table where the record is now kept, or all stay where they were
+    /// (`story:seed-under-a-lease`, rounds 2 and 3).
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] where a row cannot be written, and, naming the leases, where a
+    /// lease row names another token or session.
+    pub fn gather_seed(
+        &mut self,
+        from: &[(&str, u64)],
         (to, to_token): (&str, u64),
         body: &serde_json::Value,
     ) -> Result<(), StoreError> {
         let tenant = crate::sqlite::TENANT;
-        let held_to = i64::try_from(to_token).unwrap_or(i64::MAX);
-        let held_from = i64::try_from(from_token).unwrap_or(i64::MAX);
         let text = body.to_string();
-        let statement = SEED_MOVE
-            .replace("{to}", &self.table(to)?)
-            .replace("{from}", &self.table(from)?);
-        let moved = self.seed_statement(
-            to,
-            &statement,
-            &[&tenant, &LEASE_ROW, &held_to, &held_from, &SEED_ROW, &text],
-            false,
-        )?;
-        match moved {
+        let mut tokens = vec![i64::try_from(to_token).unwrap_or(i64::MAX)];
+        let mut tables = vec![self.table(to)?];
+        for (component, token) in from {
+            tokens.push(i64::try_from(*token).unwrap_or(i64::MAX));
+            tables.push(self.table(component)?);
+        }
+        let statement = seed_gathering(&tables);
+        let mut parameters: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+            vec![&tenant, &LEASE_ROW, &SEED_ROW, &text];
+        for token in &tokens {
+            parameters.push(token);
+        }
+        let gathered = self.seed_statement(to, &statement, &parameters, false)?;
+        match gathered {
             Some(_) => Ok(()),
-            None => Err(StoreError::Backend(format!(
-                "fenced: the lease of {from} no longer names token {from_token}, or that of {to} \
-                 token {to_token}, with this session, so this process does not move the seed \
-                 record from {from}'s tables to {to}'s"
-            ))),
+            None => {
+                let leases: Vec<String> = std::iter::once((to, to_token))
+                    .chain(from.iter().copied())
+                    .map(|(component, token)| format!("{component} at token {token}"))
+                    .collect();
+                Err(StoreError::Backend(format!(
+                    "fenced: the leases of {} are not all held by this session, so this process \
+                     does not gather the seed record into {to}'s tables",
+                    leases.join(", ")
+                )))
+            }
         }
     }
 
@@ -884,21 +910,51 @@ const SEED_FORGET: &str = "WITH held AS (SELECT 1 FROM {table} WHERE tenant_id =
      AND EXISTS (SELECT 1 FROM held)) \
      SELECT 1 FROM held";
 
-/// Writes `$6`, JSON text, as the row `$5` of `{to}` and removes the row `$5` of `{from}`, where the
-/// lease row `$2` of `{to}` names the token `$3` and this session and that of `{from}` the token
-/// `$4` and this session, both lease rows locked meanwhile; answers a row only where it wrote.
-/// `$1` the tenant.
-const SEED_MOVE: &str = "WITH held_to AS (SELECT 1 FROM {to} WHERE tenant_id = $1::text \
-     AND row_key = $2::text AND (body->>'token')::bigint = $3::bigint \
-     AND (body->>'pid')::int = pg_backend_pid() FOR UPDATE), \
-     held_from AS (SELECT 1 FROM {from} WHERE tenant_id = $1::text \
-     AND row_key = $2::text AND (body->>'token')::bigint = $4::bigint \
-     AND (body->>'pid')::int = pg_backend_pid() FOR UPDATE), \
-     gone AS (DELETE FROM {from} WHERE tenant_id = $1::text AND row_key = $5::text \
-     AND EXISTS (SELECT 1 FROM held_to) AND EXISTS (SELECT 1 FROM held_from)) \
-     INSERT INTO {to} (tenant_id, row_key, body) SELECT $1::text, $5::text, $6::text::jsonb \
-     FROM held_to, held_from \
-     ON CONFLICT (tenant_id, row_key) DO UPDATE SET body = EXCLUDED.body RETURNING 1";
+/// The statement [`Lease::gather_seed`] runs on `tables`, the lease table the record is kept in
+/// first, then those it is removed from: it writes `$4`, JSON text, as the row `$3` of the first
+/// and removes the row `$3` of every other, where the lease row `$2` of each table names its
+/// token, `$5` onwards in the order of `tables`, and this session, every lease row locked
+/// meanwhile; it answers a row only where it wrote. `$1` the tenant.
+fn seed_gathering(tables: &[String]) -> String {
+    let held: Vec<String> = tables
+        .iter()
+        .enumerate()
+        .map(|(index, table)| {
+            format!(
+                "held_{index} AS (SELECT 1 FROM {table} WHERE tenant_id = $1::text \
+                 AND row_key = $2::text AND (body->>'token')::bigint = ${}::bigint \
+                 AND (body->>'pid')::int = pg_backend_pid() FOR UPDATE)",
+                index + 5
+            )
+        })
+        .collect();
+    let every = (0..tables.len())
+        .map(|index| format!("EXISTS (SELECT 1 FROM held_{index})"))
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    let gone: Vec<String> = tables
+        .iter()
+        .enumerate()
+        .skip(1)
+        .map(|(index, table)| {
+            format!(
+                "gone_{index} AS (DELETE FROM {table} WHERE tenant_id = $1::text \
+                 AND row_key = $3::text AND {every})"
+            )
+        })
+        .collect();
+    let from = (0..tables.len())
+        .map(|index| format!("held_{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let to = tables.first().map_or("", String::as_str);
+    format!(
+        "WITH {} INSERT INTO {to} (tenant_id, row_key, body) SELECT $1::text, $3::text, \
+         $4::text::jsonb FROM {from} ON CONFLICT (tenant_id, row_key) DO UPDATE SET body = \
+         EXCLUDED.body RETURNING 1",
+        held.into_iter().chain(gone).collect::<Vec<_>>().join(", ")
+    )
+}
 
 /// The longest a release of a lease waits for its statement and for the lease row's lock
 /// ([`Lease::release`]).

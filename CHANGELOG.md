@@ -60,9 +60,11 @@ are Spindle's releases.
   `forget_seed`), so no connection is added. A start looks for it in every component's lease
   table, so a record kept before a component that sorts first was added is found, and the next
   write moves it to the first one's in one statement under both leases (`Lease::move_seed`); a
-  record in two tables exits 1 naming them. With no record and no row the whole seed is sent; with
-  the same file part done the rest is sent, rejected entries first; once done, one line names the
-  store and nothing is sent; another file exits 1 before the run serves a request, naming both
+  records alike in several tables, as a rollback across a release that changed the components
+  leaves them, are used as one and gathered into the first one's table (`Lease::gather_seed`),
+  while records that differ exit 1 naming the tables. With no record and no row the whole seed is
+  sent; with the same file part done the rest is sent, rejected entries first; once done, one line
+  names the store and nothing is sent; another file exits 1 before the run serves a request, naming both
   digests, unless the store holds no row. A store with rows and no record (seeded by 0.26.0, or
   filled by `state move`) is taken as seeded: one line, nothing sent, and a complete record
   written. Resets write the record as they do `seed.json`, and one by a leased run without a seed

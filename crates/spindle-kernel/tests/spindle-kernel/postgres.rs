@@ -1000,6 +1000,72 @@ fn a_seed_record_moves_between_lease_tables_only_under_both_leases() {
     );
 }
 
+/// `story:seed-under-a-lease`, round 3: records alike in several lease tables are gathered into
+/// one in one statement, only while every lease row involved names the gatherer's token and
+/// session; once one of those leases is taken, the gathering lands nothing in any table.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn seed_records_alike_in_several_lease_tables_are_gathered_into_one() {
+    let database = database();
+    let [into, one, two] = [fresh("gathered"), fresh("gathered"), fresh("gathered")];
+    let term = Duration::from_secs(1);
+    let mut first = Lease::connect(&database, term).expect("A connects for the leases");
+    let mut take = |component: &str| {
+        first
+            .take(component)
+            .expect("the lease is read")
+            .expect("A takes the lease")
+    };
+    let tokens = [take(&into), take(&one), take(&two)];
+    let recorded = json!({"digest": "sha256:cc", "done": 1, "rejected": []});
+    for (component, token) in [(&into, tokens[0]), (&one, tokens[1]), (&two, tokens[2])] {
+        first
+            .record_seed(component, token, &recorded)
+            .expect("A records the seed");
+    }
+    let gathered = json!({"digest": "sha256:cc", "done": 2, "rejected": []});
+    first
+        .gather_seed(
+            &[(&one, tokens[1]), (&two, tokens[2])],
+            (&into, tokens[0]),
+            &gathered,
+        )
+        .expect("A gathers the records under every lease");
+    assert_eq!(
+        first.seed_record(&into).expect("read"),
+        Some(gathered.clone())
+    );
+    assert_eq!(first.seed_record(&one).expect("read"), None);
+    assert_eq!(first.seed_record(&two).expect("read"), None);
+
+    for (component, token) in [(&one, tokens[1]), (&two, tokens[2])] {
+        first
+            .record_seed(component, token, &recorded)
+            .expect("A records the seed again");
+    }
+    let mut second = Lease::connect(&database, term).expect("B connects for the lease");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while second.take(&two).expect("the lease is read").is_none() {
+        assert!(Instant::now() < deadline, "B never took the lease");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let refused = first
+        .gather_seed(
+            &[(&one, tokens[1]), (&two, tokens[2])],
+            (&into, tokens[0]),
+            &json!({"digest": "sha256:cc", "done": 3, "rejected": []}),
+        )
+        .expect_err("A's gathering is refused once B holds one lease")
+        .to_string();
+    assert!(refused.contains("lease"), "{refused}");
+    assert_eq!(second.seed_record(&into).expect("read"), Some(gathered));
+    assert_eq!(
+        second.seed_record(&one).expect("read"),
+        Some(recorded.clone())
+    );
+    assert_eq!(second.seed_record(&two).expect("read"), Some(recorded));
+}
+
 /// `story:leader-exits-promptly-on-sigterm` (D3 A): the release of a lease, as a run makes it at
 /// exit, waits at most 1 s for its statement and for the lease row's lock whatever the lease's
 /// term, where a renewal waits up to a third of it: under a lease of an hour, with another session
