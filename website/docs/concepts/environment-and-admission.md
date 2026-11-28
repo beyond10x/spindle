@@ -357,12 +357,16 @@ process holds one of those leases, as a process of the old release still running
 is refused `409`, naming the table and that another process holds its lease, and no row is
 touched; where a row cannot be removed, it is refused `500` naming the table, and no row is
 removed. Either way it changes nothing: no store is emptied and every record stays, since a store
-emptied with the old record left would read as seeded at the next start. A reset then refused for
-a row of its world puts the rows back, in one transaction; where that fails, the reset answers
-`500` naming the tables whose record was lost and the refusal of the world, and the next start
-with the seed may take the store as seeded, so reset the store before it. Once that process has
-ended, or the row `seed` of that table is removed, the reset can be sent again. Where the removal
-of a current table's row fails after the reset, a line names that table. Any other store, in PostgreSQL without `database_lease` or in memory, records
+emptied with the old record left would read as seeded at the next start. Once that process has
+ended, or the row `seed` of that table is removed, the reset can be sent again. A reset that then
+changes no store's rows puts the rows back, in one transaction, before it answers, whatever it
+answers: `400` for a row of its world, `503` where the lease was lost and the fence refused its
+first write, `500` where a store refused its first removal. Its answer stands; where the put-back
+fails, the answer, at least `500`, also names the tables whose record was lost, and the next start
+with the seed may take the store as seeded, so reset the store before it. The run waits for the
+removal and the put-back as long as their statements may take, a statement's timeout for each.
+Where the removal of a current table's row fails after the reset, a line names that table. Any
+other store, in PostgreSQL without `database_lease` or in memory, records
 nothing: every start sends the whole seed, so a second start applies nothing new only where every
 entry is a create whose command declares `existing_instance:`.
 

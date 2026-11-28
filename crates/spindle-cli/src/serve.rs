@@ -771,23 +771,25 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             // removed first, under that table's lease, taken before any store is emptied and kept
             // until the reset has answered: where another process holds it, or the record cannot
             // be removed, the reset is refused and no store is emptied. The refusals of the world
-            // body and its clock come before any record is touched; a reset refused after, by a
-            // row of the world, puts the record back, or answers `500` naming the table whose
-            // record was lost (`story:seed-record-after-a-component-is-removed`, adversary rounds
-            // 1 to 3).
+            // body and its clock come before any record is touched. A reset that then changed no
+            // store's rows, whatever it answers (a row of its world refused, the fence, a store
+            // that refused its first removal), puts the record back before it answers; where that
+            // fails, the answer says the record is lost, naming its table
+            // (`story:seed-record-after-a-component-is-removed`, adversary rounds 1 to 4).
             if let Some(refusal) = crate::seed::refused_world(&host, exchange.body(), &worlds) {
                 exchange.respond(refusal);
                 continue;
             }
             let row = held.seed_row();
-            if let Some(refusal) = crate::seed::claimed(&row) {
-                exchange.respond(refusal);
-                continue;
-            }
+            let tables = match crate::seed::claimed(&row) {
+                Ok(tables) => tables,
+                Err(refusal) => {
+                    exchange.respond(refusal);
+                    continue;
+                }
+            };
             let mut answer = console::reset(&mut host, exchange.body(), Some(&worlds));
-            // `console::reset` refuses `400` and `409` before any store is emptied; a `500` may
-            // come after some were.
-            let untouched = matches!(answer.status, 400 | 409);
+            let restore = answer.status != 200 && !host.reset_changed_rows();
             if answer.status == 200 {
                 if let Some(recorder) = recorder.as_ref() {
                     recorder.count_reset();
@@ -796,7 +798,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             } else if crate::database::Kept::fenced().is_some() {
                 answer = Answer::refusal(503, LEASE_LOST);
             }
-            let answer = crate::seed::unclaimed(&row, answer, untouched);
+            let answer = crate::seed::unclaimed(&row, answer, restore, tables);
             exchange.respond(answer);
             continue;
         }

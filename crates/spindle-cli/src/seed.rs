@@ -338,18 +338,18 @@ pub(crate) fn refused_world(
 /// Before a reset by a leased run without a seed empties anything, takes the leases of the lease
 /// tables of components the specification no longer has that hold a seed record, then removes
 /// the records under them in one transaction (`story:seed-under-a-lease`, D6 A;
-/// `story:seed-record-after-a-component-is-removed`, adversary rounds 1 to 3): [`forget_row`]
-/// removes those of the current tables once the reset emptied the store. Answers the refusal of
-/// the reset where that cannot be done: `409` naming the table whose lease another process holds,
-/// as a process of an earlier release still running may, with no record touched; `500` naming the
-/// table that could not be read, whose lease could not be taken or whose record could not be
-/// removed, with none removed, and also where the lease thread did not answer in time. No store
-/// is emptied then, no lease is kept and no record is lost: a claim the lease thread ends after
-/// the answer is undone behind it.
-pub(crate) fn claimed(row: &crate::database::SeedRow) -> Option<spindle_ingress::Answer> {
+/// `story:seed-record-after-a-component-is-removed`, adversary rounds 1 to 4): [`forget_row`]
+/// removes those of the current tables once the reset emptied the store. Answers how many leases
+/// it holds, for [`unclaimed`], or the refusal of the reset where that cannot be done: `409`
+/// naming the table whose lease another process holds, as a process of an earlier release still
+/// running may, with no record touched; `500` naming the table that could not be read, whose
+/// lease could not be taken or whose record could not be removed, with none removed, and also
+/// where the lease thread did not answer in time. No store is emptied then, no lease is kept and
+/// no record is lost: a claim the lease thread ends after the answer is undone behind it.
+pub(crate) fn claimed(row: &crate::database::SeedRow) -> Result<usize, spindle_ingress::Answer> {
     match row.claim() {
-        Ok(None) => None,
-        Ok(Some(table)) => Some(spindle_ingress::Answer::refusal(
+        Ok(crate::database::Claim::Taken(tables)) => Ok(tables),
+        Ok(crate::database::Claim::Held(table)) => Err(spindle_ingress::Answer::refusal(
             409,
             format!(
                 "the reset is refused before any store is emptied: the seed record in {table}, \
@@ -359,7 +359,7 @@ pub(crate) fn claimed(row: &crate::database::SeedRow) -> Option<spindle_ingress:
                  {table} is removed, reset again"
             ),
         )),
-        Err(error) => Some(spindle_ingress::Answer::refusal(
+        Err(error) => Err(spindle_ingress::Answer::refusal(
             500,
             format!(
                 "the reset is refused before any store is emptied: a seed record in the lease \
@@ -370,39 +370,25 @@ pub(crate) fn claimed(row: &crate::database::SeedRow) -> Option<spindle_ingress:
     }
 }
 
-/// Releases the leases [`claimed`] took once the reset answered `answer`, and answers what the
-/// reset answers then. With `untouched`, as after a reset refused before it emptied any store,
-/// the records [`claimed`] removed are put back first, in one transaction, so a reset that
-/// changed nothing leaves them too; where that fails, the reset's refusal becomes a `500` that
-/// names the tables whose record was lost, and says what was refused. Any other failure is
-/// printed on stderr; the leases run out by their time.
+/// Releases the `tables` leases [`claimed`] took once the reset answered `answer`, and answers
+/// what the reset answers then. With `restore`, as after a reset that changed no store's rows,
+/// whatever it answered ([`spindle_host::Host::reset_changed_rows`]), the records [`claimed`]
+/// removed are put back first, in one transaction, so a reset that changed nothing leaves them
+/// too, and `answer` stands. Where that transaction failed, the answer keeps its refusal, its
+/// status at least `500`, and says the records are lost, naming their tables; where the lease
+/// thread did not answer, it says they were not put back as far as the run knows. Without
+/// `restore` a failure is printed on stderr, and the leases run out by their time.
 pub(crate) fn unclaimed(
     row: &crate::database::SeedRow,
     answer: spindle_ingress::Answer,
-    untouched: bool,
+    restore: bool,
+    tables: usize,
 ) -> spindle_ingress::Answer {
-    match row.unclaim(untouched) {
-        Ok(()) => answer,
-        Err(error) if untouched => {
-            let refused = answer
-                .body
-                .as_ref()
-                .and_then(|body| body.get("refused"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            spindle_ingress::Answer::refusal(
-                500,
-                format!(
-                    "the reset is refused before any store is emptied ({} {refused}), yet the \
-                     seed record removed for it from the lease table of a component this \
-                     specification no longer has is lost: {error:#}; a start with that seed may \
-                     take the store as seeded and skip its entries, so reset the store before such \
-                     a start",
-                    answer.status
-                ),
-            )
-        }
+    let unclaimed = row.unclaim(restore, tables);
+    let why = match unclaimed {
+        Ok(Ok(())) => return answer,
+        Ok(Err(lost)) => format!("is lost: {lost}"),
+        Err(error) if restore => format!("was not put back, as far as this run knows: {error:#}"),
         Err(error) => {
             log::warn(format!(
                 "the leases taken for the reset were not released; they run out by their time: \
@@ -410,9 +396,25 @@ pub(crate) fn unclaimed(
             ))
             .field("error", format!("{error:#}"))
             .write();
-            answer
+            return answer;
         }
-    }
+    };
+    let refused = answer
+        .body
+        .as_ref()
+        .and_then(|body| body.get("refused"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    spindle_ingress::Answer::refusal(
+        answer.status.max(500),
+        format!(
+            "{refused}; the reset changed no store's rows, yet the seed record removed for it from \
+             the lease table of a component this specification no longer has {why}; a start with \
+             that seed may take the store as seeded and skip its entries, so reset the store \
+             before such a start"
+        ),
+    )
 }
 
 /// Removes the marker of the `--state` directory `state`, where a run without a seed emptied the

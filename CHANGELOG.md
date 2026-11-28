@@ -88,10 +88,15 @@ are Spindle's releases.
   one lease the reset is refused `409` naming the table and no record is touched; where a record
   cannot be removed it is refused `500` naming the table and none is removed. Either changes
   nothing, since a store emptied with the old record left would read as seeded at the next start.
-  A reset then refused for a row of its world puts the records back in one transaction
-  (`record_orphan_seeds`), and where that fails answers `500` naming the tables whose record was
-  lost. A claim the run stopped waiting for is undone behind it: no lease is kept and no record is
-  lost. A removal from a current table that fails after the reset is printed naming that table.
+  A reset that then changes no store's rows (`spindle_host::Host::reset_changed_rows`) puts the
+  records back in one transaction before it answers (`record_orphan_seeds`), whatever it answers:
+  `400` for a row of its world, `503` where the lease's fence refused its first write, `500` where
+  a store refused its first removal; a run that lost its lease puts them back before it exits.
+  The answer stands, and where the put-back fails it also names the tables whose record was lost,
+  at least `500`. The run waits for the claim and the put-back a statement's timeout for each of
+  their statements, so a slow put-back is not answered as lost; a claim it stopped waiting for is
+  undone behind it: no lease is kept and no record is lost. A removal from a current table that
+  fails after the reset is printed naming that table.
   One schema holds one leased deployment (`story:seed-record-after-a-component-is-removed`).
 
 ## [0.26.0] - 2026-11-28

@@ -423,6 +423,7 @@ impl Leases {
                 .lease
                 .statement_wait()
                 .saturating_mul(u32::try_from(self.components.len() + 2).unwrap_or(u32::MAX)),
+            statement: self.lease.statement_wait(),
             table: self.table_of(&first),
         };
         let noted = Arc::clone(&shared);
@@ -467,10 +468,9 @@ impl Leases {
             match ask {
                 Ask::Stop => {}
                 Ask::Read(reply) => drop(reply.send(Err(none))),
-                Ask::Write(_, reply) | Ask::Forget(reply) | Ask::Unclaim(_, reply) => {
-                    drop(reply.send(Err(none)));
-                }
-                Ask::Claim(reply) => drop(reply.send(Err(none))),
+                Ask::Write(_, reply) | Ask::Forget(reply) => drop(reply.send(Err(none))),
+                Ask::Unclaim(_, reply) => drop(reply.send(Answered::Done(Err(none)))),
+                Ask::Claim(reply) => drop(reply.send(Answered::Done(Err(none)))),
             }
             return;
         };
@@ -521,10 +521,23 @@ impl Leases {
                 let _ = reply.send(removed);
             }
             Ask::Claim(reply) => {
-                let _ = reply.send(self.claim());
+                let claimed = self.claim(|statements| {
+                    let _ = reply.send(Answered::Statements(statements));
+                });
+                let _ = reply.send(Answered::Done(claimed));
             }
             Ask::Unclaim(restore, reply) => {
-                let _ = reply.send(self.unclaim(restore));
+                // The put-back, two statements beside it to begin and commit it, and a release
+                // per lease.
+                let tables = self.claimed.len();
+                let removed = self
+                    .claimed
+                    .iter()
+                    .filter(|claimed| restore && claimed.removed)
+                    .count();
+                let count = tables + if removed > 0 { removed + 2 } else { 0 };
+                let _ = reply.send(Answered::Statements(as_statements(count)));
+                let _ = reply.send(Answered::Done(self.unclaim(restore)));
             }
         }
     }
@@ -663,15 +676,22 @@ impl Leases {
     /// Before a reset by a run without a seed empties anything, takes the lease of every lease
     /// table of no current component that holds a seed record, then removes those records under
     /// them (`story:seed-under-a-lease`, D6 A; `story:seed-record-after-a-component-is-removed`,
-    /// adversary rounds 1 to 3). First every lease is taken: where another process holds one, the
+    /// adversary rounds 1 to 4). First every lease is taken: where another process holds one, the
     /// answer names that table, every lease taken is released again and no record is touched.
     /// Then every record is removed in one transaction, all or none: where that fails, the error
     /// names the table, nothing is removed and every lease is released. Otherwise the leases stay
     /// taken, renewed beside the run's own, until the reset has answered ([`Leases::unclaim`]),
-    /// so no process of an earlier release writes a record there meanwhile.
-    fn claim(&mut self) -> Result<Option<String>, String> {
+    /// so no process of an earlier release writes a record there meanwhile. Once the tables are
+    /// listed, `statements` is told how many statements the claim may run at most, so the run's
+    /// thread waits for them.
+    fn claim(&mut self, statements: impl FnOnce(u32)) -> Result<Claim, String> {
         self.unclaim(false)?;
         let tables = self.orphan_tables().map_err(|error| error.to_string())?;
+        // A read, a take and a release per table, and the removal's transaction: a statement per
+        // table and two to begin and commit it.
+        statements(as_statements(
+            tables.len().saturating_mul(4).saturating_add(2),
+        ));
         for table in tables {
             let recorded = match self.lease.orphan_seed_record(&table) {
                 Ok(Some(record)) => record,
@@ -690,7 +710,7 @@ impl Leases {
                 }),
                 Ok(None) => {
                     self.unclaim(false)?;
-                    return Ok(Some(table));
+                    return Ok(Claim::Held(table));
                 }
                 Err(error) => {
                     self.unclaim(false)?;
@@ -708,7 +728,7 @@ impl Leases {
                 for claimed in &mut self.claimed {
                     claimed.removed = true;
                 }
-                Ok(None)
+                Ok(Claim::Taken(self.claimed.len()))
             }
             Err(error) => {
                 self.unclaim(false)?;
@@ -791,6 +811,7 @@ impl Leases {
             }
             let began = Instant::now();
             let mut failed = None;
+            let mut taken = false;
             for (component, &token) in &self.held {
                 match self.lease.renew(component, token) {
                     Ok(true) => {}
@@ -799,10 +820,15 @@ impl Leases {
                             "the lease of {component} was taken by another process, or its session \
                              ended, so this one writes nothing more and exits"
                         ));
-                        return;
+                        taken = true;
+                        break;
                     }
                     Err(error) => failed = Some(format!("{component}: {error}")),
                 }
+            }
+            if taken {
+                self.closing(asked, term);
+                return;
             }
             // The lease of each table a reset removed an old record from is held as long as the
             // reset takes, so no process of an earlier release writes one there meanwhile.
@@ -825,6 +851,7 @@ impl Leases {
                          hold it, and this one exits: {why}",
                         self.components.join(", ")
                     ));
+                    self.closing(asked, term);
                     return;
                 }
                 Some(_) => {
@@ -845,6 +872,28 @@ impl Leases {
         // A release puts back no record, so it fails in no way it answers.
         let _ = self.unclaim(false);
     }
+
+    /// Once the run's lease is lost, keeps answering asks while a reset's claim holds leases, at
+    /// most `term`: the reset answers `503` and asks [`Ask::Unclaim`] first, and the records its
+    /// claim removed are put back under those leases, its own, before the run exits
+    /// (`story:seed-record-after-a-component-is-removed`, adversary round 4). Leases still held
+    /// after are released with their records left removed.
+    fn closing(&mut self, asked: &mpsc::Receiver<Ask>, term: Duration) {
+        let until = Instant::now() + term;
+        while !self.claimed.is_empty() {
+            match asked.recv_timeout(until.saturating_duration_since(Instant::now())) {
+                Ok(Ask::Stop) | Err(_) => break,
+                Ok(ask) => self.answer(ask),
+            }
+        }
+        // A release puts back no record, so it fails in no way it answers.
+        let _ = self.unclaim(false);
+    }
+}
+
+/// `count` statements, as the run's thread multiplies a statement's wait by them.
+fn as_statements(count: usize) -> u32 {
+    u32::try_from(count).unwrap_or(u32::MAX)
 }
 
 /// The refusal of records of the seed that differ, found in the lease tables `tables`.
@@ -868,24 +917,44 @@ enum Ask {
     /// Remove the seed's record from every current component's lease table.
     Forget(mpsc::Sender<Result<(), String>>),
     /// Take the leases of the lease tables of no current component that hold a record, then
-    /// remove the records under them in one transaction, before a reset empties anything: the
-    /// table whose lease another process holds, if one does.
-    Claim(mpsc::Sender<Result<Option<String>, String>>),
+    /// remove the records under them in one transaction, before a reset empties anything.
+    Claim(mpsc::Sender<Answered<Claim>>),
     /// Release the leases a [`Ask::Claim`] took, once the reset has answered; with `true`, as
-    /// after a reset that emptied nothing, put back first, in one transaction, the records it
-    /// removed: the tables whose record was not put back, if any.
-    Unclaim(bool, mpsc::Sender<Result<(), String>>),
+    /// after a reset that changed no store's rows, put back first, in one transaction, the
+    /// records it removed: why they were not put back, if they were not.
+    Unclaim(bool, mpsc::Sender<Answered<()>>),
+}
+
+/// What the lease thread sends for an [`Ask::Claim`] or an [`Ask::Unclaim`], which run a
+/// statement per table they name: first how many statements it runs at most for it, so the run's
+/// thread waits for them ([`SeedRow::waited`]), then the answer.
+enum Answered<T> {
+    /// The statements it runs at most.
+    Statements(u32),
+    /// The answer.
+    Done(Result<T, String>),
+}
+
+/// What a reset's claim did ([`SeedRow::claim`]).
+pub(crate) enum Claim {
+    /// Took the leases of this many tables and removed their records.
+    Taken(usize),
+    /// Found the lease of the table named held by another process, and touched no record.
+    Held(String),
 }
 
 /// Where a leading run records its seed (`story:seed-under-a-lease`): the row `seed` of the lease
 /// table of its first component in name order, read and written by the lease thread on the lease
 /// connection, each write landing only while the lease row names the token this run took (D3 A).
 /// The run's thread waits for each answer, at most the statements the lease thread may run
-/// before it ([`Leases::keep`]); no connection is opened for it.
+/// before it ([`Leases::keep`]), and, for a reset's claim and its release, those they run
+/// themselves; no connection is opened for it.
 #[derive(Clone)]
 pub(crate) struct SeedRow {
     asks: mpsc::Sender<Ask>,
     wait: Duration,
+    /// How long one statement on the lease connection waits at most.
+    statement: Duration,
     /// The lease table, `<schema>.<prefix>_p_lease`.
     table: String,
 }
@@ -924,9 +993,9 @@ impl SeedRow {
     /// Before a reset by a run without a seed empties anything, takes the lease of each lease
     /// table of no current component that holds a seed record, then removes those records under
     /// them in one transaction (`story:seed-record-after-a-component-is-removed`, adversary rounds
-    /// 1 to 3), keeping the leases until [`SeedRow::unclaim`]: `Some` with the first such table
-    /// whose lease another process holds, no record touched and every lease taken released again,
-    /// so the reset is refused.
+    /// 1 to 4), keeping the leases until [`SeedRow::unclaim`]: [`Claim::Held`] with the first
+    /// such table whose lease another process holds, no record touched and every lease taken
+    /// released again, so the reset is refused. The wait covers the claim's own statements.
     ///
     /// # Errors
     /// The tables cannot be read, a lease taken or the records removed, naming the table, or a
@@ -934,8 +1003,10 @@ impl SeedRow {
     /// and every record put back: where the lease thread did not answer, a release that puts back
     /// what its claim removed is queued behind the claim before this answers, so a claim that ends
     /// after the answer keeps neither.
-    pub(crate) fn claim(&self) -> Result<Option<String>> {
-        let claimed = self.asked(Ask::Claim);
+    pub(crate) fn claim(&self) -> Result<Claim> {
+        let claimed = self
+            .waited(self.wait, Ask::Claim)
+            .and_then(|claimed| claimed.map_err(|why| anyhow::anyhow!(why)));
         if claimed.is_err() {
             // Nobody waits for the answer of this release.
             let (reply, _) = mpsc::channel();
@@ -944,15 +1015,19 @@ impl SeedRow {
         claimed
     }
 
-    /// Releases the leases [`SeedRow::claim`] took, once the reset has answered; with `restore`,
-    /// where the reset emptied nothing, puts back first, in one transaction, the records the
-    /// claim removed.
+    /// Releases the leases [`SeedRow::claim`] took, `tables` of them, once the reset has
+    /// answered; with `restore`, where the reset changed no store's rows, puts back first, in one
+    /// transaction, the records the claim removed. The wait covers the statements of the lease
+    /// thread's renewals of those leases and the release's own. Answers, within, why the records
+    /// were not put back, where that transaction failed.
     ///
     /// # Errors
-    /// The records could not be put back, naming their tables, or a lease thread that has ended
-    /// or did not answer in time.
-    pub(crate) fn unclaim(&self, restore: bool) -> Result<()> {
-        self.asked(|reply| Ask::Unclaim(restore, reply))
+    /// A lease thread that has ended or did not answer in time.
+    pub(crate) fn unclaim(&self, restore: bool, tables: usize) -> Result<Result<(), String>> {
+        let renewals = self.statement.saturating_mul(as_statements(tables));
+        self.waited(self.wait.saturating_add(renewals), |reply| {
+            Ask::Unclaim(restore, reply)
+        })
     }
 
     /// Sends the ask `ask` makes of a reply channel and waits for its answer.
@@ -970,6 +1045,38 @@ impl SeedRow {
             ),
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 bail!("the lease thread has ended, so the seed's record is not read or written")
+            }
+        }
+    }
+
+    /// Sends the ask `ask` makes of a reply channel and waits for its answer: `wait` until the
+    /// lease thread says how many statements it runs for it, then a statement's wait for each and
+    /// two more.
+    fn waited<T>(
+        &self,
+        wait: Duration,
+        ask: impl FnOnce(mpsc::Sender<Answered<T>>) -> Ask,
+    ) -> Result<Result<T, String>> {
+        let (reply, answer) = mpsc::channel();
+        self.asks
+            .send(ask(reply))
+            .ok()
+            .context("the lease thread has ended, so the seed's record is not read or written")?;
+        let mut deadline = Instant::now() + wait;
+        loop {
+            match answer.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(Answered::Statements(statements)) => {
+                    deadline = Instant::now()
+                        + self.statement.saturating_mul(statements.saturating_add(2));
+                }
+                Ok(Answered::Done(answered)) => return Ok(answered),
+                Err(mpsc::RecvTimeoutError::Timeout) => bail!(
+                    "the lease thread did not answer about the seed's record in time, the \
+                     statements it runs for it included"
+                ),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    bail!("the lease thread has ended, so the seed's record is not read or written")
+                }
             }
         }
     }
