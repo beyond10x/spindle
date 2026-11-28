@@ -240,7 +240,10 @@ A command the runtime cannot complete answers `501` with `{"refused", "committed
 whose PostgreSQL store did not answer within its deadline, as a write held behind a lock another
 database session holds, answers `503` with `{"refused", "committed": false}`: nothing was written,
 and the same request is safe to send again. A SQLite store reports no deadline: a command whose
-write it finds busy answers `501`. A read held so is not answered `503`: a view answers `501`
-`{"refused"}`, and `GET /api/events` and `GET /api/history` answer `500` `{"refused"}`. A
+write it finds busy answers `501`. Outside a drain, a read held so is not answered `503`: a view
+answers `501` `{"refused"}`, and `GET /api/events` and `GET /api/history` answer `500`
+`{"refused"}`; during a drain after SIGINT or SIGTERM, an events or history read still waiting for
+the store is cut off and answered `503`
+([draining on SIGTERM](observe.md#draining-on-sigterm)). A
 `POST /api/reset` held so answers `500` and leaves the component's store lost until the run
 restarts (`story:reset-on-a-busy-store-keeps-the-store`).

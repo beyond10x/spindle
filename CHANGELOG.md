@@ -81,10 +81,12 @@ are Spindle's releases.
   and not proven, is the component's publication lock, which eventlog's feed read holds exclusive
   until its transaction ends and every write waits for. Such a command now answers `503` until the
   paused leader's session ends at the store's idle timeout, at most 10 s; the window is answered,
-  not closed. Reads held so are unchanged: a view answers `501` `{"refused"}`, and
-  `GET /api/events` and `GET /api/history` answer `500` `{"refused"}`. A `POST /api/reset` held
-  so answers `500` and leaves the component's store lost until the run restarts, as before
-  (`story:reset-on-a-busy-store-keeps-the-store`) (`story:new-leader-write-while-old-paused`).
+  not closed. Reads held so are unchanged: outside a drain, a view answers `501` `{"refused"}`,
+  and `GET /api/events` and `GET /api/history` answer `500` `{"refused"}`; during a drain after
+  SIGINT or SIGTERM an events or history read still waiting for the store is cut off and answered
+  `503`, as before. A `POST /api/reset` held so answers `500` and leaves the component's store
+  lost until the run restarts, as before (`story:reset-on-a-busy-store-keeps-the-store`)
+  (`story:new-leader-write-while-old-paused`).
 
 ## [0.26.0] - 2026-11-28
 
