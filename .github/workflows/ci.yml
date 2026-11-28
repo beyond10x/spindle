@@ -185,7 +185,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         if: steps.paths.outputs.class == 'code'
 
-      - name: The PostgreSQL lane script stops and removes its cluster
+      - name: The PostgreSQL lane script stops and removes its cluster, its cases and the adversary's
         if: steps.paths.outputs.class == 'code'
         run: |
           set -euo pipefail
@@ -198,6 +198,7 @@ jobs:
             exit 1
           fi
           SPINDLE_PG_BIN="$bin" task check:postgres-lane-script
+          SPINDLE_PG_BIN="$bin" task check:postgres-lane-adversary
 
       - name: PostgreSQL 17 on loopback, its TLS certificate issued by a CA of this run
         if: steps.paths.outputs.class == 'code'

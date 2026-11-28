@@ -9,8 +9,11 @@
 #   3. Binaries that report a major other than 17 on PATH: the script prints that major and a
 #      warning naming 17.
 #   4. SPINDLE_PG_BIN naming wrappers that log each call and report 17: the cluster is made and
-#      started by those wrappers, and no warning is printed.
+#      started by those wrappers, and no warning is printed (but the locale's, case 6, on a host
+#      without en_US.UTF-8).
 #   5. With SPINDLE_TEST_DATABASE_URL set, `lane` runs its command and starts no cluster.
+#   6. initdb runs with CI's en_US.UTF-8 where locale -a lists it; with a locale -a that lists only
+#      C.utf8, with C.utf8 and exactly one warning, naming en_US. (Run after case 4, on its log.)
 #
 # Without initdb or pg_ctl it fails, naming the missing binary.
 set -eu
@@ -163,11 +166,46 @@ cases=$((cases + 1))
 grep -q '^initdb .*-D' "$work/bin17.log" 2>/dev/null || fail "major17: the cluster was not made by SPINDLE_PG_BIN's initdb: $(cat "$work/bin17.log" 2>/dev/null)"
 cases=$((cases + 1))
 grep -q '^pg_ctl start' "$work/bin17.log" 2>/dev/null || fail "major17: the cluster was not started by SPINDLE_PG_BIN's pg_ctl: $(cat "$work/bin17.log" 2>/dev/null)"
+# Where this host lists no en_US.UTF-8 the script warns about the locale alone (case 6).
+en=$(locale -a 2>/dev/null | grep -i -x 'en_US\.utf-\{0,1\}8' | head -n 1 || true)
 cases=$((cases + 1))
-if grep -qi 'warning' "$work/major17.out"; then
-    fail "major17: the script warned on 17: $(grep -i warning "$work/major17.out")"
+if [ -n "$en" ]; then
+    warned=$(grep -i 'warning' "$work/major17.out" || true)
+else
+    warned=$(grep -i 'warning' "$work/major17.out" | grep -v '^postgres-lane: warning: locale ' || true)
 fi
+[ -z "$warned" ] || fail "major17: the script warned on 17: $warned"
 left_behind major17 "$work/major17.out"
+
+# --- 6. the locale: CI's en_US.UTF-8 where locale -a lists it, else C.UTF-8 and one warning ------
+cases=$((cases + 1))
+if [ -n "$en" ]; then
+    grep -q -e "^initdb .*--locale=$en " "$work/bin17.log" ||
+        fail "locale: this host lists $en and initdb ran without it: $(grep '^initdb .*-D' "$work/bin17.log")"
+else
+    [ "$(grep -c '^postgres-lane: warning: locale ' "$work/major17.out")" -eq 1 ] ||
+        fail "locale: this host lists no en_US.UTF-8 and the script did not warn once: $(cat "$work/major17.out")"
+fi
+# A host whose locale -a lists C.utf8 and no en_US: C.utf8, and one warning naming en_US.
+mkdir -p "$work/no-en/bin" "$work/no-en/run"
+{
+    echo '#!/bin/sh'
+    printf '%s\n' 'printf "C\nC.utf8\nPOSIX\nde_DE.utf8\n"'
+} >"$work/no-en/bin/locale"
+chmod 755 "$work/no-en/bin/locale"
+: >"$work/bin17.log"
+status=0
+(cd "$work/no-en/run" && SPINDLE_PG_BIN="$work/bin17" PATH="$work/no-en/bin:$PATH" sh "$lane" run -- true) >"$work/no-en.out" 2>&1 || status=$?
+cases=$((cases + 1))
+[ "$status" -eq 0 ] || fail "no-en: the script exited $status: $(cat "$work/no-en.out")"
+cases=$((cases + 1))
+grep -q '^initdb .*--locale=C\.utf8 ' "$work/bin17.log" || fail "no-en: initdb did not run with C.utf8: $(grep '^initdb .*-D' "$work/bin17.log")"
+cases=$((cases + 1))
+[ "$(grep -c -i 'warning' "$work/no-en.out")" -eq 1 ] && grep -i 'warning' "$work/no-en.out" | grep -q 'en_US' ||
+    fail "no-en: the script did not print exactly one warning naming en_US: $(grep -i warning "$work/no-en.out")"
+dir=$(ready_field cluster "$work/no-en.out")
+cases=$((cases + 1))
+[ -n "$dir" ] && [ ! -e "$dir" ] || fail "no-en: the cluster directory '$dir' is left or was never printed"
 
 # --- 5. with SPINDLE_TEST_DATABASE_URL set, lane starts no cluster ------------------------------
 : >"$work/given.log"

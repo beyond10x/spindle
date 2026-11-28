@@ -17,6 +17,7 @@ tasks:
       - task: check:the_release_binary_checks_refuse_what_they_must
       - task: check:within_fails_over_its_bound
       - task: check:the_postgres_options_are_one
+      - task: check:postgres-options-adversary
       - ess specify validate --path ess
       - ess specify validate --path examples/rally/ess
       - task: check:the_observe_domain_validates

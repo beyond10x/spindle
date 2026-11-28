@@ -85,6 +85,22 @@ pg_binary() {
     return 1
 }
 
+# locale: CI's en_US.UTF-8 when locale -a lists it (in any case or spelling of utf8), else C.UTF-8
+# (else C), with one warning naming the difference.
+pick_locale() {
+    available=$(locale -a 2>/dev/null || true)
+    locale=$(printf '%s\n' "$available" | grep -i -x 'en_US\.utf-\{0,1\}8' | head -n 1 || true)
+    if [ -n "$locale" ]; then
+        say "locale $locale, as CI's en_US.utf8"
+        return
+    fi
+    locale=$(printf '%s\n' "$available" | grep -i -x 'C\.utf-\{0,1\}8' | head -n 1 || true)
+    if [ -z "$locale" ]; then
+        locale=C
+    fi
+    say "warning: locale $locale, not CI's en_US.utf8, which locale -a does not list: text sorts and compares by code point here and by en_US rules on CI"
+}
+
 # A port in 20000-59999, drawn at random.
 draw_port() {
     n=$(od -An -N2 -tu2 /dev/urandom | tr -d ' ')
@@ -168,8 +184,9 @@ run() {
     data=$dir/data
     tls "$dir/tls"
     printf 'owner\n' >"$dir/pwfile"
+    pick_locale
     "$initdb" -D "$data" -U owner --pwfile="$dir/pwfile" --auth-host=scram-sha-256 --auth-local=trust \
-        --encoding=UTF8 --locale=C --no-sync >"$dir/initdb.log" 2>&1 || {
+        --encoding=UTF8 --locale="$locale" --no-sync >"$dir/initdb.log" 2>&1 || {
         cat "$dir/initdb.log" >&2
         echo "postgres-lane: initdb failed" >&2
         exit 1
@@ -177,13 +194,16 @@ run() {
 
     # The socket directory is relative to the data directory: an absolute path inside a worktree
     # can exceed the 107 bytes of a socket path.
-    flags="-c listen_addresses=127.0.0.1 -c unix_socket_directories=."
+    # The server logs to server.log, where a port another process holds is read from: a
+    # postgresql.conf.sample that turns the logging collector on would send the log elsewhere.
+    flags="-c listen_addresses=127.0.0.1 -c unix_socket_directories=. -c logging_collector=off"
     for option in $(server_options "$dir/tls/server.pem" "$dir/tls/server.key"); do
         flags="$flags -c '$option'"
     done
     attempt=1
     while :; do
         port=$(draw_port)
+        : >"$dir/server.log"
         if "$pg_ctl" start -D "$data" -l "$dir/server.log" -w -t 60 -s -o "$flags -c port=$port" >/dev/null 2>&1; then
             break
         fi
@@ -191,8 +211,8 @@ run() {
             attempt=$((attempt + 1))
             continue
         fi
-        cat "$dir/server.log" >&2 2>/dev/null || true
-        echo "postgres-lane: pg_ctl start failed" >&2
+        echo "postgres-lane: pg_ctl start failed on port $port (attempt $attempt); the end of the server log:" >&2
+        tail -n 20 "$dir/server.log" >&2 2>/dev/null || true
         exit 1
     done
     postmaster=$(sed -n 1p "$data/postmaster.pid")
