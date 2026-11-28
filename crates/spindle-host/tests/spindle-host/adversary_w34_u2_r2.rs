@@ -153,7 +153,8 @@ fn a_world_row_refused_busy_on_an_empty_store_changed_no_rows() {
         .reset_to(world(vec![seed]))
         .expect_err("the world row is refused busy");
     assert!(
-        matches!(&reset, HostError::Store(StoreError::Busy(detail)) if detail == BUSY),
+        matches!(&reset, HostError::Store(StoreError::Busy(detail))
+            if detail.starts_with("resetting desk: writing row 0") && detail.ends_with(BUSY)),
         "{reset:?}"
     );
     assert!(store.held().is_empty(), "nothing landed");
