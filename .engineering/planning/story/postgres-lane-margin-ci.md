@@ -6,7 +6,7 @@ status: draft
 title: The PostgreSQL lane keeps a quarter of its bound free on CI
 relations:
 - serves: vision:spindle
-revision: 2
+revision: 4
 ---
 ## Outcome
 
@@ -15,20 +15,25 @@ test over 15 s there, so a slower runner or one more lane test does not turn the
 
 ## Why
 
-Wave 33 (PR 107, run 46151826826) took the CI lane from 60.4 s (PR 106) to 91.6 s of 100 s; the
-local lane pinned to 4 CPUs took 70.6 s. The ten slowest on CI were 17.6 s
-`adv3_drawn_command_sequences_scan_as_sqlite_does`, 16.4 s
-`adv3_one_group_of_many_writes_lands_as_on_sqlite`, 15.5 s
-`adversary_state_move::a_long_log_with_groups_across_pages_arrives_whole`, 14.5 s
-`adversary_w32_u3::postgres::a_post_under_way_at_sigterm_is_saved_before_the_standby_takes_over`,
-14.1 s `adversary_w31_u6::postgres::a_leader_paused_inside_a_write_answers_that_command_503_and_lands_nothing`,
-13.5 s `adv3_a_scan_beside_removals_and_recreations_holds_the_state_at_its_version`, 13.4 s
-`postgres::replicas::a_leader_paused_inside_a_write_is_taken_over_whole_within_the_lease_and_the_idle_timeout`,
-13.2 s `postgres::reading_a_small_view_does_not_make_the_writer_pay`, 12.7 s
-`adversary_state_move::a_moved_log_of_0_10_answers_every_scan_and_load_the_file_answers`, 12.5 s
-`adversary_w31_u6::postgres::a_write_behind_a_foreign_table_lock_fails_in_time_without_losing_the_lease`.
-Wave 33's U3 added about 30 lane cases of 1.4 to 8.9 s each. A step over its budget is a defect;
-this one is under it by 8.4 s.
+PR 109 already delivered the 15 s per-test check (`check:postgres` fails naming each lane test over
+15 s, `scripts/each-test-within.sh`) and eleven cheaper tests. The CI lane still ran 89.8 s of its
+100 s bound on PR 109 and 98.5 s on PR 108. A step over its budget is a defect; this one is under it
+by 1.5 to 10.2 s.
+
+Diagnosis, 2026-11-28, with eventlog 0.10.0 (`crates/spindle-kernel/Cargo.toml:22-24`) and the
+local lane pinned to 4 CPUs:
+
+- Each lane run makes 1,459 store opens, about 7.1 per test. Each open runs eventlog's
+  `schema::migrate_with_blob_migration`.
+- That migration takes 185 s of the 294 s of summed statement time.
+  - Creating the `eventlog_expected_*` temp tables takes 75.4 s, dropping them 11.6 s.
+  - The catalog comparison takes 56.6 s.
+- A probe patch that skips the shape check for a current schema brought server CPU from 151-171
+  CPU-s to about 60 CPU-s, and the local lane from 63-74 s to about 45 s.
+- Ruled out: `fsync` and WAL settings (no gain), and a template database per run (at most 27
+  CPU-s).
+
+So the cut lands in eventlog, not in Spindle's tests: this story left wave 35.
 
 ## Acceptance
 
@@ -42,3 +47,10 @@ this one is under it by 8.4 s.
 - Each changed test is shown red against a deliberately broken build (not committed), and its
   before and after times are in its commit body.
 - No bound, thread count or timeout is raised, no test is ignored, and no shard is added.
+
+## Waits on
+
+An eventlog release where opening a current schema costs no DDL: no `eventlog_expected_*` temp
+tables and no catalog comparison when the schema is already current. The story was sent to the
+eventlog owner on 2026-11-28. When it is released, this story pins that release in
+`crates/spindle-kernel/Cargo.toml` and checks the CI lane against 75 s.
