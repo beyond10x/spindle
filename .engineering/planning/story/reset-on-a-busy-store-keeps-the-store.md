@@ -29,7 +29,7 @@ scope:
   path: website/docs/concepts/capabilities.md
 - confidence: cited
   path: website/docs/concepts/environment-and-admission.md
-revision: 16
+revision: 20
 ---
 ## Outcome
 
@@ -37,10 +37,8 @@ A `POST /api/reset` whose store misses its deadline (another session holds the l
 the component's store, so the next command runs as before. While the reset has changed no row, it
 answers `503` with `{"refused", "committed": false}` and nothing reset. Once it has changed rows (a
 row removed, an earlier store emptied, a world row written), it answers `500`, saying that the store
-is kept and that the reset can be sent again. A reset whose store fails otherwise answers `500` and
-loses the store, as today; so does one whose store reports an unknown commit
-(`StoreError::Unknown`, `story:unknown-commit-answered-as-unknown`), since an unknown commit may
-have changed rows. Today every busy reset answers `500` and replaces the store with a lost one, and
+is kept and that the reset can be sent again. A reset whose store fails with any other store error
+answers `500` and loses the store, as today. Today every busy reset answers `500` and replaces the store with a lost one, and
 every later command answers `501` until the run restarts.
 
 ## Why
@@ -89,10 +87,10 @@ test time to the step and no test to the PostgreSQL lane.
   `HostError::Store(StoreError::Busy(..))` and `reset_changed_rows()` is `false`, which
   `console::reset` answers `503`.
 - `a_reset_whose_store_fails_otherwise_still_loses_it` (new, in
-  `crates/spindle-host/tests/spindle-host/supplied.rs`): a removal failing `StoreError::Backend`,
-  and one failing U2's `StoreError::Unknown`, each returns `HostError::Reset { restored: false }`
-  and every later command fails naming the store lost in a reset, as today; `console::reset`
-  answers it `500` (`console.rs:595`, unchanged).
+  `crates/spindle-host/tests/spindle-host/supplied.rs`): on a supplied store whose removal fails
+  `StoreError::Backend`, `Host::reset` returns `HostError::Reset { restored: false }`, which
+  `console::reset` answers `500` (`console.rs:595`, unchanged), and every later command fails
+  naming the store lost in a reset, as today.
 - `website/docs/concepts/capabilities.md` (`:250-252`) names the two answers of a busy reset and the
   lost store of any other failure, `environment-and-admission.md` (`:363-364` and `:671-673`) says
   the same, and the doc comments of `HostError::Reset` (`host.rs:405-421`), `Host::supplied`
@@ -120,9 +118,8 @@ decision, each reversible. No new dependency.
   is `503` with `committed: false`, as `reset_changed_rows` and the seed put-back already read it.
   Not taken: B (counts as a change, so `500`).
 
-Only `StoreError::Busy` keeps the store. Every other store error, `StoreError::Unknown` from
-`story:unknown-commit-answered-as-unknown` among them, loses it and answers `500` as today: an
-unknown commit may have changed rows.
+Only `StoreError::Busy` keeps the store. Every other store error loses it and answers `500` as
+today.
 
 ## Scope
 
@@ -144,7 +141,7 @@ Derived 2026-11-28 by `story-scoper`. Every line is **cited** (read from the sto
 - **Documents:** `CHANGELOG.md:57-58` (the [Unreleased] entry naming this story as "as before") plus a Fixed entry — cited
 - **Decisions:** D1: what a busy error answers after the reset already changed rows: **A (default)** keep the store, answer `503` `committed: false` only while `reset_changed_rows()` is false, otherwise `500` naming that the store is kept and the reset may be sent again; B `503` with `committed` = `reset_changed_rows()`; C `503` `committed: false` always (untrue after a partial reset). D2: how the host reports it: **A (default)** `HostError::Store(StoreError::Busy(..))` with component and step in the detail, `removed_all` returning a typed `StoreError`; B a new `HostError` variant (breaking: `HostError` is not `#[non_exhaustive]`, host.rs:317); C a `held` field on `HostError::Reset` (its "as it was before the reset" text is wrong after a partial removal). D3: an earlier store whose events alone were forgotten: **A (default)** counts as nothing reset, as `reset_changed_rows` and the seed put-back read it; B counts as changed, so `500` — inferred
 - **Confidence:** high — the story names the defect site and the case; the tree shows the single `Lost` replacement on the supplied path and the single `500` fallback in `console::reset`
-- **Would collide with:** `crates/spindle-host/src/host.rs` reset (`Host::empty`, `reset_to`, `load`); `console::reset`; `crates/spindle-ingress/src/answer.rs` busy and unfinished mapping and `StoreError` in `crates/spindle-kernel/src/store.rs` (`story:unknown-commit-answered-as-unknown` edits the same answer mapping and may add a `StoreError` variant whose reset classification this story fixes); the `capabilities.md:242-252` paragraph (same paragraph as `story:unknown-commit-answered-as-unknown`: run the two in sequence); `environment-and-admission.md` § Several processes on one store and the seed-reset paragraph near :355-370, together with `serve.rs:768-806` and `seed.rs:374-430` (wave 33 U3's leased reset path); `CHANGELOG.md` [Unreleased]
+- **Would collide with:** `crates/spindle-host/src/host.rs` reset (`Host::empty`, `reset_to`, `load`); `console::reset`; `crates/spindle-ingress/src/answer.rs` busy and unfinished mapping and `StoreError` in `crates/spindle-kernel/src/store.rs` (`story:unknown-commit-answered-as-unknown` edits the same answer mapping and adds `StoreError::Unknown`, which this story's reset loses the store on like any error other than `Busy`; the case for it, in `crates/spindle-host/tests/spindle-host/supplied.rs` beside this story's cases, is that story's, revision round 1); the `capabilities.md:242-252` paragraph (same paragraph as `story:unknown-commit-answered-as-unknown`: run the two in sequence); `environment-and-admission.md` § Several processes on one store and the seed-reset paragraph near :355-370, together with `serve.rs:768-806` and `seed.rs:374-430` (wave 33 U3's leased reset path); `CHANGELOG.md` [Unreleased]
 - **Test time:** about 1-2 s of test run time — inferred: the parked case's stub store answers busy at once, with no real deadline wait, and one or two host-level cases with in-memory stores take about 0.1 s each; no PostgreSQL case is needed
 - **Safety fact:** keeping the store after a busy error is sound because `StoreError::Busy` means the write was refused before it began to commit, so the store holds exactly what it held before that write (`crates/spindle-kernel/src/store.rs:341-345`; eventlog's `Deadline` maps to `Busy` and `UnknownCommit` does not, `crates/spindle-kernel/src/sqlite.rs:2961-2967`) — step 2, unproven
 - **Checked when planned (2026-11-28, read against 18715a80):** moved since the scoper read them: `console::reset` ends at `:597`, its `500` arm `:595`; `Host::reset` # Errors `:1844-1851`; the `serve.rs` comment `:771-782`; `StoreError::Busy` `store.rs:341-345`; `backend` `sqlite.rs:2961-2967` — cited. Under D1 A this story calls `Answer::busy` and does not edit `answer.rs` or `store.rs`; its reset classification lives in `Host::empty`, where only `StoreError::Busy` keeps the store — cited from the decision. `CHANGELOG.md:57-58` is wave 33's entry; once release 0.28.0 is cut it sits under `[0.28.0]` and is not edited: this story adds its own `### Fixed` entry under `[Unreleased]` — cited. The new tests go in `crates/spindle-host/tests/spindle-host/supplied.rs` and `crates/spindle-ingress/tests/spindle-ingress/busy_store.rs`, existing modules, so this story does not edit the ingress tests' `main.rs` — inferred. `removed_all` calls `remove` once per instance, so on PostgreSQL each removal commits on its own and a busy error on a later one leaves the earlier ones done — cited

@@ -25,7 +25,7 @@ scope:
   path: scripts/release-linux-binary.adversary-test.sh
 - confidence: inferred
   path: scripts/release-linux-binary.sh
-revision: 5
+revision: 6
 ---
 # Release artifacts are signed and carry a provenance attestation
 
@@ -65,9 +65,14 @@ message. The script stays under 60 s; the unit's report names its time before an
 
 - `adversary_id_token_only_on_signing_jobs`: `id-token: write` appears in `release.yml` on the
   `sign` and `image-manifest` jobs only, `attestations: write` on `sign` only, the top-level
-  permissions stay `contents: read`, and both jobs carry an `if:` that starts with
-  `github.event_name != 'pull_request'`. A copy of `release.yml` with `id-token: write` at the top
-  level or on `build`, or with `sign`'s pull-request guard removed, fails the case.
+  permissions stay `contents: read`, and each job holding `id-token: write` has an `if:` that is
+  false on a `pull_request` event. The case checks this against a fixed list of accepted guard
+  forms, which it names: the `if:` is `${{ github.event_name != 'pull_request' }}`, or starts with
+  `${{ github.event_name != 'pull_request' && ` (as `image-manifest`'s, `release.yml:691`) or
+  `${{ !cancelled() && github.event_name != 'pull_request' && ` (as `publish`'s, `:766`), and has
+  no `||` outside parentheses after that start; each such form is false on a `pull_request`
+  event. A copy of `release.yml` with `id-token: write` at the top level or on `build`, with
+  `sign`'s pull-request guard removed, or with `|| true` appended to it, fails the case.
 - `adversary_sign_signs_each_asset`: `sign`'s signing step, run on a stub `cosign` over a release
   with and without `IMAGES`, writes one `<asset>.sigstore.json` per asset (five archives, the SBOM,
   `IMAGES` where expected, `SHA256SUMS`) and calls `cosign sign-blob` once per asset; a stub that
@@ -83,6 +88,11 @@ message. The script stays under 60 s; the unit's report names its time before an
   `sha256sum --check --strict` against the pinned sha256 before it runs it, so a stub download with
   one byte changed stops the step; every `uses:` of `actions/attest-build-provenance` names a
   40-hex commit.
+- `adversary_backfill_verifies_at_main`: `publish`'s verification step, run on a stub `cosign`
+  that records its arguments, passes a `--certificate-identity` ending in `@refs/heads/main` when
+  run with `GITHUB_EVENT_NAME=workflow_dispatch` (a backfill, D6 A), and one ending in
+  `@refs/tags/<tag>` on a tag push; a step that passes the tag's ref on a backfill, or
+  `refs/heads/main` on a tag push, fails the case.
 
 The tagged release run: the first release built with this story (0.29.0) runs a verification step
 in `publish` after the upload, on the assets downloaded back from the release page. It writes each

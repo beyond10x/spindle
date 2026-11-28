@@ -42,26 +42,27 @@ PR 106 (merged 8622f0bd), moved to `implemented` with a `test_result` evidence e
 
 Acceptance amendments, one line per story:
 
-- `story:release-artifacts-signed`: five stub cases in `scripts/release-linux-binary.adversary-test.sh`
+- `story:release-artifacts-signed`: six stub cases in `scripts/release-linux-binary.adversary-test.sh`
   (the permissions on `sign` and `image-manifest` only, a bundle per asset, the uploads, the image
-  signed by digest, the pinned tools checked); the three real checks (`every_release_asset_verifies`,
+  signed by digest, the pinned tools checked, a backfill verified at `refs/heads/main`); the three real checks (`every_release_asset_verifies`,
   `a_changed_archive_fails_verification`, `the_image_is_signed_when_published`) run in the tagged
   run of release 0.29.0, whose step summary is the story's evidence.
 - `story:unknown-commit-answered-as-unknown`: `500` with `{"refused", "committed": "unknown"}` (D1 A,
-  D2 A) from a new `StoreError::Unknown` (D3 A), pinned by one kernel unit test and two ingress
-  tests; the two existing before-COMMIT cases pass unchanged.
+  D2 A) from a new `StoreError::Unknown` (D3 A), pinned by one kernel unit test, two ingress
+  tests and one host test showing that a reset whose removal fails `StoreError::Unknown` still
+  loses the store; the two existing before-COMMIT cases pass unchanged.
 - `story:reset-on-a-busy-store-keeps-the-store`: the parked case un-ignored; a busy reset keeps the
   store, `503` while no row changed and `500` saying the store is kept after (D1 A); four new host
-  and ingress tests, one of them showing that any other error, U2's `StoreError::Unknown` among
-  them, still loses the store.
+  and ingress tests, one of them showing that a removal failing `StoreError::Backend` still loses
+  the store.
 
 ## Units
 
 | unit | story | surface | branch | tree |
 |---|---|---|---|---|
 | U1 | `story:release-artifacts-signed` | `.github/workflows/release.yml` (new job `sign`, `image-manifest`, `publish`), `scripts/release-linux-binary.adversary-test.sh`, `AGENTS.md` release step 7, `README.md` § Releases | `unit/w34-release-signed` | `spindle-w34-release-signed` |
-| U2 | `story:unknown-commit-answered-as-unknown` | `crates/spindle-kernel` (`store.rs` `StoreError`, `sqlite.rs` `backend`), `crates/spindle-ingress/src/answer.rs`, new `tests/spindle-ingress/unknown_commit.rs` | `unit/w34-unknown-commit` | `spindle-w34-unknown-commit` |
-| U3 | `story:reset-on-a-busy-store-keeps-the-store` | `crates/spindle-host/src/host.rs` (`Host::empty`, `removed_all`), `crates/spindle-ingress/src/console.rs` (`console::reset`), `adversary_w33_u2.rs`, `busy_store.rs`, `spindle-host` `supplied.rs` | `unit/w34-busy-reset` | `spindle-w34-busy-reset` |
+| U2 | `story:unknown-commit-answered-as-unknown` | `crates/spindle-kernel` (`store.rs` `StoreError`, `sqlite.rs` `backend`), `crates/spindle-ingress/src/answer.rs`, new `tests/spindle-ingress/unknown_commit.rs`, `crates/spindle-host/tests/spindle-host/supplied.rs` (one reset case) | `unit/w34-unknown-commit` | `spindle-w34-unknown-commit` |
+| U3 | `story:reset-on-a-busy-store-keeps-the-store` | `crates/spindle-host/src/host.rs` (`Host::empty`, `removed_all`), `crates/spindle-ingress/src/console.rs` (`console::reset`), `crates/spindle-cli/src/serve.rs` (comment only), `adversary_w33_u2.rs`, `busy_store.rs`, `crates/spindle-host/tests/spindle-host/supplied.rs` and `rows.rs` | `unit/w34-busy-reset` | `spindle-w34-busy-reset` |
 
 No `depends_on` edge inside the wave. Each unit is built by one `aep:implementor` and gets one
 `aep:adversary` pass when green.
@@ -87,8 +88,14 @@ Files two or more units share, and how they are kept apart:
 - `crates/spindle-kernel/src/store.rs` `StoreError` (`:323`): U2 adds the variant `Unknown`. U3
   does not edit the file; it classifies store errors in `Host::empty`, where only
   `StoreError::Busy` keeps the store, so `StoreError::Unknown` loses it as any other error does.
-  U3's case `a_reset_whose_store_fails_otherwise_still_loses_it` names `StoreError::Unknown`, so
-  its implementor reads the variant from U2's branch before its last round.
+  The case for that, `a_reset_whose_commit_is_unknown_still_loses_the_store`, is U2's, since U2
+  adds the variant.
+- `crates/spindle-host/tests/spindle-host/supplied.rs`: U2 adds
+  `a_reset_whose_commit_is_unknown_still_loses_the_store`; U3 adds
+  `a_reset_whose_first_step_is_busy_keeps_the_supplied_store`,
+  `a_busy_store_after_one_that_only_forgot_its_events_is_nothing_reset` and
+  `a_reset_whose_store_fails_otherwise_still_loses_it`. Kept apart by distinct case names (and
+  stub store names); merged U2, then U3, which keeps both sides.
 - `crates/spindle-ingress/tests/spindle-ingress/main.rs`: U2 adds `mod unknown_commit;`. U3 adds
   its ingress case to the existing `busy_store.rs` and does not edit `main.rs`.
 
@@ -96,12 +103,11 @@ No other file is in two units' scope. U1 shares only `CHANGELOG.md`.
 
 ## Order and parallel safety
 
-All three are built in parallel from `wave/34`. Merge order: U1, U2, U3. U3 merges after U2: its
-implementor reads U2's `StoreError::Unknown` from `unit/w34-unknown-commit` before its last round,
-and resolves the `capabilities.md` paragraph on top of U2's.
+All three are built in parallel from `wave/34`. Merge order: U1, U2, U3. U3 merges after U2 and
+resolves the `capabilities.md` paragraph and `supplied.rs` on top of U2's.
 
 - Default test step (`task check:the_tests_pass_within_the_budget`, under 120 s): U2 adds one
-  kernel unit test and two ingress tests (about 1.5 s); U3 un-ignores one ingress case and adds two
+  kernel unit test, two ingress tests and one host test (about 1.6 s); U3 un-ignores one ingress case and adds two
   host tests in `supplied.rs`, one in `busy_store.rs` and one more host test (about 2 s); each test
   under 1 s. U1 adds no Rust test; its stub cases run in
   `task check:the_release_binary_checks_refuse_what_they_must`, and the unit names the script's
@@ -147,3 +153,12 @@ Every decision takes the scoper's default, option A, each reversible (D-W34 A).
   `image-manifest` (`id-token: write` only), or to a job that runs on a pull request.
 - Add a dependency other than U1's two pinned tools (cosign v3.1.6, `actions/attest-build-provenance`
   v4.2.2), each pinned by sha and checked as its decision says.
+
+## Revision round 1
+
+Critics of round 1: scope approved; acceptance, design and parallel safety asked for these.
+
+- U3 no longer depends on U2's variant: its case `a_reset_whose_store_fails_otherwise_still_loses_it` fails a removal with `StoreError::Backend` only, and its Outcome and decisions name no `StoreError::Unknown`; U2 owns the new case `a_reset_whose_commit_is_unknown_still_loses_the_store` (`supplied.rs`), because it adds the variant.
+- U1 gains the stub case `adversary_backfill_verifies_at_main`: the verification step passes an identity at `@refs/heads/main` on `workflow_dispatch` and at `@refs/tags/<tag>` on a tag push.
+- U1's `adversary_id_token_only_on_signing_jobs` checks that each job holding `id-token: write` has an `if:` false on a `pull_request` event, by a named list of accepted guard forms, not a fixed prefix.
+- This page: U3 no longer reads U2's branch before its last round (merge order U1, U2, U3 kept); U2's surface gains `supplied.rs`, shared with U3 by distinct case names; U3's surface gains `serve.rs` (comment only) and `rows.rs`.
