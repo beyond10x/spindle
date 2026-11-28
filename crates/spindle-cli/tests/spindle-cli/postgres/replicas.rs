@@ -1419,6 +1419,48 @@ fn a_reset_of_a_leased_run_rewrites_the_record() {
     assert_eq!(ends, 2, "{}", leader.printed());
 }
 
+/// Round 2 (F1): the record is looked for in every component's lease table; one found in two is
+/// refused before the run serves a request, naming both tables, and neither row is touched.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_seed_recorded_in_two_lease_tables_is_refused_before_serving() {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let seed = seed_file(directory.path(), "seed.json", &["s1"]);
+    let schema = schema();
+    let mut first = Replica::start(seeded(&environment, &schema, &seed));
+    assert!(
+        first
+            .line_by("ended: 1 sent, 1 applied", Instant::now() + ANSWER)
+            .is_some(),
+        "{}",
+        first.printed()
+    );
+    first.stop();
+    super::sql(&[format!(
+        "INSERT INTO {schema}.spindle_ledger_p_lease (tenant_id, row_key, body) SELECT \
+         tenant_id, row_key, body FROM {schema}.spindle_board_p_lease WHERE row_key = 'seed'"
+    )]);
+    let record = recorded(&schema, "board").expect("the seed is recorded");
+    assert_eq!(recorded(&schema, "ledger"), Some(record.clone()));
+
+    let refused = super::refused(seeded(&environment, &schema, &seed));
+    assert_eq!(refused.status.code(), Some(1), "{}", refused.stderr);
+    assert!(
+        refused
+            .stderr
+            .contains(&format!("{schema}.spindle_board_p_lease"))
+            && refused
+                .stderr
+                .contains(&format!("{schema}.spindle_ledger_p_lease")),
+        "the refusal names both tables: {}",
+        refused.stderr
+    );
+    assert!(!refused.stderr.contains("ended:"), "{}", refused.stderr);
+    assert_eq!(recorded(&schema, "board"), Some(record.clone()));
+    assert_eq!(recorded(&schema, "ledger"), Some(record));
+}
+
 /// D6 A: a leased run without `--seed` on a store with a record.
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]

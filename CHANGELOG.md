@@ -57,7 +57,10 @@ are Spindle's releases.
   component's `<prefix>_p_lease` table, `{"digest", "done", "rejected"}`, which `store migrate`
   already creates: written by the lease thread on the lease connection only while the lease row
   names the run's token and session (`spindle_kernel::Lease::seed_record`, `record_seed`,
-  `forget_seed`), so no connection is added. With no record and no row the whole seed is sent; with
+  `forget_seed`), so no connection is added. A start looks for it in every component's lease
+  table, so a record kept before a component that sorts first was added is found, and the next
+  write moves it to the first one's in one statement under both leases (`Lease::move_seed`); a
+  record in two tables exits 1 naming them. With no record and no row the whole seed is sent; with
   the same file part done the rest is sent, rejected entries first; once done, one line names the
   store and nothing is sent; another file exits 1 before the run serves a request, naming both
   digests, unless the store holds no row. A store with rows and no record (seeded by 0.26.0, or

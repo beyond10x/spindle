@@ -313,7 +313,11 @@ The process that leads writes it after each entry, on the connection that holds 
 write lands only while the lease row still names that process's token and database session. Every
 process that leads decides from it, whatever lease token it took: a restart of the only process, a
 standby that takes over, and a process that leads after one that took the leases and never seeded
-(one that exited 3 on a misfit) alike. The rules above hold, with the store in place of the state:
+(one that exited 3 on a misfit) alike. A start looks for the record in every component's lease
+table, so a record kept before a later specification added a component that sorts first is still
+found; the next write moves it to the first component's table, in one statement under both leases.
+A record found in two tables stops the start with exit 1, naming them. The rules above hold, with
+the store in place of the state:
 
 - With the same seed file and every entry done, `run` prints that the seed already ran on the
   PostgreSQL store, naming the row `seed` and its table, and sends no entry.

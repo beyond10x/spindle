@@ -278,6 +278,9 @@ pub(crate) struct Leases {
     held: BTreeMap<String, u64>,
     /// The trouble of the lease connection last told on stderr ([`Leases::told`]).
     told: Option<String>,
+    /// The component other than the first whose lease table the seed's record was read from,
+    /// which the next write moves it out of ([`Leases::answer`]).
+    elsewhere: Option<String>,
 }
 
 impl Leases {
@@ -303,6 +306,7 @@ impl Leases {
             components,
             held: BTreeMap::new(),
             told: None,
+            elsewhere: None,
         }))
     }
 
@@ -410,11 +414,7 @@ impl Leases {
                 .lease
                 .statement_wait()
                 .saturating_mul(u32::try_from(self.components.len() + 2).unwrap_or(u32::MAX)),
-            table: format!(
-                "{}.{}_p_lease",
-                self.schema,
-                spindle_kernel::postgres_prefix(&first)
-            ),
+            table: self.table_of(&first),
         };
         let noted = Arc::clone(&shared);
         let thread = std::thread::Builder::new()
@@ -430,14 +430,24 @@ impl Leases {
         })
     }
 
-    /// Answers `ask` about the seed's record, in the lease table of the first component in name
-    /// order, under the token this run took its lease at (`story:seed-under-a-lease`, D3 A, D4 A).
+    /// Answers `ask` about the seed's record (`story:seed-under-a-lease`, D3 A, D4 A). It is kept
+    /// in the lease table of the first component in name order, under the token this run took
+    /// that lease at. A read looks in every component's lease table, a table not created yet
+    /// holding none, so a record a run of an earlier specification kept under another first
+    /// component is found; one found in more than one table is refused, naming them. The next
+    /// write moves a record found elsewhere into the first component's table, in one statement
+    /// under both leases; a removal removes it from every table.
     fn answer(&mut self, ask: Ask) {
-        let held = self
+        let held: Vec<(String, u64)> = self
             .components
-            .first()
-            .and_then(|first| self.held.get(first).map(|token| (first.clone(), *token)));
-        let Some((first, token)) = held else {
+            .iter()
+            .filter_map(|component| {
+                self.held
+                    .get(component)
+                    .map(|token| (component.clone(), *token))
+            })
+            .collect();
+        let Some((first, token)) = held.first().cloned() else {
             let none = "this run holds no lease".to_owned();
             match ask {
                 Ask::Stop => {}
@@ -449,27 +459,78 @@ impl Leases {
         match ask {
             Ask::Stop => {}
             Ask::Read(reply) => {
-                let read = self
-                    .lease
-                    .seed_record(&first)
-                    .map_err(|error| error.to_string());
-                let _ = reply.send(read);
+                let _ = reply.send(self.read(&held));
             }
             Ask::Write(body, reply) => {
-                let written = self
-                    .lease
-                    .record_seed(&first, token, &body)
-                    .map_err(|error| error.to_string());
-                let _ = reply.send(written);
+                let written = match self.elsewhere.clone() {
+                    Some(old) => {
+                        let old_token = self.held.get(&old).copied().unwrap_or_default();
+                        let moved = self
+                            .lease
+                            .move_seed((&old, old_token), (&first, token), &body);
+                        if moved.is_ok() {
+                            self.elsewhere = None;
+                        }
+                        moved
+                    }
+                    None => self.lease.record_seed(&first, token, &body),
+                };
+                let _ = reply.send(written.map_err(|error| error.to_string()));
             }
             Ask::Forget(reply) => {
-                let removed = self
-                    .lease
-                    .forget_seed(&first, token)
-                    .map_err(|error| error.to_string());
+                let mut removed = Ok(());
+                for (component, token) in &held {
+                    if let Err(error) = self.lease.forget_seed(component, *token) {
+                        removed = Err(error.to_string());
+                        break;
+                    }
+                }
+                if removed.is_ok() {
+                    self.elsewhere = None;
+                }
                 let _ = reply.send(removed);
             }
         }
+    }
+
+    /// The seed's record, looked for in the lease table of each component of `held`, in name
+    /// order; notes where it was found when that is not the first component's table.
+    fn read(&mut self, held: &[(String, u64)]) -> Result<Option<serde_json::Value>, String> {
+        let mut found = Vec::new();
+        for (component, _) in held {
+            if let Some(body) = self
+                .lease
+                .seed_record(component)
+                .map_err(|error| error.to_string())?
+            {
+                found.push((component.clone(), body));
+            }
+        }
+        if found.len() > 1 {
+            let tables: Vec<String> = found
+                .iter()
+                .map(|(component, _)| self.table_of(component))
+                .collect();
+            return Err(format!(
+                "the seed is recorded in more than one lease table, {}: keep the row `seed` of \
+                 one of them and remove the others, so a start knows which entries are done",
+                tables.join(" and ")
+            ));
+        }
+        let first = held.first().map(|(component, _)| component.as_str());
+        Ok(found.pop().map(|(component, body)| {
+            self.elsewhere = (Some(component.as_str()) != first).then_some(component);
+            body
+        }))
+    }
+
+    /// The lease table of `component`, `<schema>.<prefix>_p_lease`.
+    fn table_of(&self, component: &str) -> String {
+        format!(
+            "{}.{}_p_lease",
+            self.schema,
+            spindle_kernel::postgres_prefix(component)
+        )
     }
 
     /// Renews every lease held until `asked` reads [`Ask::Stop`], then releases them; notes on
