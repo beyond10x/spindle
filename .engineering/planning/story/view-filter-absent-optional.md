@@ -2,11 +2,13 @@
 format: aep.planning-md/3
 id: story:view-filter-absent-optional
 kind: story
-status: draft
+status: archived
 title: A view filter over an unwritten optional field leaves the row out as ESS does
 relations:
 - serves: vision:spindle
-revision: 1
+revision: 2
+transitions:
+- {from: "draft", to: "archived", at: "2026-11-28T03:58:04Z", actor: "human:operator", revision: 2}
 ---
 ## Outcome
 
@@ -34,3 +36,13 @@ the unset optional as not matching, so its conformance scenarios expect the row 
 - A served view with such a filter answers 200 with the row left out where it answered 501 before;
   red first at the base.
 - A filter whose Unknown does not come from an absent field still answers 501 as today.
+
+## Closed
+
+Archived 2026-11-28 on ESS's answer (question VF-1): a view filter whose condition is Unknown
+makes the read undetermined, by ESS's written rule (`docs/design/conditional-aggregate-measures.md`
+lines 37 and 125 in the ESS repository: Unknown is never silently false). ESS's interpreter refuses
+such a read (`ess-conformance` `src/interpret/views.rs:207-215` at 0.99.2), and spindle's `501`
+matches it. An author writes `defined(<field>) and <condition>` where an unset field should leave
+the row out. `only_absent` stays a rule of command row selection; ESS checks whether its generated
+view query, which drops such a row, disagrees with the rule.
