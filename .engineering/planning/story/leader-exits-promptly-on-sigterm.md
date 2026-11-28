@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:leader-exits-promptly-on-sigterm
 kind: story
-status: draft
+status: active
 title: A leader on PostgreSQL exits promptly on SIGTERM under load
 relations:
 - serves: vision:spindle
@@ -34,7 +34,10 @@ scope:
   path: crates/spindle-kernel/tests/spindle-kernel/postgres.rs
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 4
+revision: 6
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-28T04:16:53Z", actor: "human:operator", revision: 5, decided_on: {"recorded":{"review_outcome":11}}}
+- {from: "proposed", to: "active", at: "2026-11-28T04:16:53Z", actor: "human:operator", revision: 6, decided_on: {"recorded":{"review_outcome":11}}}
 ---
 ## Outcome
 

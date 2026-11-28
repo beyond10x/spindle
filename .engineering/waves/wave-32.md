@@ -1,6 +1,6 @@
 # Wave 32
 
-**Proposed.** Planned on the operator's pick of 2026-11-28 (option A, relayed by the host
+**In progress.** Planned on the operator's pick of 2026-11-28 (option A, relayed by the host
 operator). All stories serve `vision:spindle`.
 
 Integration branch `wave/32`, forked from `main` after `integration/2026-11-28-1` lands there

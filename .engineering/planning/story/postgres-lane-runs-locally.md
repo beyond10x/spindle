@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:postgres-lane-runs-locally
 kind: story
-status: draft
+status: active
 title: The PostgreSQL lane starts its own cluster with the CI's options
 relations:
 - serves: vision:spindle
@@ -21,7 +21,10 @@ scope:
   path: scripts/postgres-lane.sh
 - confidence: inferred
   path: scripts/postgres-lane.test.sh
-revision: 4
+revision: 6
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-28T04:16:53Z", actor: "human:operator", revision: 5, decided_on: {"recorded":{"review_outcome":11}}}
+- {from: "proposed", to: "active", at: "2026-11-28T04:16:53Z", actor: "human:operator", revision: 6, decided_on: {"recorded":{"review_outcome":11}}}
 ---
 ## Outcome
 

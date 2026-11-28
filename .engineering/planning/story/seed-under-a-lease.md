@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:seed-under-a-lease
 kind: story
-status: draft
+status: active
 title: A run with a lease seeds once whatever token it took
 relations:
 - serves: vision:spindle
@@ -36,7 +36,10 @@ scope:
   path: website/docs/concepts/environment-and-admission.md
 - confidence: cited
   path: website/docs/reference/cli.md
-revision: 4
+revision: 6
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-28T04:16:54Z", actor: "human:operator", revision: 5, decided_on: {"recorded":{"review_outcome":11}}}
+- {from: "proposed", to: "active", at: "2026-11-28T04:16:54Z", actor: "human:operator", revision: 6, decided_on: {"recorded":{"review_outcome":11}}}
 ---
 ## Outcome
 
