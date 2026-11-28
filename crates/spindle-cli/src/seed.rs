@@ -43,9 +43,9 @@
 //! beside this thread (`story:seed-readiness`): `GET /__spindle/seed` answers it, `running` with
 //! the entries left or `ended`, with that run's counts as its end line prints them, and
 //! `GET /__spindle/ready` answers `200` only once it reads `ended`. It reads `ended` once the last
-//! entry's submission has returned, and from the first request where the `--state` marker records
-//! every entry done; a reset with no world reads `running` from before it empties the stores until
-//! its seed run ends.
+//! entry's submission has returned, before the end line is printed, and from the first request
+//! where the `--state` marker records every entry done; a reset with no world reads `running` from
+//! before it empties the stores until its seed run ends.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Seek, Write};
@@ -640,12 +640,18 @@ impl Seeding {
         self.end();
     }
 
-    /// Prints the end line of the run under way once: the counts of this run alone.
+    /// Prints the end line of the run under way once: the counts of this run alone. The state is
+    /// published ended first, so a reader that saw the end line reads `ended` and `200` on
+    /// `GET /__spindle/seed` and `GET /__spindle/ready` (`story:readiness-test-steady-under-load`).
     fn end(&mut self) {
         if self.ended {
             return;
         }
         self.ended = true;
+        if self.rejected > 0 {
+            self.failed = true;
+        }
+        self.publish();
         let SeedCounts {
             sent,
             applied,
@@ -667,10 +673,6 @@ impl Seeding {
             ),
         )
         .write();
-        if rejected > 0 {
-            self.failed = true;
-        }
-        self.publish();
     }
 
     /// Publishes the state of the seed run under way, read beside this thread by
