@@ -755,8 +755,10 @@ fn a_body_arriving_steadily_is_not_refused_as_stalled() {
 
 /// A client still sending its body after its `408` does not hold its place: hyper gives up the
 /// rest of the body and closes the connection once the `408` is written. With a cap of 1, a head
-/// read time of 1 s and a client trickling 10 bytes every 50 ms into a body of 100,000 bytes, a
-/// second client is answered within 2.5 s.
+/// read time of 1 s and a client trickling 10 bytes every 50 ms into a body of 100,000 bytes,
+/// never pausing, the `408` comes at the whole-body bound of 10 s, and a second client is
+/// answered within 12.5 s.
+// Coordinator, round 3, decision 1: only a pause past head_read or 10 s in all refuses a body.
 #[test]
 fn a_client_still_sending_its_body_after_the_408_does_not_hold_the_cap() {
     let limits = Limits {
@@ -775,7 +777,7 @@ fn a_client_still_sending_its_body_after_the_408_does_not_hold_the_cap() {
     )
     .expect("a head and part of a body are written");
     let trickle = thread::spawn(move || {
-        let until = Instant::now() + Duration::from_secs(4);
+        let until = Instant::now() + Duration::from_secs(14);
         while Instant::now() < until {
             if trickling.write_all(b"xxxxxxxxxx").is_err() {
                 return true;
@@ -790,7 +792,7 @@ fn a_client_still_sending_its_body_after_the_408_does_not_hold_the_cap() {
     waiting
         .write_all(get(address, LIVE).as_bytes())
         .expect("the request is written");
-    let answered = plain_answer(&mut waiting, DUE);
+    let answered = plain_answer(&mut waiting, Duration::from_secs(13));
     let took = started.elapsed();
     assert_eq!(
         answered.map(|(status, _)| status),
@@ -798,7 +800,7 @@ fn a_client_still_sending_its_body_after_the_408_does_not_hold_the_cap() {
         "a client trickling its body past its 408 held the only place for {took:?}"
     );
     assert!(
-        took < Duration::from_millis(2500),
+        took < Duration::from_millis(12_500),
         "the client behind a trickling body waited {took:?}"
     );
     assert!(
