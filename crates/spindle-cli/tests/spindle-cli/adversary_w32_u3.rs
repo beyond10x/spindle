@@ -545,4 +545,147 @@ mod postgres {
             standby.printed()
         );
     }
+
+    /// Starts a read of `target` on `address` on a thread: its status and when it answered.
+    fn read_beside(
+        address: SocketAddr,
+        target: &'static str,
+    ) -> (
+        mpsc::Receiver<(Instant, u16, Value)>,
+        std::thread::JoinHandle<()>,
+    ) {
+        let (answered, answer) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let (status, body) = call(address, "GET", target, None);
+            let _ = answered.send((Instant::now(), status, body));
+        });
+        (answer, thread)
+    }
+
+    /// Round 2: a run standing by that takes the leases leads through the listener it stood by
+    /// on ([`spindle_ingress::Listener::lead`]), whose reader the fix also stops by the signal's
+    /// flag. Once it leads and writes t2 behind another session's open transaction, a
+    /// `GET /api/events` under way when SIGTERM comes does not hold its exit past the 5 s bound
+    /// (no egress, no request waiting), and is answered `503`.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_standby_that_leads_exits_within_the_bound_with_an_events_read_under_way() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = plain_environment(directory.path());
+        let schema = schema();
+        let mut leader = Replica::start(run(&environment, &schema));
+        leader.ready_by(Instant::now() + ANSWER);
+        let mut standby = Replica::start(run(&environment, &schema));
+        let (status, answer) = leader.open("t1");
+        assert_eq!(status, 201, "{answer}");
+        let _ = leader.child.kill();
+        let _ = leader.child.wait();
+        assert!(
+            standby
+                .line_by(TOOK, Instant::now() + Duration::from_secs(10))
+                .is_some(),
+            "the standby took no lease: {}",
+            standby.printed()
+        );
+        standby.ready_by(Instant::now() + ANSWER);
+
+        let holder = Holder::open();
+        let (status, answer) = standby.open("t2");
+        assert_eq!(status, 201, "the new leader writes t2: {answer}");
+        let (answer, reader) = read_beside(standby.address, "/api/events");
+        let early = answer.recv_timeout(Duration::from_millis(500));
+        assert!(
+            early.is_err(),
+            "the events read waits for t2, which the open transaction withholds: {early:?}"
+        );
+        let signalled = standby.terminate();
+        holder.end_at(signalled + ALLOWANCE + Duration::from_secs(1));
+        let exit = standby.exited_by(signalled + Duration::from_secs(12));
+        let read = answer.recv_timeout(Duration::from_secs(5)).ok();
+        let _ = reader.join();
+        holder.join();
+        let (status, exited) = exit.unwrap_or_else(|| {
+            panic!(
+                "the new leader had not exited 12 s after SIGTERM: {}",
+                standby.printed()
+            )
+        });
+        let took = exited.saturating_duration_since(signalled);
+        eprintln!("the new leader exited {took:?} after SIGTERM; the read answered {read:?}");
+        assert!(
+            took <= ALLOWANCE,
+            "the new leader exited {took:?} after SIGTERM, past {ALLOWANCE:?}: {}",
+            standby.printed()
+        );
+        assert_eq!(status.code(), Some(143), "{}", standby.printed());
+        assert_eq!(
+            read.map(|(_, status, _)| status),
+            Some(503),
+            "the read under way is given up and answered 503"
+        );
+    }
+
+    /// Round 2, the remaining waits for a read slot: with `database_pool` 2 the board's reading
+    /// handle runs one read at a time. An events read waiting for the feed behind another
+    /// session's open transaction holds that slot, and a view read (`GET /tasks`) waits behind it
+    /// for its turn. Once SIGTERM comes the events read gives its slot up, the view read scans,
+    /// and the run exits within the 5 s bound.
+    #[test]
+    #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+    fn a_view_read_waiting_for_a_slot_behind_an_events_read_does_not_hold_the_exit() {
+        let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+        let environment = plain_environment(directory.path());
+        let schema = schema();
+        let mut command = run(&environment, &schema);
+        command.env("SPINDLE_SETTING_DATABASE_POOL", "2");
+        let mut leader = Replica::start(command);
+        leader.ready_by(Instant::now() + ANSWER);
+        let (status, answer) = leader.open("t1");
+        assert_eq!(status, 201, "{answer}");
+
+        let holder = Holder::open();
+        let (status, answer) = leader.open("t2");
+        assert_eq!(
+            status, 201,
+            "t2 commits behind the open transaction: {answer}"
+        );
+        let (events, events_thread) = read_beside(leader.address, "/api/events");
+        std::thread::sleep(Duration::from_millis(300));
+        let (view, view_thread) = read_beside(leader.address, "/tasks");
+        let early = view.recv_timeout(Duration::from_millis(500));
+        assert!(
+            early.is_err(),
+            "the view read waits for the slot the events read holds: {early:?}"
+        );
+        let signalled = leader.terminate();
+        holder.end_at(signalled + ALLOWANCE + Duration::from_secs(1));
+        let exit = leader.exited_by(signalled + Duration::from_secs(12));
+        let viewed = view.recv_timeout(Duration::from_secs(5)).ok();
+        let read = events.recv_timeout(Duration::from_secs(5)).ok();
+        let _ = view_thread.join();
+        let _ = events_thread.join();
+        holder.join();
+        let (status, exited) = exit.unwrap_or_else(|| {
+            panic!(
+                "the run had not exited 12 s after SIGTERM: {}",
+                leader.printed()
+            )
+        });
+        let took = exited.saturating_duration_since(signalled);
+        eprintln!(
+            "the leader exited {took:?} after SIGTERM; the view answered {:?} {:?}; the events \
+             read {:?}",
+            viewed
+                .as_ref()
+                .map(|(at, _, _)| at.saturating_duration_since(signalled)),
+            viewed.as_ref().map(|(_, status, body)| (status, body)),
+            read.as_ref().map(|(_, status, _)| status)
+        );
+        assert!(
+            took <= ALLOWANCE,
+            "the leader exited {took:?} after SIGTERM, past {ALLOWANCE:?}: {}",
+            leader.printed()
+        );
+        assert_eq!(status.code(), Some(143), "{}", leader.printed());
+    }
 }

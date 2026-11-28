@@ -19,6 +19,7 @@ mod adversary_w28_u4;
 mod adversary_w28_u5;
 mod adversary_w31_u3;
 mod adversary_w31_u8;
+mod adversary_w32_u3;
 mod always_and_key_routes;
 mod binding_shapes;
 mod close;
