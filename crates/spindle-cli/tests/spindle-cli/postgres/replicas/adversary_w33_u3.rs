@@ -1114,3 +1114,98 @@ fn a_lost_lease_during_a_reset_slower_than_a_term_still_puts_the_removed_compone
          putting audit's record back: {body}\n{printed}"
     );
 }
+
+/// A process of release 1 standing by, which asks for `audit`'s lease every 50 ms, the first in
+/// its name order, until `stop` is set: answers its handle with the token it took and what
+/// `audit`'s table held the moment it took it, `None` where it took nothing.
+type Standby = (spindle_kernel::Lease, Option<(u64, Option<Value>)>);
+
+fn standing_by_on_audit(
+    schema: String,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> std::thread::JoinHandle<Standby> {
+    std::thread::spawn(move || {
+        let mut old = lease_handle(&schema);
+        let audit = lease_table(&schema, "audit");
+        while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+            if let Some(token) = old.take("audit").expect("the lease is read") {
+                let found = record_in(&audit);
+                return (old, Some((token, found)));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        (old, None)
+    })
+}
+
+/// Round 6. After a lost lease the lease thread keeps renewing the leases the reset's claim took
+/// (`Leases::closing`), so a standby of release 1, which asks for `audit`'s lease first in its
+/// name order, cannot take it before the reset has put the record back. The put-back is fenced
+/// by the lease row's token and session alone, not its end, so a case where nobody asks for the
+/// lease (round 5's) passes whether or not the lease ran out meanwhile; only a process that takes
+/// it shows the loss. Release 1 leaves `audit`'s record at `done` 1 of 3; a run of release 2
+/// without a seed, on a lease of 1 s, resets while a session holds `board`'s tables for 2.5 s;
+/// once the claim removed `audit`'s record, another process's take moves `board`'s token on, and
+/// the standby starts asking. The reset waits for `board`'s tables up to 2 s, past the term of
+/// `audit`'s lease. Green on the unit's head; red with the renewal of claimed leases removed from
+/// `Leases::closing`: the standby takes `audit`'s lease about 1 s after the loss, with the record
+/// removed, and the put-back is refused. About 5 s on the lane.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn after_a_lost_lease_a_standby_of_the_old_release_takes_the_removed_components_lease_only_with_its_record_back()
+ {
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let environment = environment(directory.path());
+    let whole = seed_file(directory.path(), "seed.json", &["s1", "s2", "s3"]);
+    let schema = super::super::schema();
+    let part = left_part_done_in_audit(directory.path(), &environment, &schema, &whole);
+    let audit = lease_table(&schema, "audit");
+    let tables = store_tables(&schema, "board");
+
+    let mut unseeded = Replica::start(short_leased(&environment, &schema));
+    unseeded.ready_by(Instant::now() + super::ANSWER);
+    let lock = held_for(&tables, 2.5);
+    let address = unseeded.address;
+    let reset = std::thread::spawn(move || reset_within(address, None));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while record_in(&audit).is_some() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let claimed = record_in(&audit).is_none();
+    taken_over(&lease_table(&schema, "board"));
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let standby = standing_by_on_audit(schema.clone(), stop.clone());
+    let (status, body) = reset.join().expect("the reset is answered");
+    lock.join().expect("the lock ends");
+    let exited = unseeded.exit_within(super::ANSWER);
+    // The release the run makes after the put-back is taken within a few polls.
+    std::thread::sleep(Duration::from_millis(200));
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    let (mut old, took) = standby.join().expect("the standby asked");
+    let printed = unseeded.printed();
+    let after = record_in(&audit);
+    if let Some((token, _)) = &took {
+        old.release("audit", *token)
+            .expect("the standby gives the lease back");
+    }
+    assert!(
+        claimed,
+        "the claim removed audit's record: {status} {body}\n{printed}"
+    );
+    assert_ne!(status, 200, "the reset emptied no store: {body}\n{printed}");
+    if let Some((token, found)) = &took {
+        assert_eq!(
+            found.as_ref(),
+            Some(&part),
+            "a standby of release 1 took audit's lease (token {token}) while the record removed \
+             for the reset of the run that lost its own lease was not back; the reset answered \
+             {status} (exit {exited:?}): {body}\n{printed}"
+        );
+    }
+    assert_eq!(
+        after,
+        Some(part),
+        "the reset answered {status} and audit's record is not back (exit {exited:?}): \
+         {body}\n{printed}"
+    );
+}
