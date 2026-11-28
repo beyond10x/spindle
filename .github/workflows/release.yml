@@ -685,9 +685,10 @@ jobs:
   # The manifest list of the two checked images, tagged <version> once. A tag already in ghcr.io
   # that lists exactly these two images is a re-run or backfill and is left as it is; one listing
   # anything else is refused, never moved, and so is a tag ghcr.io cannot say it lacks. The list's
-  # digest becomes the IMAGES asset.
+  # digest becomes the IMAGES asset, and the list is signed by that digest with cosign (keyless,
+  # this workflow's identity), never by its tag.
   image-manifest:
-    name: Tag the image's manifest list
+    name: Tag and sign the image's manifest list
     if: ${{ github.event_name != 'pull_request' && needs.provenance.outputs.containerfile == 'true' }}
     needs: [provenance, gate, image-push]
     runs-on: ubuntu-24.04
@@ -695,6 +696,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     env:
       VERSION: ${{ needs.provenance.outputs.version }}
     steps:
@@ -752,6 +754,29 @@ jobs:
           sh scripts/release-linux-binary.sh manifest-list "$(cat images/IMAGES)" "$amd64" "$arm64" | tee -a "$GITHUB_STEP_SUMMARY"
           (cd images && sha256sum IMAGES > IMAGES.sha256)
 
+      - name: Install cosign
+        env:
+          COSIGN_VERSION: '3.1.6'
+          COSIGN_SHA256: 318a99ade4156a0c4113aa983b46c0a0830fa7896a096c63121ee47b610a94c6
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 --output "$RUNNER_TEMP/cosign-linux-amd64" \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "$COSIGN_SHA256  $RUNNER_TEMP/cosign-linux-amd64" | sha256sum --check --strict
+          install -D -m 755 "$RUNNER_TEMP/cosign-linux-amd64" "$RUNNER_TEMP/cosign-bin/cosign"
+          echo "$RUNNER_TEMP/cosign-bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/cosign-bin/cosign" version
+
+      - name: Sign the manifest list by its digest
+        run: |
+          set -euo pipefail
+          line="$(cat images/IMAGES)"
+          digest="${line##*@}"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$line" = "${IMAGE}:${VERSION}@${digest}"
+          cosign sign --yes "${IMAGE}@${digest}"
+          echo "Signed ${IMAGE}@${digest}, the manifest list of ${IMAGE}:${VERSION}, by its digest." | tee -a "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: images
@@ -761,18 +786,22 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  publish:
-    name: Upload binaries to the release page
+  # The only job with attestations: write, and with image-manifest the only one with id-token:
+  # write; it runs on no pull request. It checks each artifact against the hash its job wrote,
+  # writes SHA256SUMS, signs each asset with cosign (keyless, this workflow's identity) into
+  # <asset>.sigstore.json, attests each asset's and the image's build provenance, and hands the
+  # assets and their bundles to publish.
+  sign:
+    name: Sign and attest the release assets
     if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.gate.result == 'success' && needs.build.result == 'success' && needs.sbom.result == 'success' && (needs.image-manifest.result == 'success' || (needs.provenance.outputs.containerfile == 'false' && needs.image-manifest.result == 'skipped')) }}
     needs: [provenance, gate, build, sbom, image-manifest]
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 20
     permissions:
-      contents: write
+      contents: read
+      id-token: write
+      attestations: write
     env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      TAG: ${{ needs.provenance.outputs.tag }}
       VERSION: ${{ needs.provenance.outputs.version }}
       IMAGES_EXPECTED: ${{ needs.provenance.outputs.containerfile }}
     steps:
@@ -823,6 +852,102 @@ jobs:
           done
           test "$(wc -l < SHA256SUMS)" -eq "${#files[@]}"
 
+      - name: Install cosign
+        env:
+          COSIGN_VERSION: '3.1.6'
+          COSIGN_SHA256: 318a99ade4156a0c4113aa983b46c0a0830fa7896a096c63121ee47b610a94c6
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 --output "$RUNNER_TEMP/cosign-linux-amd64" \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "$COSIGN_SHA256  $RUNNER_TEMP/cosign-linux-amd64" | sha256sum --check --strict
+          install -D -m 755 "$RUNNER_TEMP/cosign-linux-amd64" "$RUNNER_TEMP/cosign-bin/cosign"
+          echo "$RUNNER_TEMP/cosign-bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/cosign-bin/cosign" version
+
+      # Each asset SHA256SUMS lists, and SHA256SUMS itself, signed into <asset>.sigstore.json; the
+      # same list, SHA256SUMS included, is the provenance attestation's subjects.
+      - name: Sign each asset with cosign
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(awk '{ print $2 }' SHA256SUMS)
+          test "${#assets[@]}" -eq "$(wc -l < SHA256SUMS)"
+          assets+=(SHA256SUMS)
+          for file in "${assets[@]}"; do
+            test -s "$file"
+            cosign sign-blob --yes --bundle "$file.sigstore.json" "$file" > /dev/null
+            test -s "$file.sigstore.json"
+            echo "Signed $file into $file.sigstore.json." | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+          { cat SHA256SUMS; sha256sum SHA256SUMS; } > "$RUNNER_TEMP/subjects.sha256"
+          test "$(wc -l < "$RUNNER_TEMP/subjects.sha256")" -eq "${#assets[@]}"
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: ${{ runner.temp }}/subjects.sha256
+
+      - id: image
+        name: The image's digest from IMAGES
+        if: ${{ needs.provenance.outputs.containerfile == 'true' }}
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          line="$(cat IMAGES)"
+          digest="${line##*@}"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$line" = "${IMAGE}:${VERSION}@${digest}"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      # The image's provenance, by the manifest list's digest, kept in the repository's
+      # attestations; nothing is pushed to the registry.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: ${{ needs.provenance.outputs.containerfile == 'true' }}
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: false
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release
+          path: dist
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Upload binaries to the release page
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.gate.result == 'success' && needs.build.result == 'success' && needs.sbom.result == 'success' && (needs.image-manifest.result == 'success' || (needs.provenance.outputs.containerfile == 'false' && needs.image-manifest.result == 'skipped')) && needs.sign.result == 'success' }}
+    needs: [provenance, gate, build, sbom, image-manifest, sign]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.provenance.outputs.tag }}
+      VERSION: ${{ needs.provenance.outputs.version }}
+      IMAGES_EXPECTED: ${{ needs.provenance.outputs.containerfile }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release
+          path: dist
+
+      - name: Install cosign
+        env:
+          COSIGN_VERSION: '3.1.6'
+          COSIGN_SHA256: 318a99ade4156a0c4113aa983b46c0a0830fa7896a096c63121ee47b610a94c6
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 --output "$RUNNER_TEMP/cosign-linux-amd64" \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "$COSIGN_SHA256  $RUNNER_TEMP/cosign-linux-amd64" | sha256sum --check --strict
+          install -D -m 755 "$RUNNER_TEMP/cosign-linux-amd64" "$RUNNER_TEMP/cosign-bin/cosign"
+          echo "$RUNNER_TEMP/cosign-bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/cosign-bin/cosign" version
+
       - name: Wait for the release page of the tag
         run: |
           set -euo pipefail
@@ -836,26 +961,133 @@ jobs:
           echo "No release page for $TAG after 30 minutes; nothing uploaded. Create the page through the bot and re-run this job." | tee -a "$GITHUB_STEP_SUMMARY"
           exit 1
 
-      - name: Upload the archives, the SBOM, IMAGES and SHA256SUMS
+      # Each asset SHA256SUMS lists, and SHA256SUMS, goes up with its bundle, or nothing does.
+      - name: Upload the archives, the SBOM, IMAGES, SHA256SUMS and the bundle of each
         working-directory: dist
         run: |
           set -euo pipefail
-          assets=(*.tar.gz *.cdx.json)
-          if [ "$IMAGES_EXPECTED" = true ]; then
-            assets+=(IMAGES)
-          fi
+          sha256sum --check --strict SHA256SUMS
+          mapfile -t assets < <(awk '{ print $2 }' SHA256SUMS)
+          test "${#assets[@]}" -eq "$(wc -l < SHA256SUMS)"
           assets+=(SHA256SUMS)
+          case "$IMAGES_EXPECTED ${assets[*]} " in
+            "true "*" IMAGES "*) ;;
+            "false "*" IMAGES "*) echo "IMAGES is in SHA256SUMS of a commit without an image; nothing uploaded." >&2; exit 1 ;;
+            "false "*) ;;
+            *) echo "IMAGES is missing, or whether the commit has an image is unknown ('$IMAGES_EXPECTED'); nothing uploaded." >&2; exit 1 ;;
+          esac
+          files=()
+          for asset in "${assets[@]}"; do
+            test -s "$asset"
+            test -s "$asset.sigstore.json"
+            files+=("$asset" "$asset.sigstore.json")
+          done
+          test "$(ls | wc -l)" -eq "${#files[@]}"
           existing="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
           conflict=0
-          for file in "${assets[@]}"; do
+          for file in "${files[@]}"; do
             if printf '%s\n' "$existing" | grep -Fxq "$file"; then
               echo "Asset $file is already on the release page of $TAG; refusing to replace it." | tee -a "$GITHUB_STEP_SUMMARY"
               conflict=1
             fi
           done
           test "$conflict" -eq 0
-          gh release upload "$TAG" "${assets[@]}"
+          gh release upload "$TAG" "${files[@]}"
           if [ "$IMAGES_EXPECTED" = true ]; then
             echo "Image: $(cat IMAGES)" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
           gh release view "$TAG" --json assets --jq '.assets[].name' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The assets as a consumer gets them, downloaded back from the release page: each verified
+      # with cosign against its bundle and with gh against its attestation, which must name the
+      # commit built; a copy of one archive with one byte changed must fail both; and the image by
+      # the line in IMAGES. The identity is this workflow at the tag's ref, or at refs/heads/main
+      # for a backfill (workflow_dispatch), whose certificates name the commit of main the workflow
+      # ran from (github.sha), not the tag's. Each command and its output go to the step summary;
+      # any check that fails fails the run.
+      - name: Verify the signatures and attestations of the assets on the release page and of the image
+        env:
+          COMMIT: ${{ needs.provenance.outputs.commit }}
+        run: |
+          set -euo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            push) ref="refs/tags/${TAG}"; commit="$COMMIT" ;;
+            workflow_dispatch) ref=refs/heads/main; commit="$GITHUB_SHA" ;;
+            *) echo "No signing identity for a $GITHUB_EVENT_NAME run; nothing verified." | tee -a "$GITHUB_STEP_SUMMARY" >&2; exit 1 ;;
+          esac
+          identity="https://github.com/${GH_REPO}/.github/workflows/release.yml@${ref}"
+          issuer=https://token.actions.githubusercontent.com
+          signer="${GH_REPO}/.github/workflows/release.yml"
+          summary="$GITHUB_STEP_SUMMARY"
+          checked() {
+            local status=0
+            { printf '\n```console\n$'; printf ' %s' "$@"; printf '\n'; } >> "$summary"
+            "$@" > "$RUNNER_TEMP/checked.out" 2>&1 || status=$?
+            cat "$RUNNER_TEMP/checked.out" >> "$summary"
+            printf 'exit %s\n```\n' "$status" >> "$summary"
+            return "$status"
+          }
+          attested() {
+            local status=0
+            printf '\n```console\n$ gh attestation verify %s --repo %s --signer-workflow %s --format json\n' "$1" "$GH_REPO" "$signer" >> "$summary"
+            gh attestation verify "$1" --repo "$GH_REPO" --signer-workflow "$signer" --format json \
+              > "$RUNNER_TEMP/attested.json" 2> "$RUNNER_TEMP/attested.err" || status=$?
+            cat "$RUNNER_TEMP/attested.err" >> "$summary"
+            if [ "$status" -eq 0 ]; then
+              jq -r '.[].verificationResult.signature.certificate | "signed by \(.buildSignerURI) at \(.sourceRepositoryDigest)"' \
+                "$RUNNER_TEMP/attested.json" >> "$summary" 2>&1 || status=1
+              if ! jq -e --arg commit "$commit" 'length > 0 and all(.[]; .verificationResult.signature.certificate.sourceRepositoryDigest == $commit)' \
+                "$RUNNER_TEMP/attested.json" > /dev/null 2>&1; then
+                echo "The attestation does not name the commit $commit." >> "$summary"
+                status=1
+              fi
+            fi
+            printf 'exit %s\n```\n' "$status" >> "$summary"
+            return "$status"
+          }
+          echo "Identity: $identity; commit $commit." >> "$summary"
+          failed=0
+          verify="$RUNNER_TEMP/verify"
+          rm -rf "$verify"
+          mkdir -p "$verify"
+          gh release download "$TAG" --dir "$verify"
+          cd "$verify"
+          checked sha256sum --check --strict SHA256SUMS || failed=1
+          mapfile -t assets < <(awk '{ print $2 }' SHA256SUMS)
+          assets+=(SHA256SUMS)
+          for file in "${assets[@]}"; do
+            checked cosign verify-blob --bundle "$file.sigstore.json" --certificate-identity "$identity" \
+              --certificate-oidc-issuer "$issuer" "$file" || failed=1
+            attested "$file" || failed=1
+          done
+          archive="$(awk '$2 ~ /\.tar\.gz$/ { print $2; exit }' SHA256SUMS)"
+          changed="$RUNNER_TEMP/changed/$archive"
+          mkdir -p "$RUNNER_TEMP/changed"
+          cp "$archive" "$changed"
+          offset=$(( $(wc -c < "$changed") / 2 ))
+          byte="$(od -An -tu1 -j "$offset" -N 1 "$changed" | tr -d ' ')"
+          printf "\\$(printf '%03o' $(( (byte + 1) % 256 )))" | dd of="$changed" bs=1 seek="$offset" count=1 conv=notrunc status=none
+          if cmp -s "$archive" "$changed"; then
+            echo "The copy of $archive is unchanged; the refusal is not checked." | tee -a "$summary"
+            failed=1
+          fi
+          echo "A copy of $archive with byte $offset changed must fail both checks:" >> "$summary"
+          if checked cosign verify-blob --bundle "$archive.sigstore.json" --certificate-identity "$identity" \
+            --certificate-oidc-issuer "$issuer" "$changed"; then
+            echo "cosign verified $archive with one byte changed." | tee -a "$summary"
+            failed=1
+          fi
+          if attested "$changed"; then
+            echo "gh verified the attestation of $archive with one byte changed." | tee -a "$summary"
+            failed=1
+          fi
+          if [ "$IMAGES_EXPECTED" = true ]; then
+            line="$(cat IMAGES)"
+            checked cosign verify --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" "$line" || failed=1
+            attested "oci://$line" || failed=1
+          fi
+          if [ "$failed" -ne 0 ]; then
+            echo "A signature or attestation check failed; see the summary." | tee -a "$summary" >&2
+            exit 1
+          fi
+          echo "Every asset on the release page of $TAG verifies against $identity." | tee -a "$summary"

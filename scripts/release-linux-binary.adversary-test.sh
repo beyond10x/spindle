@@ -582,7 +582,7 @@ job() {
 matrix=$(job build | sed -n 's/^ *- target: *//p' | sort)
 lists=$(sed -n 's/^ *targets="\(.*\)"$/\1/p' "$workflow")
 cases=$((cases + 1))
-[ "$(printf '%s\n' "$lists" | wc -l)" -eq 2 ] || fail "release.yml: expected the sbom and publish target lists, found: $lists"
+[ "$(printf '%s\n' "$lists" | wc -l)" -eq 2 ] || fail "release.yml: expected the sbom and sign target lists, found: $lists"
 printf '%s\n' "$lists" | while IFS= read -r list; do
     [ "$(printf '%s\n' $list | sort)" = "$matrix" ] || {
         echo "release-linux-binary-adversary: FAIL: release.yml: a target list ($list) is not the build matrix ($(echo $matrix))" >&2
@@ -633,7 +633,7 @@ cases=$((cases + 1))
     job image-manifest | grep -Fq 'packages: write' ||
     fail "release.yml: packages: write is not on the image-push and image-manifest jobs alone"
 for pair in "image gate" "image-push gate" "image-push image" "image-manifest gate" "image-manifest image-push" \
-    "publish image-manifest"; do
+    "publish image-manifest" "sign gate" "sign build" "sign sbom" "sign image-manifest" "publish sign"; do
     name=${pair% *}
     need=${pair#* }
     cases=$((cases + 1))
@@ -682,6 +682,19 @@ cases=$((cases + 1))
 cases=$((cases + 1))
 job publish | grep -Eq "^    if: .*needs\\.gate\\.result == 'success' && needs\\.build\\.result == 'success' && needs\\.sbom\\.result == 'success'" ||
     fail "release.yml: publish does not need a green gate, build and sbom: $publish_if"
+# sign, which publish waits for, runs on the same answers: a commit without a Containerfile is
+# signed without IMAGES, and nothing is signed past a failed gate, build or sbom.
+sign_if=$(job sign | sed -n 's/^    if: //p')
+cases=$((cases + 1))
+case $sign_if in
+    *"needs.gate.result == 'success' && needs.build.result == 'success' && needs.sbom.result == 'success' && (needs.image-manifest.result == 'success' || (needs.provenance.outputs.containerfile == 'false' && needs.image-manifest.result == 'skipped'))"*) ;;
+    *) fail "release.yml: sign does not run on a green gate, build and sbom, with IMAGES or for a commit without a Containerfile: $sign_if" ;;
+esac
+cases=$((cases + 1))
+case $publish_if in
+    *"needs.sign.result == 'success'"*) ;;
+    *) fail "release.yml: publish runs without a signed release: $publish_if" ;;
+esac
 
 mkdir -p "$work/steps"
 step_script provenance "Whether the commit builds an image" "$work/steps/containerfile.sh"
@@ -718,8 +731,9 @@ for version in "" "0.26" "v0.26.0"; do
     esac
 done
 
-# publish's checksum step on the downloaded artifacts, with and without IMAGES.
-step_script publish "Check each artifact against the hash its job wrote" "$work/steps/sums.sh"
+# sign's checksum step (publish's before story:release-artifacts-signed) on the downloaded
+# artifacts, with and without IMAGES.
+step_script sign "Check each artifact against the hash its job wrote" "$work/steps/sums.sh"
 sums() {
     expected=$1
     with=$2
@@ -728,7 +742,10 @@ sums() {
     for file in b10x-spindle-0.26.0-x86_64-unknown-linux-gnu.tar.gz b10x-spindle-0.26.0-aarch64-unknown-linux-gnu.tar.gz \
         b10x-spindle-0.26.0-x86_64-unknown-linux-musl.tar.gz b10x-spindle-0.26.0-aarch64-apple-darwin.tar.gz \
         b10x-spindle-0.26.0-x86_64-apple-darwin.tar.gz b10x-spindle-0.26.0.cdx.json $with; do
-        printf '%s\n' "$file" >"$work/dist/$file"
+        case $file in
+            IMAGES) printf 'ghcr.io/beyond10x/spindle:0.26.0@sha256:%s\n' "$hex" >"$work/dist/$file" ;;
+            *) printf '%s\n' "$file" >"$work/dist/$file" ;;
+        esac
         (cd "$work/dist" && sha256sum "$file" >"$file.sha256")
     done
     (cd "$work/dist" && VERSION=0.26.0 IMAGES_EXPECTED=$expected bash "$work/steps/sums.sh" >"$work/sums.out" 2>&1)
@@ -746,31 +763,166 @@ cases=$((cases + 1))
 cases=$((cases + 1))
 ! sums "" IMAGES || fail "release.yml: publish passes when it does not know whether the commit has an image"
 
-# publish's upload step with a gh stub: IMAGES goes up beside SHA256SUMS only where expected.
+# cosign: sign-blob writes the sha256 of the blob as its bundle (and fails on the asset named in
+# cosign-fail-on), verify-blob passes only a blob whose sha256 is the bundle's; sign and verify of
+# an image print it. Every call is appended to cosign-log.
+mkdir -p "$work/sigtools"
+printf '#!%s\nrec=%s\n' "$shell" "$work/rec" >"$work/sigtools/cosign"
+cat >>"$work/sigtools/cosign" <<'STUB'
+printf '%s\n' "$*" >>"$rec/cosign-log"
+command=$1
+shift
+bundle=""
+subject=""
+while [ $# -gt 0 ]; do
+    case $1 in
+        --bundle | --certificate-identity | --certificate-oidc-issuer) [ $# -ge 2 ] || exit 2; [ "$1" != --bundle ] || bundle=$2; shift 2 ;;
+        --*) shift ;;
+        *) subject=$1; shift ;;
+    esac
+done
+case $command in
+    sign-blob)
+        [ -n "$bundle" ] && [ -f "$subject" ] || exit 2
+        if [ -f "$rec/cosign-fail-on" ] && [ "$(basename "$subject")" = "$(cat "$rec/cosign-fail-on")" ]; then
+            echo "stub cosign: no signature for $subject" >&2
+            exit 1
+        fi
+        sha256sum <"$subject" | cut -d ' ' -f 1 >"$bundle"
+        ;;
+    verify-blob)
+        [ -f "$bundle" ] && [ -f "$subject" ] || exit 1
+        [ "$(sha256sum <"$subject" | cut -d ' ' -f 1)" = "$(cat "$bundle")" ] || { echo "stub cosign: invalid signature" >&2; exit 1; }
+        echo "Verified OK"
+        ;;
+    sign | verify) [ -n "$subject" ] || exit 2; echo "$command $subject" ;;
+    version) echo "stub cosign" ;;
+    *) exit 2 ;;
+esac
+STUB
+chmod 755 "$work/sigtools/cosign"
+
+# sign's signing step over the checked artifacts of sums, with IMAGES where expected.
+step_script sign "Sign each asset" "$work/steps/sign.sh"
+signed() {
+    sums "$1" "$([ "$1" = false ] || echo IMAGES)" >/dev/null 2>&1 || return 1
+    rm -rf "$work/signrun"
+    mkdir -p "$work/signrun"
+    rm -f "$work/rec/cosign-log"
+    (cd "$work/dist" && PATH="$work/sigtools:$PATH" RUNNER_TEMP=$work/signrun \
+        GITHUB_STEP_SUMMARY=$work/signrun/summary bash "$work/steps/sign.sh" >"$work/sign.out" 2>&1)
+}
+# The assets of a release of 0.26.0, with IMAGES where $1 is true, one per line.
+assets_of() {
+    for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl \
+        aarch64-apple-darwin x86_64-apple-darwin; do
+        echo "b10x-spindle-0.26.0-$target.tar.gz"
+    done
+    echo b10x-spindle-0.26.0.cdx.json
+    [ "$1" = false ] || echo IMAGES
+    echo SHA256SUMS
+}
+
+# adversary_publish_uploads_a_bundle_per_asset: publish's upload step with a gh stub uploads each
+# asset and its bundle, IMAGES and its bundle only where expected, and refuses an asset or a
+# bundle already on the page. gh: `release view` answers the names in page-names, `release
+# upload` is appended to gh-upload, `release download` copies page/ into --dir, and `attestation
+# verify` passes a subject whose sha256 is in attested, naming the commit in attested-commit.
 step_script publish "Upload the archives" "$work/steps/upload.sh"
 mkdir -p "$work/ghtools"
 printf '#!%s\nrec=%s\n' "$shell" "$work/rec" >"$work/ghtools/gh"
 cat >>"$work/ghtools/gh" <<'STUB'
+printf '%s\n' "$*" >>"$rec/gh-log"
 case "$1 $2" in
     "release upload") printf '%s\n' "$*" >>"$rec/gh-upload" ;;
+    "release view") cat "$rec/page-names" 2>/dev/null || true ;;
+    "release download")
+        dir=""
+        while [ $# -gt 0 ]; do
+            case $1 in --dir) dir=$2; shift 2 ;; *) shift ;; esac
+        done
+        [ -n "$dir" ] || exit 2
+        mkdir -p "$dir"
+        cp "$rec/page/"* "$dir/"
+        ;;
+    "attestation verify")
+        case $3 in
+            oci://*) sum=${3##*@sha256:} ;;
+            *) [ -f "$3" ] || exit 1; sum=$(sha256sum <"$3" | cut -d ' ' -f 1) ;;
+        esac
+        grep -Fqx "$sum" "$rec/attested" || { echo "stub gh: no attestation for $3" >&2; exit 1; }
+        printf '[{"verificationResult":{"signature":{"certificate":{"buildSignerURI":"https://github.com/beyond10x/spindle/.github/workflows/release.yml@stub","sourceRepositoryDigest":"%s"}}}}]\n' \
+            "$(cat "$rec/attested-commit")"
+        ;;
 esac
 exit 0
 STUB
 chmod 755 "$work/ghtools/gh"
-for expected in true false; do
-    sums "$expected" "$([ "$expected" = false ] || echo IMAGES)" >/dev/null 2>&1 || true
+upload() {
     rm -f "$work/rec/gh-upload"
+    (cd "$work/dist" && PATH="$work/ghtools:$PATH" TAG=0.26.0 IMAGES_EXPECTED=$1 \
+        GITHUB_STEP_SUMMARY=$work/upload.summary bash "$work/steps/upload.sh" >"$work/upload.out" 2>&1)
+}
+for expected in true false; do
+    rm -f "$work/rec/page-names"
     cases=$((cases + 1))
-    (cd "$work/dist" && PATH="$work/ghtools:$PATH" TAG=0.26.0 IMAGES_EXPECTED=$expected \
-        GITHUB_STEP_SUMMARY=$work/upload.summary bash "$work/steps/upload.sh" >/dev/null 2>&1) ||
-        fail "release.yml: publish's upload step fails with IMAGES_EXPECTED=$expected"
+    signed "$expected" || fail "adversary_publish_uploads_a_bundle_per_asset: sign fails with IMAGES_EXPECTED=$expected: $(cat "$work/sign.out" "$work/sums.out")"
+    cases=$((cases + 1))
+    upload "$expected" ||
+        fail "adversary_publish_uploads_a_bundle_per_asset: publish's upload step fails with IMAGES_EXPECTED=$expected: $(cat "$work/upload.out")"
     uploaded=$(cat "$work/rec/gh-upload" 2>/dev/null || true)
-    case "$expected $uploaded" in
-        "true release upload 0.26.0 "*" IMAGES SHA256SUMS") ;;
-        "false release upload 0.26.0 "*" b10x-spindle-0.26.0.cdx.json SHA256SUMS") ;;
-        *) fail "release.yml: publish uploads '$uploaded' with IMAGES_EXPECTED=$expected" ;;
-    esac
+    want=$(assets_of "$expected" | sed 'p; s/$/.sigstore.json/' | sort)
+    cases=$((cases + 1))
+    case $uploaded in
+        "release upload 0.26.0 "*) [ "$(printf '%s\n' ${uploaded#release upload 0.26.0 } | sort)" = "$want" ] ;;
+        *) false ;;
+    esac || fail "adversary_publish_uploads_a_bundle_per_asset: publish uploads '$uploaded' with IMAGES_EXPECTED=$expected, not the $(printf '%s\n' "$want" | grep -c '') files: $(echo $want)"
+    for present in SHA256SUMS b10x-spindle-0.26.0.cdx.json.sigstore.json; do
+        printf 'b10x-spindle-0.26.0-x86_64-apple-darwin.tar.gz.extra\n%s\n' "$present" >"$work/rec/page-names"
+        cases=$((cases + 1))
+        ! upload "$expected" && [ ! -e "$work/rec/gh-upload" ] ||
+            fail "adversary_publish_uploads_a_bundle_per_asset: publish uploads over $present already on the page"
+    done
+    rm -f "$work/rec/page-names"
 done
+# An asset whose bundle is missing is not uploaded, and nor is anything else.
+signed true >/dev/null 2>&1 || true
+rm -f "$work/dist/IMAGES.sigstore.json"
+cases=$((cases + 1))
+! upload true && [ ! -e "$work/rec/gh-upload" ] ||
+    fail "adversary_publish_uploads_a_bundle_per_asset: publish uploads a release whose IMAGES has no bundle"
+signed true >/dev/null 2>&1 || true
+printf 'x\n' >"$work/dist/b10x-spindle-0.26.0.cdx.json"
+cases=$((cases + 1))
+! upload true && [ ! -e "$work/rec/gh-upload" ] ||
+    fail "adversary_publish_uploads_a_bundle_per_asset: publish uploads an SBOM that is not the one SHA256SUMS lists"
+
+# adversary_sign_signs_each_asset: sign's signing step writes one <asset>.sigstore.json per asset
+# and calls cosign sign-blob once per asset; a cosign that fails on one asset fails the step.
+for expected in true false; do
+    cases=$((cases + 1))
+    if ! signed "$expected"; then
+        fail "adversary_sign_signs_each_asset: the step fails with IMAGES_EXPECTED=$expected: $(cat "$work/sign.out")"
+        continue
+    fi
+    want=$(assets_of "$expected" | sort)
+    cases=$((cases + 1))
+    [ "$(cd "$work/dist" && ls -- *.sigstore.json | sed 's/\.sigstore\.json$//' | sort)" = "$want" ] ||
+        fail "adversary_sign_signs_each_asset: the bundles with IMAGES_EXPECTED=$expected are not one per asset: $(cd "$work/dist" && ls)"
+    cases=$((cases + 1))
+    [ "$(sed -n 's/^sign-blob .* //p' "$work/rec/cosign-log" | sort)" = "$want" ] &&
+        [ "$(grep -c '^sign-blob ' "$work/rec/cosign-log")" -eq "$(printf '%s\n' "$want" | grep -c '')" ] ||
+        fail "adversary_sign_signs_each_asset: cosign sign-blob is not called once per asset with IMAGES_EXPECTED=$expected: $(cat "$work/rec/cosign-log")"
+    cases=$((cases + 1))
+    grep -Fqx 'sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS' "$work/rec/cosign-log" ||
+        fail "adversary_sign_signs_each_asset: SHA256SUMS is not signed into SHA256SUMS.sigstore.json: $(cat "$work/rec/cosign-log")"
+done
+for broken in b10x-spindle-0.26.0.cdx.json IMAGES SHA256SUMS; do
+    printf '%s\n' "$broken" >"$work/rec/cosign-fail-on"
+    cases=$((cases + 1))
+    ! signed true || fail "adversary_sign_signs_each_asset: the step passes though cosign fails on $broken"
+done
+rm -f "$work/rec/cosign-fail-on"
 
 # --- a tag already in ghcr.io ----------------------------------------------------------------
 # adversary_existing_tag_is_done_or_refused: image-manifest leaves a tag that lists exactly the
@@ -1060,6 +1212,320 @@ for third in '{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest"
     ! grep -q 'imagetools create' "$work/mytag/docker-log" && [ ! -e "$work/mytag/images/IMAGES" ] ||
         fail "adversary_w31_U2: an existing tag with a third entry is moved or written to IMAGES"
 done
+
+# --- signed release assets -------------------------------------------------------------------
+# story:release-artifacts-signed: each asset carries a cosign bundle and a provenance attestation,
+# the image is signed by its digest, and only the signing jobs hold id-token: write.
+
+# adversary_id_token_only_on_signing_jobs: in a copy of release.yml, id-token: write is on sign
+# and image-manifest only, attestations: write on sign only, nothing is write-all, the top-level
+# permissions are contents: read, the workflow runs on push, workflow_dispatch and pull_request
+# only, and each job holding id-token: write has one job-level if of an accepted guard form, each
+# false on a pull_request event:
+#   ${{ github.event_name != 'pull_request' }}
+#   ${{ github.event_name != 'pull_request' && <rest> }}
+#   ${{ !cancelled() && github.event_name != 'pull_request' && <rest> }}
+# where <rest> holds no || outside parentheses and nothing follows the closing }}.
+cat >"$work/permissions.awk" <<'AWK'
+function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+function guarded(e,    q, a, b, c, rest, depth, i, ch) {
+    q = "'"
+    a = "${{ github.event_name != " q "pull_request" q " }}"
+    b = "${{ github.event_name != " q "pull_request" q " && "
+    c = "${{ !cancelled() && github.event_name != " q "pull_request" q " && "
+    if (e == a) return 1
+    if (index(e, b) == 1) rest = substr(e, length(b) + 1)
+    else if (index(e, c) == 1) rest = substr(e, length(c) + 1)
+    else return 0
+    if (length(rest) < 4 || substr(rest, length(rest) - 2) != " }}") return 0
+    rest = substr(rest, 1, length(rest) - 3)
+    if (index(rest, "{{") || index(rest, "}}") || trim(rest) == "") return 0
+    depth = 0
+    for (i = 1; i <= length(rest); i++) {
+        ch = substr(rest, i, 1)
+        if (ch == "(") depth++
+        else if (ch == ")") { depth--; if (depth < 0) return 0 }
+        else if (ch == "|" && substr(rest, i + 1, 1) == "|" && depth == 0) return 0
+    }
+    return depth == 0
+}
+/^[ \t]*#/ { next }
+/^[^ ]/ { top = $0; sub(/:.*/, "", top); job = ""; inperm = 0 }
+/^on:/ { inon = 1; next }
+/^[^ ]/ { inon = 0 }
+inon && /^  [^ ]/ { v = trim($0); sub(/:.*/, "", v); print "on " v }
+top == "permissions" && /^permissions:/ { v = trim(substr($0, 13)); if (v != "") print "top " v; next }
+top == "permissions" && /^  [^ ]/ { print "top " trim($0) }
+top == "jobs" && /^  [a-z][a-z0-9_-]*:[ ]*$/ { job = trim($0); sub(/:$/, "", job); inperm = 0; next }
+job != "" && /^    [^ ]/ { inperm = 0 }
+job != "" && /^    permissions:/ { inperm = (trim(substr($0, index($0, ":") + 1)) == "") }
+/write-all/ { print "write-all " (job != "" ? job : top) }
+/id-token/ { print "id-token " (job != "" ? job : top) " " (inperm && /^      id-token: write$/ ? "block" : "other") }
+/attestations["']?[ \t]*:/ { print "attestations " (job != "" ? job : top) " " (inperm && /^      attestations: write$/ ? "block" : "other") }
+job != "" && /^    if:/ { e = trim(substr($0, index($0, ":") + 1)); print "if " job " " guarded(e) }
+AWK
+id_token_breach() {
+    facts=$(awk -f "$work/permissions.awk" "$1")
+    [ "$(printf '%s\n' "$facts" | sed -n 's/^top //p')" = "contents: read" ] ||
+        { echo "the top-level permissions are not contents: read alone"; return 1; }
+    [ "$(printf '%s\n' "$facts" | sed -n 's/^on //p' | sort | tr '\n' ' ')" = "pull_request push workflow_dispatch " ] ||
+        { echo "the workflow runs on other events than push, workflow_dispatch and pull_request"; return 1; }
+    ! printf '%s\n' "$facts" | grep -q '^write-all ' || { echo "a permission is write-all"; return 1; }
+    [ "$(printf '%s\n' "$facts" | grep '^id-token ' | sort | tr '\n' ';')" = "id-token image-manifest block;id-token sign block;" ] ||
+        { echo "id-token is not write on sign and image-manifest alone: $(printf '%s\n' "$facts" | grep '^id-token ' | tr '\n' ';')"; return 1; }
+    [ "$(printf '%s\n' "$facts" | grep '^attestations ' | tr '\n' ';')" = "attestations sign block;" ] ||
+        { echo "attestations is not write on sign alone: $(printf '%s\n' "$facts" | grep '^attestations ' | tr '\n' ';')"; return 1; }
+    for holder in sign image-manifest; do
+        [ "$(printf '%s\n' "$facts" | grep "^if $holder " | tr '\n' ';')" = "if $holder 1;" ] ||
+            { echo "the $holder job, which holds id-token: write, has no single if of an accepted guard form"; return 1; }
+    done
+}
+cases=$((cases + 1))
+why=$(id_token_breach "$workflow") || fail "adversary_id_token_only_on_signing_jobs: release.yml: $why"
+# Each copy breaks one rule; the check must refuse every one.
+mutant() {
+    awk -v kind="$1" '
+        /^  [a-z][a-z0-9_-]*:$/ { job = $1 }
+        /^[^ ]/ { job = "" }
+        kind == "if-removed" && job == "sign:" && /^    if:/ { next }
+        kind == "or-true" && job == "sign:" && /^    if:/ { sub(/ }}$/, " || true }}") }
+        kind == "or-true-outside" && job == "sign:" && /^    if:/ { $0 = $0 " || true" }
+        kind == "unparenthesised-or" && job == "image-manifest:" && /^    if:/ { sub(/ }}$/, " || github.event_name == '"'"'pull_request'"'"' }}") }
+        kind == "folded-if" && job == "sign:" && /^    if:/ { print "    if: >-"; sub(/^    if:/, "     "); }
+        { print }
+        kind == "top" && $0 == "permissions:" { print "  id-token: write" }
+        kind == "build" && $0 == "  build:" { print "    permissions:"; print "      contents: read"; print "      id-token: write" }
+        kind == "write-all" && $0 == "  ui:" { print "    permissions: write-all" }
+        kind == "flow" && $0 == "  gate:" { print "    permissions: { contents: read, id-token: write }" }
+        kind == "attest-publish" && $0 == "      contents: write" { print "      attestations: write" }
+        kind == "target" && $0 == "  pull_request:" { print "  pull_request_target:" }
+    ' "$workflow" >"$work/mutant.yml"
+}
+for kind in top build if-removed or-true or-true-outside unparenthesised-or folded-if write-all flow attest-publish target; do
+    mutant "$kind"
+    cases=$((cases + 1))
+    if cmp -s "$workflow" "$work/mutant.yml"; then
+        fail "adversary_id_token_only_on_signing_jobs: the copy '$kind' is release.yml unchanged"
+    elif id_token_breach "$work/mutant.yml" >/dev/null; then
+        fail "adversary_id_token_only_on_signing_jobs: a copy of release.yml with '$kind' passes"
+    fi
+done
+
+# adversary_image_signed_by_manifest_digest: image-manifest's signing step signs
+# <image>@sha256:<digest> read from IMAGES, never a tag, and signs nothing for an IMAGES line that
+# is not the release's image pinned by digest.
+step_script image-manifest "Sign the manifest list" "$work/steps/sign-image.sh"
+image_signs() {
+    rm -rf "$work/signimage"
+    mkdir -p "$work/signimage/images"
+    printf '%s\n' "$2" >"$work/signimage/images/IMAGES"
+    rm -f "$work/rec/cosign-log"
+    (cd "$work/signimage" && PATH="$work/sigtools:$PATH" IMAGE=ghcr.io/beyond10x/spindle VERSION=0.26.0 \
+        GITHUB_STEP_SUMMARY=$work/signimage/summary bash "$1" >"$work/signimage/out" 2>&1)
+}
+# Passes when the step signs exactly the image by the digest of a good IMAGES line and nothing
+# for a bad one.
+image_signed_by_digest() {
+    image_signs "$1" "ghcr.io/beyond10x/spindle:0.26.0@sha256:$hex" || { echo "the step fails: $(cat "$work/signimage/out")"; return 1; }
+    [ "$(cat "$work/rec/cosign-log" 2>/dev/null)" = "sign --yes ghcr.io/beyond10x/spindle@sha256:$hex" ] ||
+        { echo "cosign was called as '$(tr '\n' ';' <"$work/rec/cosign-log" 2>/dev/null)', not sign --yes ghcr.io/beyond10x/spindle@sha256:$hex"; return 1; }
+    for line in "ghcr.io/beyond10x/spindle:0.26.0" "ghcr.io/beyond10x/spindle:0.25.0@sha256:$hex" \
+        "ghcr.io/beyond10x/other:0.26.0@sha256:$hex" "ghcr.io/beyond10x/spindle:0.26.0@sha256:${hex%?}" ""; do
+        if image_signs "$1" "$line" || [ -s "$work/rec/cosign-log" ]; then
+            echo "the step signs for the IMAGES line '$line': $(tr '\n' ';' <"$work/rec/cosign-log" 2>/dev/null)"
+            return 1
+        fi
+    done
+}
+cases=$((cases + 1))
+why=$(image_signed_by_digest "$work/steps/sign-image.sh") || fail "adversary_image_signed_by_manifest_digest: $why"
+sed 's|^cosign sign --yes .*|cosign sign --yes "${IMAGE}:${VERSION}"|' "$work/steps/sign-image.sh" >"$work/steps/sign-image-tag.sh"
+cases=$((cases + 1))
+if cmp -s "$work/steps/sign-image.sh" "$work/steps/sign-image-tag.sh"; then
+    fail "adversary_image_signed_by_manifest_digest: the step has no line 'cosign sign --yes ...' to turn into a tag"
+elif image_signed_by_digest "$work/steps/sign-image-tag.sh" >/dev/null; then
+    fail "adversary_image_signed_by_manifest_digest: a step that signs <image>:<version> passes"
+fi
+
+# adversary_pinned_tools_are_checked: sign, image-manifest and publish each fetch cosign v3.1.6 in
+# one identical step that checks it with sha256sum --check --strict against the pinned sha256
+# before it runs it, so a download with one byte changed stops the step before cosign runs; no
+# other step fetches cosign; every uses: in release.yml, actions/attest-build-provenance among
+# them, names a 40-hex commit.
+cosign_sha256=318a99ade4156a0c4113aa983b46c0a0830fa7896a096c63121ee47b610a94c6
+attest_commit=4d101475d8b20a2381f78447822ac1eab6504dd8
+# A step's whole text, from its `- name:` line to the next step or job.
+step_text() {
+    job "$1" | awk -v want="      - name: $2" '
+        index($0, want) == 1 { found = 1; print; next }
+        found && (/^      - / || /^      #/ || /^  [a-z]/) { exit }
+        found { print }
+    '
+}
+for name in sign image-manifest publish; do
+    step_text "$name" "Install cosign" >"$work/steps/cosign-$name.yml"
+done
+cases=$((cases + 1))
+[ -s "$work/steps/cosign-sign.yml" ] && cmp -s "$work/steps/cosign-sign.yml" "$work/steps/cosign-image-manifest.yml" &&
+    cmp -s "$work/steps/cosign-sign.yml" "$work/steps/cosign-publish.yml" ||
+    fail "adversary_pinned_tools_are_checked: sign, image-manifest and publish do not each hold the same step 'Install cosign'"
+cases=$((cases + 1))
+grep -Fqx "          COSIGN_VERSION: '3.1.6'" "$work/steps/cosign-sign.yml" &&
+    grep -Fqx "          COSIGN_SHA256: $cosign_sha256" "$work/steps/cosign-sign.yml" ||
+    fail "adversary_pinned_tools_are_checked: the step 'Install cosign' does not pin cosign 3.1.6 at $cosign_sha256: $(cat "$work/steps/cosign-sign.yml")"
+cases=$((cases + 1))
+[ "$(grep -c 'sigstore/cosign/releases' "$workflow")" -eq 3 ] && [ "$(grep -c 'sigstore/cosign/releases' "$work/steps/cosign-sign.yml")" -eq 1 ] ||
+    fail "adversary_pinned_tools_are_checked: a step other than the three 'Install cosign' fetches cosign"
+for name in $(sed -n '/^jobs:$/,$p' "$workflow" | sed -n 's/^  \([a-z][a-z0-9-]*\):$/\1/p'); do
+    if job "$name" | grep -Eq '^ *cosign (sign|verify)|[ (]cosign (sign|verify)'; then
+        cases=$((cases + 1))
+        [ -s "$work/steps/cosign-$name.yml" ] ||
+            fail "adversary_pinned_tools_are_checked: the $name job runs cosign without the step 'Install cosign'"
+    fi
+done
+cases=$((cases + 1))
+unpinned=$(grep -E '^ *(- )?uses: ' "$workflow" | grep -Ev '@[0-9a-f]{40}( # .*)?$' || true)
+[ -z "$unpinned" ] || fail "adversary_pinned_tools_are_checked: a uses: is not pinned by a 40-hex commit: $unpinned"
+cases=$((cases + 1))
+attests=$(grep -E '^ *(- )?uses: actions/attest-build-provenance@' "$workflow" || true)
+[ "$(printf '%s\n' "$attests" | grep -c "uses: actions/attest-build-provenance@$attest_commit # v4.2.2$")" -eq 2 ] &&
+    [ "$(printf '%s\n' "$attests" | grep -c '')" -eq 2 ] ||
+    fail "adversary_pinned_tools_are_checked: actions/attest-build-provenance is not used twice at $attest_commit (v4.2.2): $attests"
+# The step's run block on a curl stub that writes cosign-download, with the pin set to the sha256
+# of the stub's download, then with one byte of the download changed.
+step_script sign "Install cosign" "$work/steps/install-cosign.sh"
+mkdir -p "$work/fetchtools"
+printf '#!%s\nrec=%s\n' "$shell" "$work/rec" >"$work/fetchtools/curl"
+cat >>"$work/fetchtools/curl" <<'STUB'
+printf '%s\n' "$*" >>"$rec/fetch-log"
+out=""
+while [ $# -gt 0 ]; do
+    case $1 in --output) out=$2; shift 2 ;; *) shift ;; esac
+done
+[ -n "$out" ] || exit 2
+cp "$rec/cosign-download" "$out"
+STUB
+chmod 755 "$work/fetchtools/curl"
+printf '#!/bin/sh\necho ran >>"%s/cosign-ran"\n' "$work/rec" >"$work/rec/cosign-download"
+pin=$(sha256sum <"$work/rec/cosign-download" | cut -d ' ' -f 1)
+install_cosign() {
+    rm -rf "$work/install"
+    mkdir -p "$work/install"
+    : >"$work/install/path"
+    rm -f "$work/rec/cosign-ran" "$work/rec/fetch-log"
+    (PATH="$work/fetchtools:$PATH" RUNNER_TEMP=$work/install GITHUB_PATH=$work/install/path COSIGN_VERSION=3.1.6 \
+        COSIGN_SHA256=$pin bash "$work/steps/install-cosign.sh" >"$work/install/out" 2>&1)
+}
+cases=$((cases + 1))
+if install_cosign; then
+    [ -s "$work/rec/cosign-ran" ] && [ -s "$work/install/path" ] &&
+        grep -Fq 'https://github.com/sigstore/cosign/releases/download/v3.1.6/cosign-linux-amd64' "$work/rec/fetch-log" ||
+        fail "adversary_pinned_tools_are_checked: the step with a matching download does not fetch cosign 3.1.6, put it on PATH and run it"
+else
+    fail "adversary_pinned_tools_are_checked: the step fails on a download that matches its pin: $(cat "$work/install/out")"
+fi
+sed 's/ran/rAn/' "$work/rec/cosign-download" >"$work/rec/cosign-changed"
+mv "$work/rec/cosign-changed" "$work/rec/cosign-download"
+cases=$((cases + 1))
+! install_cosign && [ ! -e "$work/rec/cosign-ran" ] && [ ! -s "$work/install/path" ] ||
+    fail "adversary_pinned_tools_are_checked: the step runs or installs a cosign download with one byte changed"
+
+# adversary_backfill_verifies_at_main: publish's verification step, on the assets downloaded back
+# from the page, passes cosign the release workflow at refs/heads/main as the identity on a
+# backfill (workflow_dispatch) and at refs/tags/<tag> on a tag push, and fails the run when a
+# check fails. Its copy of one archive with one byte changed must fail both cosign and gh.
+step_script publish "Verify the signatures" "$work/steps/verify.sh"
+tagged=$(printf '%040d' 7)
+dispatched=$(printf '%040d' 8)
+# A signed release of 0.26.0 on the page: the bundles of sign's step, every asset attested, and
+# the image's digest from IMAGES.
+on_page() {
+    signed "$1" >/dev/null 2>&1 || return 1
+    rm -rf "$work/rec/page"
+    mkdir -p "$work/rec/page"
+    cp "$work/dist/"* "$work/rec/page/"
+    (cd "$work/rec/page" && for asset in $(assets_of "$1"); do sha256sum <"$asset" | cut -d ' ' -f 1; done) >"$work/rec/attested"
+    printf '%s\n' "$hex" >>"$work/rec/attested"
+}
+verify_run() {
+    rm -rf "$work/verify"
+    mkdir -p "$work/verify"
+    rm -f "$work/rec/cosign-log"
+    (cd "$work/verify" && PATH="$work/ghtools:$work/sigtools:$PATH" RUNNER_TEMP=$work/verify GH_REPO=beyond10x/spindle \
+        TAG=0.26.0 COMMIT=$tagged GITHUB_SHA=$2 GITHUB_EVENT_NAME=$3 IMAGES_EXPECTED=$4 IMAGE=ghcr.io/beyond10x/spindle \
+        GITHUB_STEP_SUMMARY=$work/verify/summary bash "$1" >"$work/verify/out" 2>&1)
+}
+# Passes when the step verifies a backfill at refs/heads/main and a tag push at the tag's ref,
+# every cosign check naming that identity, and refuses an identity it is not given.
+verifies_at_ref() {
+    step=$1
+    for row in "workflow_dispatch $dispatched refs/heads/main" "push $tagged refs/tags/0.26.0"; do
+        set -- $row
+        echo "$2" >"$work/rec/attested-commit"
+        verify_run "$step" "$2" "$1" true || { echo "the step fails on a $1 run: $(cat "$work/verify/out")"; return 1; }
+        identity="--certificate-identity https://github.com/beyond10x/spindle/.github/workflows/release.yml@$3 --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+        calls=$(grep -E '^verify(-blob)? ' "$work/rec/cosign-log" 2>/dev/null || true)
+        [ "$(grep -cE '^verify(-blob)? ' "$work/rec/cosign-log" 2>/dev/null || true)" = 10 ] ||
+            { echo "a $1 run calls cosign verify $(grep -cE '^verify(-blob)? ' "$work/rec/cosign-log" 2>/dev/null || true) times, not 8 assets, the changed archive and the image: $(printf '%s' "$calls" | tr '\n' ';')"; return 1; }
+        [ -z "$(printf '%s\n' "$calls" | grep -Fv -- "$identity")" ] ||
+            { echo "a $1 run passes cosign another identity than $3: $(printf '%s' "$calls" | tr '\n' ';')"; return 1; }
+    done
+}
+cases=$((cases + 1))
+if ! on_page true; then
+    fail "adversary_backfill_verifies_at_main: no signed release to put on the page: $(cat "$work/sign.out")"
+else
+    why=$(verifies_at_ref "$work/steps/verify.sh") || fail "adversary_backfill_verifies_at_main: $why"
+    for swap in 's|refs/heads/main|refs/tags/${TAG}|' 's|refs/tags/${TAG}|refs/heads/main|'; do
+        sed "$swap" "$work/steps/verify.sh" >"$work/steps/verify-swapped.sh"
+        cases=$((cases + 1))
+        if cmp -s "$work/steps/verify.sh" "$work/steps/verify-swapped.sh"; then
+            fail "adversary_backfill_verifies_at_main: the step has no ref to swap with '$swap'"
+        elif verifies_at_ref "$work/steps/verify-swapped.sh" >/dev/null; then
+            fail "adversary_backfill_verifies_at_main: a step that passes the other ref ('$swap') passes"
+        fi
+    done
+    # The run fails when a check fails: an attestation naming another commit, a bundle that does
+    # not match its asset, a check on the changed archive that passes, an event with no identity.
+    echo "$dispatched" >"$work/rec/attested-commit"
+    cases=$((cases + 1))
+    ! verify_run "$work/steps/verify.sh" "$tagged" push true ||
+        fail "adversary_backfill_verifies_at_main: a tag push passes an attestation that names another commit"
+    echo "$tagged" >"$work/rec/attested-commit"
+    cp "$work/rec/page/SHA256SUMS.sigstore.json" "$work/rec/page/b10x-spindle-0.26.0.cdx.json.sigstore.json" 2>/dev/null || true
+    cases=$((cases + 1))
+    ! verify_run "$work/steps/verify.sh" "$tagged" push true ||
+        fail "adversary_backfill_verifies_at_main: a release passes whose SBOM bundle does not match the SBOM"
+    on_page true >/dev/null 2>&1 || true
+    # cosign and gh that pass anything: the changed archive must then fail the step.
+    mkdir -p "$work/lenient"
+    printf '#!%s\necho "Verified OK"\n' "$shell" >"$work/lenient/cosign"
+    printf '#!%s\nrec=%s\nreal=%s\n' "$shell" "$work/rec" "$work/ghtools/gh" >"$work/lenient/gh"
+    cat >>"$work/lenient/gh" <<'STUB'
+case "$1 $2" in
+    "attestation verify")
+        printf '[{"verificationResult":{"signature":{"certificate":{"sourceRepositoryDigest":"%s"}}}}]\n' "$(cat "$rec/attested-commit")"
+        ;;
+    *) exec "$real" "$@" ;;
+esac
+STUB
+    chmod 755 "$work/lenient/cosign" "$work/lenient/gh"
+    cases=$((cases + 1))
+    ! (cd "$work/verify" && PATH="$work/lenient:$PATH" RUNNER_TEMP=$work/verify GH_REPO=beyond10x/spindle TAG=0.26.0 \
+        COMMIT=$tagged GITHUB_SHA=$tagged GITHUB_EVENT_NAME=push IMAGES_EXPECTED=true IMAGE=ghcr.io/beyond10x/spindle \
+        GITHUB_STEP_SUMMARY=$work/verify/summary bash "$work/steps/verify.sh" >"$work/verify/out" 2>&1) ||
+        fail "adversary_backfill_verifies_at_main: the step passes though cosign and gh verify the archive with one byte changed"
+    for event in pull_request schedule; do
+        cases=$((cases + 1))
+        ! verify_run "$work/steps/verify.sh" "$tagged" "$event" true ||
+            fail "adversary_backfill_verifies_at_main: the step verifies a $event run against some identity"
+    done
+    cases=$((cases + 1))
+    verify_run "$work/steps/verify.sh" "$tagged" push true || true
+    grep -Fq '$ cosign verify-blob --bundle SHA256SUMS.sigstore.json' "$work/verify/summary" &&
+        grep -Fq '$ gh attestation verify oci://ghcr.io/beyond10x/spindle:0.26.0@sha256:' "$work/verify/summary" ||
+        fail "adversary_backfill_verifies_at_main: the step summary does not hold each command: $(head -c 600 "$work/verify/summary")"
+fi
 
 echo "release-linux-binary-adversary: $cases cases, $failures failed"
 [ "$failures" -eq 0 ]
