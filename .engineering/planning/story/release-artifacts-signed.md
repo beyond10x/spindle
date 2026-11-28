@@ -25,7 +25,7 @@ scope:
   path: scripts/release-linux-binary.adversary-test.sh
 - confidence: inferred
   path: scripts/release-linux-binary.sh
-revision: 8
+revision: 9
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-28T14:14:07Z", actor: "human:operator", revision: 7, decided_on: {"recorded":{"review_outcome":8}}}
 - {from: "proposed", to: "active", at: "2026-11-28T14:14:07Z", actor: "human:operator", revision: 8, decided_on: {"recorded":{"review_outcome":8}}}
@@ -169,3 +169,24 @@ from the story or the tree) or **inferred** (a reading that could be wrong).
 - **Safety fact:** the jobs holding `id-token: write` (`sign`, `image-manifest`) run on no pull request, so a pull-request run of `release.yml` (triggered at `:13-17`) cannot mint a certificate under the release workflow's identity — unproven; `adversary_id_token_only_on_signing_jobs` checks it
 - **Checked when planned (2026-11-28, read against 18715a80):** `release.yml` is unchanged since 276298bb and its lines above hold; moved elsewhere: the `packages: write` check `:632-634` (was `:634`), the stub checksum and upload cases `:722-771`, the `SHA256SUMS` step `:798-824` (was `:794-824`), the file count `:813` (was `:814`), `AGENTS.md` steps 6-7 `:219-274` (was `:230-262`), `README.md` § Releases `:279-291` — cited. D5 A puts `id-token: write` on `image-manifest` as well as `sign` — cited from the decision. cosign v3.1.6 and `actions/attest-build-provenance` v4.2.2 are the newest releases on 2026-11-28; the scoper named v3.0.x and v3.x — cited (the projects' release pages)
 - **Uncertain:** whether the repository's allowed-actions setting admits `actions/attest-build-provenance`; ghcr.io's referrers API against `.sig` tags for the image signature; the test script's current run time (not measured); uploading the bundles to a release page that is already published
+
+## Delivered
+
+Wave 34, unit U1, merged into wave/34 at 124b08ac. Adversary ran three rounds; round 3 found only cases no one reaches today (INFEASIBLE), and those were fixed. The real signing and verification first run in the 0.29.0 tagged release; that run is this story's closing evidence.
+
+Changes the coordinator made to the plan during the wave:
+
+- A `workflow_dispatch` (backfill) run from any ref other than `refs/heads/main` fails in `provenance`'s first step, before anything is built, signed or uploaded (round 1).
+- Attestation rule D-U1-r2 replaced D-U1-r1 in round 2. It applies to assets and to the image:
+  - `gh attestation verify` prints one non-empty JSON list (round 3).
+  - Every attestation's `buildSignerURI` is `release.yml@refs/heads/main` or `@refs/tags/<tag>`.
+  - An attestation signed at the tag ref names the tagged commit.
+  - At least one attestation names the commit this run expects: the tagged commit on a tag push, `github.sha` on a backfill.
+  - Attestations from earlier backfills at other `main` commits pass.
+- The release check's guard and permission parsers:
+  - skip quoted literals;
+  - refuse an `if:` continued onto a deeper-indented line;
+  - refuse quoted, escaped, anchored, merged or flow-styled keys anywhere under `jobs:`.
+  - They give the same results under mawk (rounds 1 to 3).
+- `publish` gains no `attestations: read` (D4). Verification runs after the upload, as the acceptance orders.
+- Release check: 453 cases, 0 failed, about 25 s.

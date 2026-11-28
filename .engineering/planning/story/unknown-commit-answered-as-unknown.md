@@ -25,7 +25,7 @@ scope:
   path: website/docs/concepts/capabilities.md
 - confidence: inferred
   path: website/docs/concepts/environment-and-admission.md
-revision: 13
+revision: 14
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-28T14:14:07Z", actor: "human:operator", revision: 12, decided_on: {"recorded":{"review_outcome":8}}}
 - {from: "proposed", to: "active", at: "2026-11-28T14:14:07Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":8}}}
@@ -137,3 +137,16 @@ Derived 2026-11-28 by `story-scoper`. Every line is **cited** (read from the sto
 - **Safety fact:** eventlog 0.10.0 returns `UnknownCommit` only after COMMIT was started (`eventlog-postgres/src/lib.rs:2526-2528` `timed_out_write`; `eventlog-postgres/src/atomic_group.rs:1008-1012` sets `commit_started` before `commit()`). A failure before COMMIT stays `Deadline`→`Busy` or `Backend`, so the second acceptance bullet keeps today's answers. `adversary_w33_u2::a_write_the_store_failed_otherwise_still_answers_501` already pins the `Backend` one — step 2, unproven
 - **Test time:** about 1.6 s of run time. The kernel mapping unit test takes under 0.1 s; the host reset case on a memory store about 0.1 s. Two stub-store ingress cases on a loopback listener, like `busy_store.rs`, take about 0.3-0.5 s each. A real PostgreSQL case that fires the deadline after COMMIT is not proposed; eventlog's `timed_out_write.rs` covers it — inferred
 - **Checked when planned (2026-11-28, read against 18715a80):** moved since the scoper read them: the kernel test `:2988` (was `:2986`), `Answer::busy` `:97` (was `:94`), the `answer` doc `:145-148` (was `:139-142`), `Class::of` `:162` (was `:161`), `serve_with_unless` `:163` (the scoper's `:170` is its check); eventlog-sqlite's `:3156` is in `finish_transaction`, not `append_group_guarded` — cited. No match on `StoreError` in the workspace lists every variant (`state_move.rs:224` matches one `Backend` text, every other site a single variant or a catch-all) — cited
+
+## Delivered
+
+Wave 34, unit U2, merged into wave/34 at cf798054; adversary rounds 1-2, round 2 found no new defect.
+
+Changed from the plan, by the coordinator during the wave:
+
+- A reset removal or world row that returns `StoreError::Unknown` counts as a changed row (`Host::reset_changed_rows` reads `true`), since it may have landed, so the leased reset does not put back what it removed (round 1).
+- D-U2-r1: a reset whose world row meets an unknown outcome keeps the store; a removal or forgetting of events that meets it loses the store, as before (round 1).
+- D-U2-r1c: that reset answers `500` `{"refused", "committed": "unknown"}` through `Answer::unknown`, like a command. This was applied on wave/34 at bcdf0861, after U3 merged.
+- The docs of `ExecuteError`, `HostError::Execute`, the `failed.store` counter and the `Store` write methods say that a `Store(Unknown)` may have written (rounds 1 and 2).
+- A kept case holds that a world row refused before it landed changes no row; it kills a mutant the rest of the suite let through (round 2).
+- Seed records and bound-command retries stay with `story:unknown-commit-in-seed-and-retries` (D4).

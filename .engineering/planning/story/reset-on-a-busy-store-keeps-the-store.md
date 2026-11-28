@@ -29,7 +29,7 @@ scope:
   path: website/docs/concepts/capabilities.md
 - confidence: cited
   path: website/docs/concepts/environment-and-admission.md
-revision: 24
+revision: 25
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-28T14:14:08Z", actor: "human:operator", revision: 23, decided_on: {"recorded":{"review_outcome":8}}}
 - {from: "proposed", to: "active", at: "2026-11-28T14:14:08Z", actor: "human:operator", revision: 24, decided_on: {"recorded":{"review_outcome":8}}}
@@ -149,3 +149,14 @@ Derived 2026-11-28 by `story-scoper`. Every line is **cited** (read from the sto
 - **Test time:** about 1-2 s of test run time — inferred: the parked case's stub store answers busy at once, with no real deadline wait, and one or two host-level cases with in-memory stores take about 0.1 s each; no PostgreSQL case is needed
 - **Safety fact:** keeping the store after a busy error is sound because `StoreError::Busy` means the write was refused before it began to commit, so the store holds exactly what it held before that write (`crates/spindle-kernel/src/store.rs:341-345`; eventlog's `Deadline` maps to `Busy` and `UnknownCommit` does not, `crates/spindle-kernel/src/sqlite.rs:2961-2967`) — step 2, unproven
 - **Checked when planned (2026-11-28, read against 18715a80):** moved since the scoper read them: `console::reset` ends at `:597`, its `500` arm `:595`; `Host::reset` # Errors `:1844-1851`; the `serve.rs` comment `:771-782`; `StoreError::Busy` `store.rs:341-345`; `backend` `sqlite.rs:2961-2967` — cited. Under D1 A this story calls `Answer::busy` and does not edit `answer.rs` or `store.rs`; its reset classification lives in `Host::empty`, where only `StoreError::Busy` keeps the store — cited from the decision. `CHANGELOG.md:57-58` is wave 33's entry; once release 0.28.0 is cut it sits under `[0.28.0]` and is not edited: this story adds its own `### Fixed` entry under `[Unreleased]` — cited. The new tests go in `crates/spindle-host/tests/spindle-host/supplied.rs` and `crates/spindle-ingress/tests/spindle-ingress/busy_store.rs`, existing modules, so this story does not edit the ingress tests' `main.rs` — inferred. `removed_all` calls `remove` once per instance, so on PostgreSQL each removal commits on its own and a busy error on a later one leaves the earlier ones done — cited
+
+## Delivered
+
+Wave 34, unit U3, merged into wave/34 at 48a317fa; adversary rounds 1-2, each fixed.
+
+Changed from the plan, by the coordinator during the wave:
+
+- A reset with a world whose rows are read busy before any store is emptied answers `503` `{"refused", "committed": false}`, not `400` "the world was refused" (round 1).
+- A busy world-row write after the stores were emptied names the component and the step: "resetting <component>: writing row <n>, <entity> <identity>: ...". It answers `500` with the store kept (round 2).
+- Every `Busy` a reset returns names its component and step: scan, removal, forgetting events, the world read and the world write.
+- The merge with U2 keeps both changes in `Host::load` and `removed_all`: `Busy` is named, and `Unknown` sets the reset-rows flag.

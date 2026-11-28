@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:entity-invariant-over-stored-rows
 kind: story
-status: active
+status: implemented
 title: A specification change that tightens an entity invariant is judged against the stored rows
 relations:
 - serves: vision:spindle
@@ -33,10 +33,11 @@ scope:
   path: website/docs/reference/cli.md
 - confidence: inferred
   path: website/docs/status.md
-revision: 15
+revision: 16
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-28T09:24:52Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":7}}}
 - {from: "proposed", to: "active", at: "2026-11-28T09:24:52Z", actor: "human:operator", revision: 14, decided_on: {"recorded":{"review_outcome":7}}}
+- {from: "active", to: "implemented", at: "2026-11-28T16:06:05Z", actor: "human:operator", revision: 16, decided_on: {"recorded":{"test_result":1,"review_outcome":10}}}
 ---
 ## Outcome
 

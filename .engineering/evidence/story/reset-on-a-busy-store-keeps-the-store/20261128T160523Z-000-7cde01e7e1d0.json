@@ -1,0 +1,14 @@
+{
+  "at": "2026-11-28T16:05:23Z",
+  "actor": "human:operator",
+  "artifact": "story:reset-on-a-busy-store-keeps-the-store",
+  "kind": "story",
+  "revision": 24,
+  "change": {
+    "change": "evidence",
+    "kind": "review_outcome",
+    "source": "review-result:wave34-adversary-U3-r1",
+    "review": "review-result:wave34-adversary-U3-r1",
+    "outcome": "fixed"
+  }
+}

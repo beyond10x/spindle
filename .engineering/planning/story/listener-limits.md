@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:listener-limits
 kind: story
-status: active
+status: implemented
 title: The ingress listener bounds connections, headers and request time
 summary: A connection cap, a head size limit and a per-request time, and a proxy-secret compare that does not reveal the length.
 relations:
@@ -37,10 +37,11 @@ scope:
   path: website/docs/concepts/capabilities.md
 - confidence: inferred
   path: website/docs/reference/cli.md
-revision: 15
+revision: 16
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-28T09:24:51Z", actor: "human:operator", revision: 13, decided_on: {"recorded":{"review_outcome":7}}}
 - {from: "proposed", to: "active", at: "2026-11-28T09:24:51Z", actor: "human:operator", revision: 14, decided_on: {"recorded":{"review_outcome":7}}}
+- {from: "active", to: "implemented", at: "2026-11-28T16:06:04Z", actor: "human:operator", revision: 16, decided_on: {"recorded":{"test_result":1,"review_outcome":11}}}
 ---
 # The ingress listener bounds connections, headers and request time
 
