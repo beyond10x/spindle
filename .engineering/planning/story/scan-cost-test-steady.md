@@ -2,11 +2,15 @@
 format: aep.planning-md/3
 id: story:scan-cost-test-steady
 kind: story
-status: draft
+status: implemented
 title: The scan cost test passes in a loaded PostgreSQL lane
 relations:
 - serves: vision:spindle
-revision: 1
+revision: 4
+transitions:
+- {from: "draft", to: "proposed", at: "2026-11-28T14:03:09Z", actor: "human:operator", revision: 2}
+- {from: "proposed", to: "active", at: "2026-11-28T14:03:09Z", actor: "human:operator", revision: 3}
+- {from: "active", to: "implemented", at: "2026-11-28T14:03:10Z", actor: "human:operator", revision: 4, decided_on: {"recorded":{"test_result":1}}}
 ---
 ## Outcome
 
