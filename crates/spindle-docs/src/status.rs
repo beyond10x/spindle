@@ -141,6 +141,13 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "Specification change over stored rows",
+        "Each durable store records the specification it was last written under. run under another one starts where every stored row stays readable, such as an optional field added, and otherwise exits 3 before listening or reading stdin, naming each entity and field (or state) whose rows the new specification cannot read: a field removed, a field retyped so that a stored value no longer reads, a required field added, a state or an entity removed, or an entity moved to another component. Nothing is migrated.",
+        "/docs/concepts/environment-and-admission#a-specification-change-over-stored-rows",
+        "crates/spindle-cli/tests/spindle-cli/spec_change.rs::an_incompatible_change_exits_before_listening",
+    ),
+    shipped(
+        "Execution",
         "Service Worker host",
         "spindle-wasm compiles a specification in the browser, admits it on a browser environment (ingress.network bound to service-worker) and answers its routes and the console routes from a Service Worker through the same router the loopback listener calls, state in IndexedDB and external outcomes answered from a decisions file; web/ is the Vue shell that registers the worker.",
         "/docs/concepts/environment-and-admission",
@@ -187,6 +194,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "A binding whose on_failure escalates, for every failure or for the refusals an escalate entry names beside drop and retry, invokes its command no further once an attempt is answered so: the component that ran it publishes the escalation event once from the command's input, served, on stdin and in conform, and the bindings that listen for it run. A required event field the input lacks publishes nothing and is reported unmet; an optional one is left out. The event goes to the outbox and is not in the event history. --drop-retries keeps every escalation.",
         "/docs/concepts/components-and-bindings",
         "crates/spindle-conformance/tests/spindle-conformance/escalation.rs::an_escalated_refusal_emits_the_named_event_and_invokes_nothing",
+    ),
+    shipped(
+        "Bindings",
+        "Dead letters",
+        "A command a binding or a tick invoked whose last attempt was refused or did not run, and that its binding did not escalate, is kept as a dead letter in its component's store with its input: a served run lists it at GET /api/dead-letters without a value of the input and replays it once at POST /api/dead-letters/replay, without the binding's retries. It survives a restart on SQLite and PostgreSQL, is no published event, and a reset forgets it.",
+        "/docs/concepts/components-and-bindings",
+        "crates/spindle-cli/tests/spindle-cli/dead_letters.rs::an_exhausted_command_is_kept_as_a_dead_letter",
     ),
     shipped(
         "Rally",
@@ -456,6 +470,20 @@ pub const CAPABILITIES: &[Capability] = &[
     ),
     shipped(
         "Execution",
+        "Caller proven by a verified token",
+        "run --caller-token names a TOML mapping, and the run verifies each request's bearer token itself: its signature against the issuer's key set (JWKS), fetched before listening and refreshed on a period so a rotated key verifies without a restart, its issuer, audience and expiry; the claims are mapped to an actor and its attributes. A request without a valid token answers 401 before anything is read and is neither recorded nor counted, and one whose claims map to no caller of the model answers 403 not granted. Only the live, ready and seed probes answer without a token, the run's other own routes need a token whose claims map to a caller of the model, the console routes are off, and off loopback the run is served only over TLS.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/spindle-cli/caller_token.rs::a_request_with_a_valid_token_runs_as_its_mapped_caller",
+    ),
+    shipped(
+        "Execution",
+        "HTTPS listener and client certificates",
+        "run --tls-cert with --tls-key serves HTTPS on the listener, TLS 1.2 and 1.3, and a plain HTTP request gets no HTTP answer; --tls-client-ca requires every client, the proxy in front, to present a certificate that CA signed (mTLS), on every route, /__spindle/live and /__spindle/ready included. A file that cannot be read, holds no certificate or key, or a key that does not match the certificate exits 2 before listening, naming the flag and the file. Off loopback the trusted caller header and secret, or a verified caller token, are still required; a renewed certificate is read by a restart.",
+        "/docs/concepts/capabilities",
+        "crates/spindle-cli/tests/spindle-cli/listener_tls.rs::a_served_run_given_a_certificate_answers_https",
+    ),
+    shipped(
+        "Execution",
         "Seed at start",
         "run --seed, or the environment's [seed] file, names a JSON array of commands, each with its input, actor, caller and request id, that a served run submits on every start after its stores open: checked against the specification before listening, then one at a time in the file's order beside the listener. Each counts as applied, already there (an existing_instance: outcome, or a request id an earlier applied or already-there entry carried), refused (a declared refusing outcome) or rejected (the host or the kernel refused it before an outcome); each is logged and the rest still run, the counts are in one log line and in /__spindle/metrics, and a seed that ends with a rejected entry stops the run with exit 1. On a --state directory, seed.json records the seed file's digest and how many entries are done: a restart with the same file sends only the entries not yet done, and one with another file exits 1 before listening unless the state holds no row; a store kept elsewhere records nothing, and every start sends the whole seed. A reset drops the entries not yet sent; with no world it submits the seed again before it answers, and with a world it loads that world alone and records every entry done. GET /__spindle/seed answers whether the seed is running or ended with its counts, and GET /__spindle/ready answers 503 until it has ended and 200 from then on, with or without --observe, so a readiness probe needs no view row.",
         "/docs/concepts/environment-and-admission#a-seed-submitted-at-start",
@@ -467,6 +495,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "An environment binds external causes to decisions-file and names the file in a [decisions] table; run, on stdin or serving HTTP, answers them from it as from --decisions, which wins over the table. A cause bound to decisions-file with no file named, or to an implementation run does not provide (anything but operator-prompt, decisions-file and a declared [http.<name>] call), exits 1 before anything runs, naming the capability. A [decisions] table no external key binds is refused when the document is read, and play and deploy refuse one.",
         "/docs/concepts/environment-and-admission#external-causes-answered-from-a-decisions-file",
         "crates/spindle-cli/tests/spindle-cli/decisions.rs::an_environment_binding_external_to_a_decisions_file_answers_from_it",
+    ),
+    shipped(
+        "Execution",
+        "Published events posted to a webhook",
+        "An environment's [egress] table binds a published event to an [http.<name>] call with method POST; a served run posts each such event there as one spindle-egress/1 JSON body (format, event, component, log, position, fields; component, log and position name one event, the log another once a reset created the store's file again), at least once and in commit order per component store. A post that fails or is answered anything but 2xx is sent again after a pause that doubles up to 5 s, the component's later events waiting for it. The position up to which the call answered 2xx is kept in the component's own store, SQLite or PostgreSQL, as no published event, and a restart posts the events after it. An egress naming an event no component publishes, or one a component kept in memory publishes, exits 3 before listening.",
+        "/docs/concepts/environment-and-admission#published-events-posted-to-a-webhook",
+        "crates/spindle-cli/tests/spindle-cli/egress.rs::a_posted_event_is_not_posted_again_after_a_restart",
     ),
     shipped(
         "Execution",
@@ -504,6 +539,13 @@ pub const CAPABILITIES: &[Capability] = &[
         "crates/spindle-kernel/tests/spindle-kernel/resting_rows.rs::a_view_read_of_forty_rows_beside_a_hundred_thousand_events_answers_in_under_20_ms",
     ),
     shipped(
+        "Execution",
+        "Several processes on one PostgreSQL store",
+        "Several run processes of one specification given database_lease may start on one PostgreSQL store: one leads under a lease of each component's tables, renewed every fifth of database_lease, and is the one writer; the others answer /__spindle/live 200, /__spindle/ready 503 with standby: true and every other request 503, and write nothing. A standby takes over once the leader's lease ends or its database session does, as a killed leader's does, and every write runs a check of its lease's token, so a leader paused past its lease lands nothing once it resumes and exits 1. Without database_lease a run takes no lease and two processes on one store both write, so replicas must set it; the lease takes one connection of the serving role beyond components x database_pool, so the role's limit must leave room for it.",
+        "/docs/concepts/environment-and-admission",
+        "crates/spindle-cli/tests/spindle-cli/postgres/replicas.rs::a_killed_leader_leaves_the_standby_serving",
+    ),
+    shipped(
         "Conformance",
         "Scenario replay",
         "run --scenario replays an ess-scenario document through ESS's reader and conformance runner: an entity it arranges with setup is written into the store of the component that owns it, captures feed later steps, view asserts are checked, each act's line names the outcome its command took with its declared error, or its refusal, the first divergent step is named and ends the run, an external cause the scenario does not force is answered by --decisions, and a specification that declares no component replays as one implied component that owns every domain.",
@@ -533,7 +575,7 @@ pub const CAPABILITIES: &[Capability] = &[
     planned(
         "Deploy",
         "Cells, ownership and snapshots",
-        "Cells across threads, ownership leases with fencing, snapshots; design milestone M5, no story yet.",
+        "Cells across threads and snapshots; design milestone M5, no story yet. Ownership leases with fencing ship for several run processes on one PostgreSQL store.",
         "/docs/concepts/deployment-targets",
     ),
 ];

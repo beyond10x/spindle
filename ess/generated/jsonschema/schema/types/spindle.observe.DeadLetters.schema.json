@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.observe.DeadLetters.schema.json",
+  "$ref": "#/$defs/spindle.observe.DeadLetters",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:19b478712081bd3b52b6ef0208860d13b9fefaca1d4e1b83bf6c6ea5dd1a2433",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.observe.DeadLetter": {
+      "title": "DeadLetter",
+      "description": "One command a binding or a periodic binding invoked whose last attempt was refused or did not execute, and that its binding did not escalate, kept in the store of the component that accepts it: with `--drop-retries` too, and after the retries of a binding that retries. A binding whose input was unmet ran no attempt and keeps none. The command's input is kept with it for its replay (`POST /api/dead-letters/replay`) and never listed: like `RefusedBound`, an entry names the error and never a value of its fields. A dead letter survives a restart on the same state, is no event (`GET /api/events` never lists it), is replayed at most once, and is forgotten by a reset (`POST /api/reset`). Spindle's own (`docs/design/spindle.md` § 11, dead letters).",
+      "x-ess-name": "spindle.observe.DeadLetter",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Its id in its component's store, which a replay names with the component; ids grow and are never reused while the store is kept.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "component": {
+          "description": "The component that accepts the command and keeps the dead letter.",
+          "type": "string"
+        },
+        "binding": {
+          "description": "The binding id, of an event binding or a periodic one.",
+          "type": "string"
+        },
+        "event": {
+          "description": "The qualified name of the event the binding carried; absent for a periodic binding's command.",
+          "type": "string"
+        },
+        "command": {
+          "description": "The qualified name of the command.",
+          "type": "string"
+        },
+        "outcome": {
+          "description": "The refusing outcome the model selected; absent where the kernel rejected it.",
+          "type": "string"
+        },
+        "error": {
+          "description": "The qualified name of the error the refusing outcome declares, or, where the kernel rejected the command, the kind of its error, as `spindle_command_failures_total` labels it.",
+          "type": "string"
+        },
+        "attempts": {
+          "description": "How many times it was run, the last included: more than 1 only where the binding retries; 1 for a replay that was kept again.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        }
+      },
+      "required": [
+        "id",
+        "component",
+        "binding",
+        "command",
+        "error",
+        "attempts"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "id >= 1",
+        "attempts >= 1",
+        "attempts <= 5"
+      ]
+    },
+    "spindle.observe.DeadLetters": {
+      "title": "DeadLetters",
+      "description": "The answer of `GET /api/dead-letters`, a console route of a served run, answered on the host's thread: every dead letter that waits for a replay, component by component in name order, each component's by id.",
+      "x-ess-name": "spindle.observe.DeadLetters",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "dead_letters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/spindle.observe.DeadLetter"
+          }
+        }
+      },
+      "required": [
+        "dead_letters"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

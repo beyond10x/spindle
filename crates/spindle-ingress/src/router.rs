@@ -92,7 +92,9 @@ pub struct Routed {
 /// compared exactly; a path variable that does not decode `400`; a body over [`BODY_LIMIT`]
 /// `413`. A [`Request`] carries no header, so on a surface made [`Surface::proving_callers`] it
 /// proves no caller and carries no proxy secret: every command, view, console route and route
-/// under `/__spindle/` is refused `403` `{"refused": "not granted", "actor": null}`.
+/// under `/__spindle/` is refused `403` `{"refused": "not granted", "actor": null}`; on one made
+/// [`Surface::verifying_tokens`] it carries no token, and every request but the probes
+/// (`/__spindle/live`, `/__spindle/ready`, `/__spindle/seed`) is refused `401`.
 pub fn route(surface: &Surface, host: &mut Host, request: Request) -> Routed {
     routing(surface, host, request, None)
 }
@@ -115,6 +117,14 @@ fn routing(
 ) -> Routed {
     // A request value carries no header, so on a surface whose requests prove their caller it
     // carries neither a caller nor the proxy's secret, which the run's own routes answer alone.
+    // On one verifying bearer tokens it carries no token: every request but the probes is
+    // refused `401`.
+    if surface.verifies_tokens() && !crate::surface::probe(Reserved::of(&request.path)) {
+        return Routed {
+            response: Answer::unauthenticated().into(),
+            failed: Vec::new(),
+        };
+    }
     let proving = surface.caller_header().is_some();
     let unproven = || Routed {
         response: Answer::not_proven().into(),
@@ -289,9 +299,10 @@ impl Pending {
     /// owning store it reads ([`Reader::reads`]), `GET /api/model`, `GET /api/served`,
     /// `GET /api/events` and `GET /api/history` where every store gives a reading handle
     /// ([`Reader::reads_events`]), and on an observing surface the metrics and the topology. A
-    /// command, `POST /api/reset`, both methods of `/api/clock` and a view read on the host's
-    /// thread only are answered there, one at a time in arrival order, so a step of the clock
-    /// falls between two commands.
+    /// command, `POST /api/reset`, the dead letters (`GET /api/dead-letters`,
+    /// `POST /api/dead-letters/replay`), both methods of `/api/clock` and a view read on the
+    /// host's thread only are answered there, one at a time in arrival order, so a step of the
+    /// clock falls between two commands.
     #[cfg_attr(not(feature = "listener"), allow(dead_code))]
     pub(crate) fn reads(&self, reader: &Reader) -> bool {
         match &self.asked {
@@ -301,7 +312,13 @@ impl Pending {
             },
             Asked::Console(Console::Model | Console::Served) => true,
             Asked::Console(Console::Events | Console::History) => reader.reads_events(),
-            Asked::Console(Console::Reset | Console::Clock | Console::Step) => false,
+            Asked::Console(
+                Console::Reset
+                | Console::DeadLetters
+                | Console::Replay
+                | Console::Clock
+                | Console::Step,
+            ) => false,
             Asked::Hosted(_) => self.recorder.is_some(),
         }
     }
@@ -351,7 +368,14 @@ impl Pending {
                 Answered::ingress(),
             )),
             (
-                Asked::Console(Console::Reset | Console::Clock | Console::Step) | Asked::Hosted(_),
+                Asked::Console(
+                    Console::Reset
+                    | Console::DeadLetters
+                    | Console::Replay
+                    | Console::Clock
+                    | Console::Step,
+                )
+                | Asked::Hosted(_),
                 _,
             ) => None,
         };
@@ -440,6 +464,15 @@ impl Pending {
                     recorder.count_reset();
                 }
                 (answer.into(), Vec::new(), Answered::ingress())
+            }
+            Asked::Console(Console::DeadLetters) => (
+                crate::console::dead_letters(host).into(),
+                Vec::new(),
+                Answered::ingress(),
+            ),
+            Asked::Console(Console::Replay) => {
+                let (answer, failed) = crate::console::replay(host, &self.body);
+                (answer.into(), failed, Answered::ingress())
             }
             Asked::Console(Console::Clock) => (
                 crate::console::clock(host).into(),

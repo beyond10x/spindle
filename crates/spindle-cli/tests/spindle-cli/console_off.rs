@@ -200,7 +200,13 @@ fn console_answers(served: &Served) -> Vec<(Console, u16, Value)> {
         .into_iter()
         .map(|console| {
             let world = json!({"rows": []});
-            let body = (console == Console::Reset).then_some(&world);
+            // A replay names a dead letter no run keeps (story:dead-letters-kept-and-replayed).
+            let letter = json!({"component": "none", "id": 1});
+            let body = match console {
+                Console::Reset => Some(&world),
+                Console::Replay => Some(&letter),
+                _ => None,
+            };
             let method = console.method().as_str().to_uppercase();
             let path = match console {
                 Console::History => format!(
@@ -215,13 +221,20 @@ fn console_answers(served: &Served) -> Vec<(Console, u16, Value)> {
         .collect()
 }
 
-/// The status a served console route answers here: `409` for both methods of `/api/clock`, which
-/// a run without `--clock` serves and refuses to step (`story:served-clock-steps`), `200` for
-/// every other.
-fn served_status(console: Console) -> u16 {
+/// Whether `console` answered as a route the run serves: `409` for both methods of `/api/clock`,
+/// which a run without `--clock` serves and refuses to step (`story:served-clock-steps`), `404`
+/// naming the letter, not the path, for the replay of a dead letter no run keeps
+/// (story:dead-letters-kept-and-replayed), `200` for every other.
+fn served_answer(console: Console, status: u16, answer: &Value) -> bool {
     match console {
-        Console::Clock | Console::Step => 409,
-        _ => 200,
+        Console::Clock | Console::Step => status == 409,
+        Console::Replay => {
+            status == 404
+                && answer["refused"]
+                    .as_str()
+                    .is_some_and(|why| why.starts_with("no dead letter 1 of none"))
+        }
+        _ => status == 200,
     }
 }
 
@@ -276,15 +289,17 @@ fn console_routes_on_by_default_on_loopback() {
     let served = serve(&[], None);
     record(&served);
     for (console, status, answer) in console_answers(&served) {
-        assert_eq!(status, served_status(console), "{console}: {answer}");
+        assert!(
+            served_answer(console, status, &answer),
+            "{console}: {status} {answer}"
+        );
     }
     assert_eq!(log(&served), json!([]), "the reset ran");
     let served = serve(&["--console", "on"], None);
     for (console, status, answer) in console_answers(&served) {
-        assert_eq!(
-            status,
-            served_status(console),
-            "--console on, {console}: {answer}"
+        assert!(
+            served_answer(console, status, &answer),
+            "--console on, {console}: {status} {answer}"
         );
     }
 }

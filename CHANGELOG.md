@@ -6,6 +6,118 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+### Added
+
+- A served `run` given `--tls-cert <FILE>` and `--tls-key <FILE>` serves HTTPS on its listener,
+  TLS 1.2 and 1.3 on `ring`; with `--tls-client-ca <FILE>` every client, the proxy in front, must
+  present a certificate that CA signed (mTLS), on every route, `/__spindle/live` and
+  `/__spindle/ready` included. A file that cannot be read, holds no certificate or key, or a key
+  that does not match the certificate exits 2 before listening, naming the flag and the file. The
+  listening line is unchanged, and a renewed certificate is read by a restart
+  (`story:listener-tls`).
+- `run` on a durable store an earlier specification wrote starts only where every stored row stays
+  readable, and otherwise exits 3 before listening or reading stdin, naming on stdout each entity
+  and field (or state) the new specification cannot read: a field removed while rows hold a value
+  of it, a field retyped so that a stored value no longer reads (compared by structure, then each
+  stored value read under the new type as a command's value is admitted: an enum value added, a
+  struct member added as optional, or a newtype prefix, alphabet or invariant every value meets
+  fits), a non-optional field added, or made required, that rows lack, a state removed while rows
+  rest in it, or an entity removed, or moved to another component's store (named), while it holds
+  rows.
+  Each PostgreSQL store, each served component's SQLite file and the SQLite file of `run` reading
+  stdin records the model's digest and its entities' shapes, as one event of the stream
+  `spindle:log`/`specification` that `GET /api/events` never answers; every store is checked
+  before any records. A store with rows and no record records the specification unchecked, with
+  one line saying so. No migration is offered. `spindle_kernel` gains `Shapes`, `Model`, `Fit`,
+  `Misfit` and `LogStore::{recorded, check, record, fit}`; `spindle_host` gains `HostError::Misfit` and
+  `Host::unrecorded` (`story:spec-change-over-stored-rows`).
+- An environment's `[egress]` table binds a published event to an `[http.<name>]` call
+  (`"<qualified event>" = "<name>"`, method `POST`), and a served `run` posts each such event
+  there: one `spindle-egress/1` JSON body per event (`format`, `event`, `component`, `log`,
+  `position`, `fields`; `log` is the store's event log id, a new one once a reset recreated the
+  file, so `component`, `log` and `position` name one event), at least once, in commit order
+  per component store, beside the thread that runs commands. A failed or non-`2xx` post is sent
+  again after a pause that doubles up to 5 s, the component's later events waiting for it. The position up to which the call answered `2xx` is
+  kept in a reserved `spindle:log` stream of the component's own log, SQLite or PostgreSQL, which
+  `GET /api/events` and `Store::events_after` do not list, and a restart posts the events after
+  it. An egress naming an event no component publishes, or one of a component kept in `memory`,
+  exits 3 before listening; a call named only by an egress is no longer refused as unused.
+  `spindle_capability::Environment` gains `egress` and `egress_of`, `spindle_kernel::Store` gains
+  `egress_position` and `egress_posted`, and `spindle_kernel::Reading` gains
+  `events_placed_after`, each event with its own store position, which an egress posts; the
+  host's reading handle answers it as the store does (`story:event-egress-webhook`).
+- A command a binding or a tick invoked whose last attempt was refused or did not run, and that
+  its binding did not escalate, is kept as a dead letter in the store of the component that
+  accepts it, where a served run printed it on stderr as `dropped` (a refused one not at all) and
+  lost it. `GET /api/dead-letters` lists each with its id, component, binding, event, command,
+  outcome, error and attempts, never a value of its input (`spindle.observe.DeadLetters`), and
+  `POST /api/dead-letters/replay` with `{"component", "id"}` runs it once more, without the
+  binding's retries, a refused or failed replay kept as a new dead letter
+  (`spindle.console.ReplayAnswer`); both are console routes, off with `--console off`. A dead
+  letter survives a restart on SQLite and PostgreSQL, is no event of `GET /api/events`, is
+  replayed at most once, and is forgotten by a reset, whose empty stores never give its id
+  again. stderr says `kept as dead letter <id>` where it said `dropped`, and `dropped` with the
+  store's reason where the store could not keep it. `spindle_kernel::Store` gains
+  `keep_dead_letter`, `dead_letters`, `take_dead_letter`, `last_dead_letter_id` and
+  `continue_dead_letter_ids`; `spindle_host::Failed` and `RefusedCommand` gain `dead_letter` and
+  `not_kept`, `Host::dead_letters`, `Host::replay` and `Host::replayed` list and replay them,
+  and `Host::take_unkept` hands a served run each refused command its store could not keep
+  (`story:dead-letters-kept-and-replayed`).
+- A served `run` given `--caller-token <FILE>` verifies each request's caller itself from its
+  signed token, `Authorization: Bearer <JWT>`: the signature against the issuer's key set (JWKS,
+  `https://`, or `http://` on loopback), the issuer, the audience and the expiry, its claims
+  mapped by the TOML file to an actor and its attributes. A request without a valid token answers
+  `401` before anything of it is read and is neither recorded nor counted; one whose claims map to
+  no caller of the model answers `403` "not granted" and writes nothing. The key set is fetched
+  before listening (exit 1 when it cannot be) and again every `refresh_seconds`, so a rotated key
+  verifies without a restart, and a key removed from the set stops verifying. Only
+  `/__spindle/live`, `ready` and `seed` answer without a token; the other routes under
+  `/__spindle/` need a token whose claims map to a caller of the model. The console routes are
+  off (`--console on` exits 2), and a mapping naming an actor or attribute the specification does
+  not declare, or leaving a required attribute of a mapped actor unmapped, exits 1.
+  Given with `--trusted-caller-header` or `--fixed-actor` the run exits 1; off loopback it requires
+  `--tls-cert` and `--tls-key`, and exits 2 without them (`story:verified-caller-token`).
+- Each release publishes the image `ghcr.io/beyond10x/spindle:<version>`, one manifest list for
+  `linux/amd64` and `linux/arm64`: the release's gnu binary on `gcr.io/distroless/cc-debian12`
+  pinned by digest, run as UID 65532 with `b10x-spindle` as the entrypoint, from the new
+  `Containerfile`. On a runner of each architecture the release workflow refuses the image unless
+  it answers the release's `--version`, runs as a numeric user other than root, and answers a
+  request sent with the trusted caller secret from outside the container to a `run` on `0.0.0.0`,
+  before a job of its own pushes that same image by digest; a version tag already in `ghcr.io` is
+  left as it is where it lists the two checked images and refused, never moved, otherwise. The
+  release's `IMAGES` asset, listed in `SHA256SUMS`, names the manifest list by digest, and the job
+  summary prints it. A pull request that changes the workflow builds and checks both images and
+  pushes nothing; a backfilled tag cut before the image existed publishes its assets without
+  `IMAGES` (`story:spindle-image-published`).
+
+- Several served `run` processes of one specification given the new setting `database_lease`
+  (whole seconds) may start on one PostgreSQL store. Each component's tables hold a lease, a row of
+  `spindle_<component>_p_lease` that `store migrate` creates; the process that takes every lease,
+  in component name order, leads and is the one writer, renewing them every fifth of
+  `database_lease`. Leases apply only where `database_lease` is set: without it a run takes no
+  lease and behaves as before, so two processes on one store both write, and replicas must set it.
+  The lease takes one connection of the serving role beyond components x `database_pool`, so the
+  role's `CONNECTION LIMIT` must leave room for it. The others stand by: they print the listening
+  line, answer `/__spindle/live` `200`, `/__spindle/ready` `503` with `"standby": true` and every
+  other request `503`, open no store, write nothing, post no event to a webhook and keep no dead
+  letter. A standby takes over once the leader's lease ends or its database session does, as a
+  killed leader's does (measured 0.7 s after a SIGKILL), and skips the seed, which runs only under
+  the leases' first token. Every write checks its lease's token in its own transaction, so a leader
+  paused past its lease lands nothing once it resumes, answers the requests it took `503`, and
+  exits 1 naming the lease; so does a leader whose write the check refused, or whose lease session
+  ended, as a renewal lands only on the session that took the lease. A leader whose lease is not
+  known still held posts no event; the process that takes over posts from the last position the old
+  leader saved, so a failover may post an event again, with the same `component`, `log` and
+  `position`, for a consumer to de-duplicate on. A standby whose lease connection is closed or
+  refused stands by on, connects again, and warns naming the leases and the connection error. A
+  leader paused inside a write holds its lease row until the store's 10 s idle timeout ends its
+  transaction, so the takeover comes at most one lease plus 10 s and one ask of the standby after
+  the pause; a session outside Spindle that locks a lease row stops the takeover while it holds it,
+  and the leader exits 1 after one lease without a renewal. A write that failed committing nothing,
+  where the lease is then found lost, answers `503`. A `database_lease` that is not a whole number
+  from 1 to 86400 exits 1 before connecting, and with it tables a release before leases migrated
+  are refused until `store migrate` runs again (`story:several-writers-one-postgres`).
+
 ## [0.25.0] - 2026-11-27
 
 ### Added

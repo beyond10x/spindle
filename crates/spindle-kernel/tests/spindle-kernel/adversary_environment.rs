@@ -71,6 +71,7 @@ fn runtime(document: &BTreeMap<String, Vec<String>>) -> spindle_capability::Envi
         http: BTreeMap::new(),
         seed: None,
         decisions: None,
+        egress: BTreeMap::new(),
     }
 }
 

@@ -163,7 +163,14 @@ pub enum Command {
     /// stops it, it takes no further request, writes every answer it has given, answers each
     /// request still waiting `503`, and exits. `GET /__spindle/live` answers `200` while the
     /// run's thread answers a request it took or has asked for one within 60 s, `503` once it
-    /// has done neither, with or without `--observe`. Routes are where `ess generate --kind
+    /// has done neither, with or without `--observe`. On a store kept in PostgreSQL with the
+    /// setting `database_lease` a run that finds another process holding the lease of a
+    /// component's tables stands by: it prints its listening line, answers `GET /__spindle/live`
+    /// `200`, `GET /__spindle/ready` `503` with `"standby": true` and every other request `503`,
+    /// writes nothing, and serves once it takes every lease; a run whose lease another process
+    /// took exits 1. The lease takes one connection of the serving role beyond components x
+    /// `database_pool`. Without `database_lease` it takes no lease, and two runs on one store
+    /// both write, so replicas must set it. Routes are where `ess generate --kind
     /// openapi` publishes them:
     /// ESS's derived routes, or with `--http` the `ess-http/1` binding's, read and checked by ESS
     /// (methods, paths, path variables and per-outcome statuses), an operation it does not name
@@ -237,6 +244,24 @@ pub enum Command {
     /// or times out; a served read does not wait for it. With `--observe`, each such cause is
     /// listed and counted with the source `call`, or `unanswered` where its call failed.
     ///
+    /// A served run posts each published event the environment's `[egress]` table binds to an
+    /// `[http.<name>]` call (`"<qualified event>" = "<name>"`, the call's method `POST`) to that
+    /// call, beside the run's thread: one `spindle-egress/1` JSON body per event (`format`,
+    /// `event`, `component`, `log`, the id of the component's event log, another once a reset
+    /// created the store's file again, `position`, the event's store position, rising from one
+    /// event to the next, and `fields`, as published; `component`, `log` and `position` name one
+    /// event), with the call's URL, timeout, secret and `ca_file` as
+    /// above. Each component's events are posted in commit order, at least once: a post that
+    /// fails or is answered anything but `2xx` is sent again after a pause that doubles up to 5 s,
+    /// without end, and the component's later events to that call wait for it; a `2xx` is decided
+    /// on the status alone, its body not read. The position up to which they were answered `2xx`
+    /// is saved in the component's store, and a restart on the same state posts the events after
+    /// it; an event answered just before a SIGKILL may be posted again. On a signal the posting
+    /// stops after the post under way. An egress naming an event no component publishes, or one
+    /// whose component keeps its state in `memory`, exits 3 before listening; a run reading stdin
+    /// refuses an `[egress]`. A reset stops the posting while it empties the stores and goes on
+    /// with the events after it.
+    ///
     /// `POST /api/reset` may carry a world as its JSON body, each key optional: `{"rows":
     /// [{"entity", "identity", "state", "fields"}], "decisions": {...}, "mint": <seed>, "clock":
     /// "<RFC 3339>"}`. Every
@@ -263,6 +288,16 @@ pub enum Command {
     /// process stops before it is delivered. A binding that escalates into an event the component
     /// running its command does not publish exits 1 before listening or reading stdin, naming the
     /// binding, the event and the component.
+    ///
+    /// Each durable store (the `--state` file, each component's file in a served `--state`
+    /// directory, each component's PostgreSQL tables) records the specification it was last
+    /// written under. Under another one, `run` starts only where every stored row stays readable:
+    /// otherwise it exits 3 before listening or reading stdin, writing nothing, and prints on
+    /// stdout each entity and field (or state) whose stored rows the specification cannot read: a
+    /// field removed or retyped while rows hold it, a non-optional field added that rows lack, a
+    /// state removed while rows rest in it, an entity removed while it holds rows. A store with
+    /// rows and no record, as an earlier release wrote it, records the specification unchecked and
+    /// logs one line saying so.
     Run {
         /// The specification directory.
         spec: PathBuf,
@@ -278,8 +313,9 @@ pub enum Command {
         /// Read JSON lines on stdin where a component requires `ingress.network` (`reached_by:
         /// network`), instead of serving HTTP: every component runs in this process on one store
         /// and its event bindings fire as on any other stdin run; no periodic binding fires. Given
-        /// with a flag only a served run reads (`--http`, `--port`, `--address`, `--fixed-actor`,
-        /// `--fixed-caller`, `--trusted-caller-header`, `--trusted-caller-secret`, `--observe`,
+        /// with a flag only a served run reads (`--http`, `--port`, `--address`, `--tls-cert`,
+        /// `--tls-key`, `--tls-client-ca`, `--fixed-actor`, `--fixed-caller`,
+        /// `--trusted-caller-header`, `--trusted-caller-secret`, `--caller-token`, `--observe`,
         /// `--observe-requests`, `--observe-series`, `--seed`, `--drain` or `--log-format json`),
         /// exits 2 before anything is loaded. Where no component requires `ingress.network`, `run`
         /// reads stdin with or without it.
@@ -290,10 +326,14 @@ pub enum Command {
                 "http",
                 "port",
                 "address",
+                "tls_cert",
+                "tls_key",
+                "tls_client_ca",
                 "fixed_actor",
                 "fixed_caller",
                 "trusted_caller_header",
                 "trusted_caller_secret",
+                "caller_token",
                 "observe",
                 "observe_requests",
                 "observe_series",
@@ -319,8 +359,9 @@ pub enum Command {
         /// The IP address to serve HTTP on, IPv4 or IPv6 (`::1`, no brackets), instead of
         /// 127.0.0.1, the default; a host name or a value with a port exits 2 before listening.
         /// An address off loopback (anything but 127.0.0.0/8 and `::1`) requires
-        /// `--trusted-caller-header` with `--trusted-caller-secret`, and without both exits 2
-        /// before listening; `--fixed-actor` is not enough, since it proves nobody. There every
+        /// `--trusted-caller-header` with `--trusted-caller-secret`, or `--caller-token` with
+        /// `--tls-cert` and `--tls-key`, and without either exits 2 before listening;
+        /// `--fixed-actor` is not enough, since it proves nobody. With the header there every
         /// request without the proxy's secret is refused `403` `{"refused": "not granted",
         /// "actor": null}` before anything of it is read, on every route, the console routes and
         /// `/__spindle/` included. Off loopback the console routes are off unless `--console on`
@@ -328,6 +369,8 @@ pub enum Command {
         /// HTTP.
         #[arg(long, value_name = "IP", conflicts_with = "scenario")]
         address: Option<std::net::IpAddr>,
+        #[command(flatten)]
+        tls: Box<ListenerTls>,
         /// `on` or `off`: serve the console routes (`POST /api/reset`, `GET /api/events`,
         /// `GET /api/model`, `GET /api/served` and every other route under `/api/` the console
         /// answers) or not. Off, each answers `404` as an unrouted path does, whatever secret the
@@ -401,6 +444,38 @@ pub enum Command {
         /// never the secret. Only where `run` serves HTTP.
         #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
         trusted_caller_secret: Option<PathBuf>,
+        /// Verify each request's caller from the signed token it carries, `Authorization: Bearer
+        /// <JWT>`, as the TOML mapping `FILE` says: `issuer`, `audience`, `jwks` (the issuer's
+        /// key set, `https://`, or `http://` to a loopback host only), `ca_file` (PEM roots for
+        /// an `https://` key set, optional), `algorithms` (asymmetric only, `RS256` by default;
+        /// a symmetric one exits 1), `leeway_seconds` (60 by default, at most 300) and
+        /// `refresh_seconds` (300 by default, 1 to 86400); `[actor]` `claim` and
+        /// `[actor.values]`, each value of that claim mapped to a qualified actor, and
+        /// `[attributes."<actor>"]`, each attribute of that actor mapped to the claim it is read
+        /// from. A token verifies where a key of the set its header names (`kid`) of the
+        /// algorithm's family verifies its signature, and its `iss`, `aud` and `exp` hold. A
+        /// command that reads its caller then runs for the caller its claims map to, bound
+        /// against the model as `--fixed-caller` is, and a read-granted view is read as it. A
+        /// request without a token, with one that does not verify (expired, another issuer or
+        /// audience, an unknown key, a signature that does not verify, `alg: none`) is refused
+        /// `401` with `WWW-Authenticate: Bearer` before anything of it is read, and is neither
+        /// recorded nor counted; one whose claims map to no caller of the model is refused `403`
+        /// `{"refused": "not granted", "actor": null}` and writes nothing. Only
+        /// `/__spindle/live`, `/__spindle/ready` and `/__spindle/seed` answer without a token;
+        /// every other route under `/__spindle/` needs a token whose claims map to a caller of
+        /// the model, and answers any other `403` the same way, unrecorded. The console routes
+        /// are off, and `--console on` exits 2. A role mapped to an actor, or an attribute, the
+        /// specification does not declare, or a required attribute of a mapped actor mapped from
+        /// no claim, exits 1 before listening. The key set is fetched
+        /// before listening, and a run that cannot fetch it, or whose set lists no usable key,
+        /// exits 1; it is fetched again every `refresh_seconds`: a set fetched replaces the keys,
+        /// one listing no usable key too (every token is then refused, with a warning line), and
+        /// a failed refresh keeps the last set and writes one warning line. No token or claim is
+        /// printed. Given with `--trusted-caller-header` or `--fixed-actor`, `run` exits 1; off
+        /// loopback it requires `--tls-cert` and `--tls-key`, and without them exits 2. Only where
+        /// `run` serves HTTP.
+        #[arg(long, value_name = "FILE", conflicts_with = "scenario")]
+        caller_token: Option<PathBuf>,
         /// Record every request the listener answers outside `/__spindle/`, timed from its head
         /// read to its answer handed back, and answer `GET /__spindle/requests` with a
         /// `spindle-requests/1` log: the totals per class since start (`served`, `refused`,
@@ -710,6 +785,50 @@ pub enum Command {
         #[command(subcommand)]
         command: StateCommand,
     },
+}
+
+/// The flags `run` serves TLS with (`story:listener-tls`), flattened into `run` and boxed, so
+/// `Command` stays within the size clippy allows a variant.
+#[derive(Debug, clap::Args)]
+pub struct ListenerTls {
+    /// Serve HTTPS instead of plain HTTP, with the PEM certificate chain in `FILE`, the
+    /// server's own certificate first, and the key of `--tls-key`; each requires the other.
+    /// TLS 1.2 and 1.3; a plain HTTP request on the port gets no HTTP answer, and the
+    /// listening line is the same as without it. A file that cannot be read or holds no
+    /// certificate, or a key that does not match the certificate, exits 2 before listening,
+    /// with a line naming the flag and the file. Read once at start: a renewed certificate is
+    /// served from the next restart. Only where `run` serves HTTP.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires = "tls_key",
+        conflicts_with = "scenario"
+    )]
+    pub tls_cert: Option<PathBuf>,
+    /// The PEM private key of `--tls-cert` (PKCS #8, PKCS #1 or SEC1); requires `--tls-cert`.
+    /// A file that cannot be read or holds no key exits 2 before listening.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires = "tls_cert",
+        conflicts_with = "scenario"
+    )]
+    pub tls_key: Option<PathBuf>,
+    /// Require every client, the proxy in front, to present a certificate one of the PEM CA
+    /// certificates in `FILE` signed (mTLS): a client without one, or with one another CA
+    /// signed, fails the handshake and gets no answer. This holds on every route,
+    /// `/__spindle/live` and `/__spindle/ready` included: an `httpGet` probe cannot connect, so
+    /// the probes are `tcpSocket` probes on the port. Requires `--tls-cert` and `--tls-key`.
+    /// Off loopback `--trusted-caller-header` and `--trusted-caller-secret`, or
+    /// `--caller-token`, are still required. A file that cannot be read or holds no certificate
+    /// exits 2 before listening.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires_all = ["tls_cert", "tls_key"],
+        conflicts_with = "scenario"
+    )]
+    pub tls_client_ca: Option<PathBuf>,
 }
 
 /// One `b10x-spindle state` command.

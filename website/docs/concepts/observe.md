@@ -109,7 +109,7 @@ healthcheck or an orchestrator's probes need no view row:
 | Route | Answers |
 |---|---|
 | `GET /__spindle/seed` | the state of the run's [seed](environment-and-admission.md#a-seed-submitted-at-start), `{"state": "none"}` on a run without one; otherwise `{"state", "entries", "left", "sent", "applied", "already_there", "refused", "rejected"}`, `state` being `running` or `ended` |
-| `GET /__spindle/ready` | `200` where the run has no seed or its seed has ended, and no signal has arrived; `503` otherwise. The body is `{"ready", "seed", "stopping"}`, `seed` being the `state` above |
+| `GET /__spindle/ready` | `200` where the run has no seed or its seed has ended, no signal has arrived and the run is not standing by; `503` otherwise. The body is `{"ready", "seed", "stopping"}`, `seed` being the `state` above, with `"standby": true` added while the run stands by for another process's lease of a PostgreSQL store ([several processes on one store](environment-and-admission.md#several-processes-on-one-store)) |
 | `GET /__spindle/live` | `200` while the run's thread answers a request it took, however long that takes (a reset seeding again, a delivery retried), or has asked for one within the last 60 s; `503` once it holds none and has asked for none for 60 s. The body is `{"live", "idle_ms", "bound_ms"}`, `idle_ms` counting from its last ask |
 
 ```console
@@ -128,7 +128,10 @@ stores until its seed run ends, with that run's counts.
 All three are answered by the listener's own threads, never waiting for a command, a seed entry or
 an external call. On a run with `--trusted-caller-header` they require the proxy's secret, as every
 `/__spindle/` route does: a probe sends the `Spindle-Proxy-Secret` header, such as Kubernetes'
-`httpGet.httpHeaders`. The answers are declared by `spindle.observe.SeedState`,
+`httpGet.httpHeaders`. On a run serving TLS an `httpGet` probe sets `scheme: HTTPS`; with
+`--tls-client-ca` an `httpGet` probe cannot connect at all, since it presents no client
+certificate, and the probes are `tcpSocket` probes
+([serving TLS](capabilities.md#serving-ingressnetwork-over-http)). The answers are declared by `spindle.observe.SeedState`,
 `spindle.observe.Readiness` and `spindle.observe.Liveness` in `ess/domains/observe.yaml`.
 
 ### Draining on SIGTERM

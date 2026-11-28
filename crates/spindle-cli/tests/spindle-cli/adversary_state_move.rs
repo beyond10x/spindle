@@ -950,9 +950,19 @@ fn a_move_with_a_serving_role_limited_to_the_stores_share_moves_the_directory() 
     let ran = serving_run.wait_with_output().expect("run ends");
     let served = first.contains("listening");
     let moved = state_move(directory.path(), &settings);
+    // The run before the move records its specification in each component's empty tables, one
+    // `spindle.specified` event (story:spec-change-over-stored-rows): the move lands the rest.
     let landed: Vec<u64> = COMPONENTS
         .iter()
-        .map(|component| events(&schema.0, component))
+        .map(|component| {
+            let table = format!("{}_events", spindle_kernel::postgres_prefix(component));
+            sql(&[format!(
+                "SELECT count(*) FROM {}.{table} WHERE event_name <> 'spindle.specified'",
+                schema.0
+            )])[0]
+                .parse()
+                .expect("a count")
+        })
         .collect();
     let _ = sql(&[format!("DROP OWNED BY {role}"), format!("DROP ROLE {role}")]);
     assert!(

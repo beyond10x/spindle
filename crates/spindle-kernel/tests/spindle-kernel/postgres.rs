@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use spindle_kernel::{
-    Change, Database, PostgresStore, Removal, Row, Scan, Store, Stored, Write, contract,
-    postgres_prefix,
+    Change, Database, Fit, Lease, Misfit, PostgresStore, Removal, Row, Scan, Shape, Shapes, Store,
+    Stored, Write, contract, postgres_prefix,
 };
 
 const NEEDS: &str = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres";
@@ -587,4 +587,212 @@ fn a_database_url_holding_an_unencoded_at_or_no_host_is_refused() {
             "{url:?}: {message}"
         );
     }
+}
+
+/// The shapes of `apart.match.Match` with its `side` field of `kind`, under `digest`: what a store
+/// records of a specification (`story:spec-change-over-stored-rows`).
+fn shapes(digest: &str, kind: Value) -> Shapes {
+    Shapes {
+        digest: digest.to_owned(),
+        entities: BTreeMap::from([(
+            "apart.match.Match".to_owned(),
+            Shape {
+                fields: BTreeMap::from([("side".to_owned(), kind)]),
+                states: ["open".to_owned()].into(),
+            },
+        )]),
+        model: spindle_kernel::Model::default(),
+    }
+}
+
+/// `story:spec-change-over-stored-rows` on PostgreSQL: the store records the specification at
+/// open, reads it back on the next, and refuses one that retypes a field its rows hold, the record
+/// left as it was.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn the_postgres_store_records_the_specification_it_was_written_under() {
+    let database = database();
+    let component = fresh("specified");
+    let before = shapes("before", json!({"primitive": "string"}));
+    let mut store = open(&database, &component);
+    assert_eq!(
+        store.fit(&before).expect("checked"),
+        Fit::Fits { unrecorded: false }
+    );
+    store.commit(&created("west")).expect("committed");
+    drop(store);
+    let mut store = open(&database, &component);
+    assert_eq!(
+        store.recorded().expect("the record reads"),
+        Some(before.clone())
+    );
+    assert_eq!(store.fit(&before).expect("checked"), Fit::Same);
+    let after = shapes("after", json!({"primitive": "integer"}));
+    assert_eq!(
+        store.fit(&after).expect("checked"),
+        Fit::Misfits(vec![Misfit::Retyped {
+            entity: "apart.match.Match".to_owned(),
+            field: "side".to_owned(),
+            rows: 1,
+        }])
+    );
+    assert_eq!(store.recorded().expect("the record reads"), Some(before));
+    assert!(
+        store
+            .events_after(0, usize::MAX)
+            .expect("the events read")
+            .is_empty(),
+        "the record is no published event"
+    );
+}
+
+/// A file moved into tables a `run` opened empty, which recorded its own specification, arrives
+/// with the file's record last: the move appends it past the one the tables hold.
+#[cfg(feature = "sqlite")]
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_moved_file_carries_its_record_past_one_the_tables_hold() {
+    let database = database();
+    let component = fresh("moved-record");
+    let directory = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a directory");
+    let path = directory.path().join("moved.sqlite");
+    let written = shapes("written", json!({"primitive": "string"}));
+    let mut file = spindle_kernel::SqliteStore::open(&path).expect("the file opens");
+    file.fit(&written).expect("the file records");
+    file.commit(&created("west")).expect("committed");
+    drop(file);
+    let opened = shapes("opened", json!({"primitive": "integer"}));
+    let mut tables = open(&database, &component);
+    tables.fit(&opened).expect("the empty tables record");
+    drop(tables);
+    let source = spindle_kernel::StateSource::open(&path).expect("the file opens");
+    source.check().expect("the file can move");
+    let lock = spindle_kernel::StateLock::take(&database).expect("the schema's lock is taken");
+    let target =
+        spindle_kernel::StateTarget::open(&database, &component, 1).expect("the tables open");
+    assert!(
+        target
+            .is_empty(&["apart.match.Match".to_owned()], &source)
+            .expect("the tables are read"),
+        "tables holding only a record are empty"
+    );
+    target.copy(&source).expect("the file is copied");
+    target.close().expect("the tables close");
+    lock.release().expect("the lock is released");
+    let mut store = open(&database, &component);
+    assert_eq!(
+        store.recorded().expect("the record reads"),
+        Some(written.clone())
+    );
+    assert_eq!(store.fit(&written).expect("checked"), Fit::Same);
+}
+
+/// A dead letter kept in a PostgreSQL store is read back by a store opened again on the same
+/// tables, is no event, and is taken for its replay once (story:dead-letters-kept-and-replayed).
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_dead_letter_survives_on_postgres() {
+    let database = database();
+    for case in contract::DEAD_LETTER_CASES {
+        let mut store = open(&database, &fresh("letters"));
+        (case.run)(&mut store);
+    }
+    let component = fresh("letters");
+    let letter = spindle_kernel::DeadLetter {
+        binding: "ship-on-order".to_owned(),
+        event: Some("depot.orders.OrderPlaced".to_owned()),
+        command: "depot.shipping.Ship".to_owned(),
+        input: serde_json::Map::from_iter([("order_id".to_owned(), json!("o-1"))]),
+        outcome: None,
+        error: "undecided".to_owned(),
+        attempts: 5,
+    };
+    let id = open(&database, &component)
+        .keep_dead_letter(&letter)
+        .expect("the letter is kept");
+    let mut reopened = open(&database, &component);
+    assert_eq!(
+        reopened.dead_letters().expect("the letters read"),
+        vec![(id, letter.clone())]
+    );
+    assert!(
+        reopened
+            .events_after(0, usize::MAX)
+            .expect("the events read")
+            .is_empty(),
+        "a dead letter is no event"
+    );
+    assert_eq!(
+        reopened.take_dead_letter(id).expect("the letter is taken"),
+        Some(letter)
+    );
+    assert_eq!(
+        open(&database, &component)
+            .take_dead_letter(id)
+            .expect("a second take is answered"),
+        None
+    );
+}
+
+/// `story:several-writers-one-postgres`: handle A writes under the lease of its component's
+/// tables; once that lease ran out and handle B took it, A's commit is refused by name, inside
+/// the append's own transaction, and the rows stay as they were.
+#[test]
+#[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
+fn a_commit_under_a_taken_lease_is_refused() {
+    let database = database();
+    let component = fresh("leased");
+    // Long enough that A's store opens and writes, and B connects, within it on a loaded host.
+    let term = Duration::from_secs(3);
+    let mut first = Lease::connect(&database, term).expect("A connects for the lease");
+    let token = first
+        .take(&component)
+        .expect("the lease is read")
+        .expect("no process holds the lease: A takes it");
+    let mut a = open(&database, &component);
+    a.commit(&created("west"))
+        .expect("A writes while it holds the lease");
+    let mut second = Lease::connect(&database, term).expect("B connects for the lease");
+    assert_eq!(
+        second.take(&component).expect("the lease is read"),
+        None,
+        "A's lease runs, and A's session is open: B does not take it"
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let taken = loop {
+        if let Some(taken) = second.take(&component).expect("the lease is read") {
+            break taken;
+        }
+        assert!(Instant::now() < deadline, "B never took the lease");
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert!(taken > token, "B's token {taken} follows A's {token}");
+    let mut moved = created("east");
+    moved.expected = Some(1);
+    let refused = a
+        .commit(&moved)
+        .expect_err("A's commit is refused once B holds the lease");
+    let refused = refused.to_string();
+    assert!(
+        refused.contains("lease") && refused.contains(&component),
+        "the refusal names the lease and the component: {refused}"
+    );
+    assert!(
+        !first
+            .renew(&component, token)
+            .expect("A's renewal is answered"),
+        "A's lease is gone"
+    );
+    let mut reader = open(&database, &component);
+    let loaded = reader
+        .load("apart.match.Match", &json!("one"))
+        .expect("the store reads")
+        .expect("A's first write is held");
+    assert_eq!(
+        side(&loaded),
+        &json!("west"),
+        "A's refused write left nothing"
+    );
+    assert_eq!(loaded.version, 1);
+    drop(second);
 }

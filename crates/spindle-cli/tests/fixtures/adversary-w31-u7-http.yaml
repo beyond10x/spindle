@@ -1,0 +1,12 @@
+type: ess-http/1
+specification:
+  system: notes
+  version: v1
+  source_digest: sha256:c7c524206f7bb71d9b9e043e36bc809b8c747a20e7464e5ab25a8c230dc12f30
+routes:
+  - command: notes.pad.OpenNote
+    method: put
+    path: /notes/{note_id}
+    parameters: {note_id: input.note_id}
+    outcomes:
+      opened: {status: 201}

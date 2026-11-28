@@ -553,9 +553,11 @@ fn served_unanswered_cascade_in_a_retried_binding_is_asked_on_every_attempt() {
         &json!({"request_id": "r1"}),
     );
     assert!((200..300).contains(&status), "{status} {answer}");
-    let stderr = served.stop_once("dropped after 5 attempts");
+    // A bound command that did not run is kept as a dead letter where it was dropped
+    // (story:dead-letters-kept-and-replayed); the line still names all five attempts.
+    let stderr = served.stop_once("after 5 attempts");
     assert!(
-        stderr.contains("dropped after 5 attempts")
+        stderr.contains("kept as dead letter 1 after 5 attempts")
             && stderr.contains("external.relay.audit.Audit.rejected"),
         "{stderr}"
     );

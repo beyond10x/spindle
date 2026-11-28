@@ -44,8 +44,9 @@ use std::sync::{Condvar, Mutex, PoisonError};
 
 use eventlog_core::EventStore;
 use eventlog_core::{
-    AppendGroup, AppendGroupResult, CommandMeta, EventLogError, Expected, MAX_READ_LIMIT, NewEvent,
-    Read, ReadResult, RecordedEvent, StreamAppend, StreamId, TenantId, new_event_id, request_hash,
+    AppendGroup, AppendGroupResult, CommandMeta, EventLogError, Expected, Guard, MAX_READ_LIMIT,
+    NewEvent, Read, ReadResult, RecordedEvent, StreamAppend, StreamId, TenantId, new_event_id,
+    request_hash,
 };
 #[cfg(feature = "sqlite")]
 use eventlog_sqlite::SqliteEventStore;
@@ -53,8 +54,8 @@ use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::store::{
-    Change, Committed, Origin, Position, Provenance, Reading, Removal, Row, Scan, Scanned, Store,
-    StoreError, Stored, Write, first_writes, identity_from_key, moved,
+    Change, Committed, DeadLetter, Origin, Position, Provenance, Reading, Removal, Row, Scan,
+    Scanned, Store, StoreError, Stored, Write, first_writes, identity_from_key, moved,
 };
 
 /// The table prefix Spindle's events are kept under.
@@ -106,6 +107,35 @@ pub(crate) const ENTITY: &str = "spindle:entity";
 /// it before it copies such a write into a PostgreSQL store. A scan of a marked log reads the
 /// whole log.
 pub(crate) const MARKS: (&str, &str) = ("spindle:log", "unnamed-writes");
+/// The stream recording the specification the store was last written under
+/// ([`LogStore::fit`]): each event one [`crate::Shapes`], the last the one in force. Of the
+/// stream type [`MARKS`] is of, which a scan and a state move count as no entity's, and left out
+/// of the events read back ([`LogStore::groups_after`]).
+pub(crate) const SPECIFICATION: (&str, &str) = ("spindle:log", "specification");
+/// The event of [`SPECIFICATION`].
+const SPECIFIED: &str = "spindle.specified";
+/// The stream id prefix of an egress cursor, a stream of the type [`MARKS`] is of, one per
+/// `[http.<name>]` call: `egress:<name>` ([`Store::egress_posted`]). Each of its events is one
+/// [`EGRESS_MARK`]; the last names the cursor. No published event: a read of the events
+/// committed skips it.
+const EGRESS: &str = "egress:";
+/// The event of an egress cursor's stream: `{"position": <n>}`, the position of the last write
+/// whose events were posted to the call.
+const EGRESS_MARK: &str = "spindle.egress";
+/// The stream of the store's dead letters ([`Store::keep_dead_letter`]): one [`DEAD_LETTER`]
+/// event for each, its id the event's version plus the greatest `after` of the [`CONTINUED`]
+/// events before it, and one [`REPLAYED`] event for each taken ([`Store::take_dead_letter`]).
+/// Of the stream type [`MARKS`] is of; no read of the events answers it
+/// ([`LogStore::groups_after`]), and only those after the last [`RESET`] mark are kept.
+pub(crate) const DEAD_LETTERS: (&str, &str) = ("spindle:log", "dead-letters");
+/// The event of [`DEAD_LETTERS`] that keeps one, its body the [`DeadLetter`].
+const DEAD_LETTER: &str = "spindle.dead-letter";
+/// The event of [`DEAD_LETTERS`] that takes one, `{"id": <id>}`.
+const REPLAYED: &str = "spindle.replayed";
+/// The event of [`DEAD_LETTERS`] that continues the ids of the store a reset replaced,
+/// `{"after": <id>}` ([`Store::continue_dead_letter_ids`]): every dead letter kept after it has
+/// an id greater than `after`.
+const CONTINUED: &str = "spindle.dead-letter-ids-continued";
 /// Who records the change: the runtime itself, the actor of an append whose cause names no actor
 /// ([`LogStore::attributed`]).
 const ACTOR: &str = "spindle-kernel";
@@ -201,7 +231,24 @@ pub struct LogStore<L> {
     /// How far the feed holds this store's own appends, shared with its reading handle where
     /// that reads through the same event store ([`LogStore::published`]).
     own: Arc<Own>,
+    /// How far this store read the stream [`DEAD_LETTERS`] for the ids it continues, and the
+    /// greatest `after` of the [`CONTINUED`] events up to there ([`LogStore::offset_before`]).
+    continued: (u64, u64),
+    /// The check every write runs inside its own append transaction, where one is set
+    /// ([`LogStore::fence`]): a PostgreSQL store opened under its component's lease refuses each
+    /// write once another process took that lease (`story:several-writers-one-postgres`). A
+    /// SQLite store has none: its state directory is locked to one process.
+    fence: Option<Arc<dyn Guard>>,
+    /// Whether the lease the fence names is known still held, checked before a read of the feed
+    /// by position ([`Reading::events_placed_after`]), which an egress posts from: a process
+    /// that lost its lease, or was paused past it, posts no event another process committed.
+    #[cfg(feature = "postgres")]
+    current: Option<Current>,
 }
+
+/// The check of [`LogStore::current`].
+#[cfg(feature = "postgres")]
+type Current = Arc<dyn Fn() -> Result<(), StoreError> + Send + Sync>;
 
 /// The feed positions of a store's own appends: the last one it committed, and the last one the
 /// feed was seen to answer. A read of the feed waits until the feed answers the first
@@ -232,7 +279,7 @@ thread_local! {
 
 impl<L> LogStore<L> {
     /// Blocks on `call`, one call of the event store, on the store's runtime.
-    fn call<F: std::future::Future>(&self, call: F) -> F::Output {
+    pub(crate) fn call<F: std::future::Future>(&self, call: F) -> F::Output {
         #[cfg(test)]
         LOG_CALLS.with(|calls| calls.set(calls.get() + 1));
         self.runtime.block_on(call)
@@ -368,6 +415,10 @@ impl<L: Log> LogStore<L> {
             origin: None,
             outcome: None,
             own: Arc::default(),
+            continued: (0, 0),
+            fence: None,
+            #[cfg(feature = "postgres")]
+            current: None,
         })
     }
 
@@ -389,6 +440,10 @@ impl<L: Log> LogStore<L> {
             origin: None,
             outcome: None,
             own: Arc::clone(&self.own),
+            continued: (0, 0),
+            fence: self.fence.clone(),
+            #[cfg(feature = "postgres")]
+            current: self.current.clone(),
         }
     }
 
@@ -396,6 +451,35 @@ impl<L: Log> LogStore<L> {
     #[cfg(feature = "postgres")]
     pub(crate) fn log(&self) -> &L {
         &self.log
+    }
+
+    /// The tenant every stream of the store is of.
+    #[cfg(feature = "postgres")]
+    pub(crate) fn tenant(&self) -> &TenantId {
+        &self.tenant
+    }
+
+    /// Every write from now on runs `fence` inside its own append transaction and lands only where
+    /// it admits the write; its refusal ([`EventLogError::GuardRefused`]) is the write's error,
+    /// its code the whole message ([`backend`]).
+    #[cfg(feature = "postgres")]
+    pub(crate) fn fence(&mut self, fence: Arc<dyn Guard>, current: Current) {
+        self.fence = Some(fence);
+        self.current = Some(current);
+    }
+
+    /// Refuses where the store is fenced and its lease is not known still held.
+    #[cfg(feature = "postgres")]
+    fn current(&self) -> Result<(), StoreError> {
+        self.current.as_ref().map_or(Ok(()), |current| current())
+    }
+
+    /// Appends `group` in one transaction, under the store's fence where it has one.
+    fn grouped(&self, group: &AppendGroup) -> Result<AppendGroupResult, EventLogError> {
+        match &self.fence {
+            Some(fence) => self.call(self.log.append_group_guarded(group, Arc::clone(fence))),
+            None => self.call(self.log.append_group(group)),
+        }
     }
 
     /// The event store and the runtime its calls block on: what a state move appends through.
@@ -656,7 +740,7 @@ impl<L: Log> Store for LogStore<L> {
             meta: self.attributed(request_hash(&entries).map_err(backend)?),
             appends,
         };
-        match self.call(self.log.append_group(&group)) {
+        match self.grouped(&group) {
             Ok(landed) => {
                 self.landed(&landed);
                 // The group landed: its rows are folded in now, so a read finds no more to fold.
@@ -804,9 +888,233 @@ impl<L: Log> Store for LogStore<L> {
     fn events_id(&mut self) -> Result<u64, StoreError> {
         self.log_id()
     }
+
+    /// The `position` of the last event of the call's cursor stream ([`EGRESS`]), `0` for none.
+    fn egress_position(&mut self, call: &str) -> Result<u64, StoreError> {
+        let stream = self.egress_stream(call)?;
+        let Some((_, last)) = self.last(&stream)? else {
+            return Ok(0);
+        };
+        last.data
+            .get("position")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                StoreError::Backend(format!(
+                    "the egress cursor of {call} at version {} names no position",
+                    last.version
+                ))
+            })
+    }
+
+    /// Appends one `spindle.egress` event to the call's cursor stream ([`EGRESS`]), as an append
+    /// group of its own.
+    fn egress_posted(&mut self, call: &str, position: u64) -> Result<(), StoreError> {
+        let mark = NewEvent::new(
+            EGRESS_MARK,
+            SCHEMA,
+            serde_json::json!({"position": position}),
+        )
+        .map_err(backend)?;
+        self.append(vec![StreamAppend {
+            stream: self.egress_stream(call)?,
+            expected: Expected::Any,
+            events: vec![mark],
+        }])
+        .map_err(backend)
+    }
+
+    /// Appends one [`DEAD_LETTER`] event to the stream [`DEAD_LETTERS`], as an append group of
+    /// its own; its id is the event's version in that stream past the ids the stream was told to
+    /// continue before it ([`CONTINUED`]).
+    fn keep_dead_letter(&mut self, letter: &DeadLetter) -> Result<u64, StoreError> {
+        let body = serde_json::to_value(letter).map_err(|error| {
+            StoreError::Backend(format!("a dead letter does not encode: {error}"))
+        })?;
+        let event = NewEvent::new(DEAD_LETTER, SCHEMA, body).map_err(backend)?;
+        let landed = self
+            .appended(vec![StreamAppend {
+                stream: self.dead_letter_stream()?,
+                expected: Expected::Any,
+                events: vec![event],
+            }])
+            .map_err(backend)?;
+        let version = landed
+            .appends
+            .first()
+            .map(|append| append.last_version)
+            .ok_or_else(|| StoreError::Backend("the dead letter was not appended".to_owned()))?;
+        Ok(self.offset_before(version)? + version)
+    }
+
+    /// Read from the stream [`DEAD_LETTERS`], from the first event after the last reset mark
+    /// ([`RESET`]) on.
+    fn dead_letters(&mut self) -> Result<Vec<(u64, DeadLetter)>, StoreError> {
+        Ok(self.ledger()?.letters.into_iter().collect())
+    }
+
+    /// Appends one [`REPLAYED`] event naming `id` to the stream [`DEAD_LETTERS`], at the version
+    /// the stream stood at when it was read: a dead letter taken in between refuses the take.
+    fn take_dead_letter(&mut self, id: u64) -> Result<Option<DeadLetter>, StoreError> {
+        let stream = self.dead_letter_stream()?;
+        let ledger = self.ledger()?;
+        let Some(letter) = ledger.letters.get(&id).cloned() else {
+            return Ok(None);
+        };
+        let event =
+            NewEvent::new(REPLAYED, SCHEMA, serde_json::json!({"id": id})).map_err(backend)?;
+        self.appended(vec![StreamAppend {
+            stream,
+            expected: Expected::Exact(ledger.version),
+            events: vec![event],
+        }])
+        .map_err(|error| match error {
+            EventLogError::Conflict { .. } => StoreError::Backend(format!(
+                "another writer kept or took a dead letter while dead letter {id} was taken"
+            )),
+            other => backend(other),
+        })?;
+        Ok(Some(letter))
+    }
+
+    /// The stream's version past the ids it was told to continue: no id it answered is greater.
+    fn last_dead_letter_id(&mut self) -> Result<u64, StoreError> {
+        let ledger = self.ledger()?;
+        Ok(ledger.offset + ledger.version)
+    }
+
+    /// Appends one [`CONTINUED`] event naming `after` to the stream [`DEAD_LETTERS`], unless the
+    /// next id is past `after` already.
+    fn continue_dead_letter_ids(&mut self, after: u64) -> Result<(), StoreError> {
+        if self.last_dead_letter_id()? >= after {
+            return Ok(());
+        }
+        let event = NewEvent::new(CONTINUED, SCHEMA, serde_json::json!({"after": after}))
+            .map_err(backend)?;
+        self.appended(vec![StreamAppend {
+            stream: self.dead_letter_stream()?,
+            expected: Expected::Any,
+            events: vec![event],
+        }])
+        .map_err(backend)?;
+        Ok(())
+    }
 }
 
 impl<L: Log> LogStore<L> {
+    /// The egress cursor stream of the call `call` ([`EGRESS`]).
+    fn egress_stream(&self, call: &str) -> Result<StreamId, StoreError> {
+        StreamId::new(self.tenant.clone(), MARKS.0, format!("{EGRESS}{call}")).map_err(backend)
+    }
+}
+
+/// What the stream [`DEAD_LETTERS`] holds ([`LogStore::ledger`]).
+struct Ledger {
+    /// The dead letters it keeps and no [`REPLAYED`] event took, by id.
+    letters: BTreeMap<u64, DeadLetter>,
+    /// What the id of a dead letter appended next adds to its version: the greatest `after` a
+    /// [`CONTINUED`] event named, `0` for none.
+    offset: u64,
+    /// The version of the last event read, `0` for none.
+    version: u64,
+}
+
+impl<L: Log> LogStore<L> {
+    /// The stream [`DEAD_LETTERS`] of the store's tenant.
+    fn dead_letter_stream(&self) -> Result<StreamId, StoreError> {
+        let (kind, id) = DEAD_LETTERS;
+        StreamId::new(self.tenant.clone(), kind, id).map_err(backend)
+    }
+
+    /// The greatest `after` of the [`CONTINUED`] events of the stream [`DEAD_LETTERS`] before
+    /// `version`, `0` for none: what the id of the dead letter at `version` adds to it. Reads on
+    /// from where the last call stopped, so keeping one dead letter after another does not read
+    /// the stream again from its start.
+    fn offset_before(&mut self, version: u64) -> Result<u64, StoreError> {
+        let stream = self.dead_letter_stream()?;
+        let (mut read, mut offset) = self.continued;
+        if read >= version {
+            (read, offset) = (0, 0);
+        }
+        'pages: while read + 1 < version {
+            let page = self
+                .call(self.log.read_stream(&stream, read, MAX_READ_LIMIT))
+                .map_err(backend)?;
+            if page.events.is_empty() {
+                break;
+            }
+            for event in page.events {
+                if event.version >= version {
+                    break 'pages;
+                }
+                read = event.version;
+                if event.name == CONTINUED {
+                    let after = event.data.get("after").and_then(Value::as_u64);
+                    offset = offset.max(after.unwrap_or(0));
+                }
+            }
+            if page.end_of_stream {
+                break;
+            }
+        }
+        self.continued = (read, offset);
+        Ok(offset)
+    }
+
+    /// The stream [`DEAD_LETTERS`] read whole: each dead letter's id is its
+    /// version plus the greatest `after` of the [`CONTINUED`] events before it, and only those
+    /// appended after the last reset mark ([`RESET`]), compared by feed position, are kept.
+    fn ledger(&self) -> Result<Ledger, StoreError> {
+        let reset = StreamId::new(self.tenant.clone(), RESET.0, RESET.1).map_err(backend)?;
+        let forgotten = self.last(&reset)?.map_or(0, |(_, mark)| mark.global_seq);
+        let stream = self.dead_letter_stream()?;
+        let mut ledger = Ledger {
+            letters: BTreeMap::new(),
+            offset: 0,
+            version: 0,
+        };
+        loop {
+            let page = self
+                .call(
+                    self.log
+                        .read_stream(&stream, ledger.version, MAX_READ_LIMIT),
+                )
+                .map_err(backend)?;
+            let read = page.events.len();
+            for event in page.events {
+                ledger.version = event.version;
+                if event.name == CONTINUED {
+                    let after = event.data.get("after").and_then(Value::as_u64);
+                    ledger.offset = ledger.offset.max(after.unwrap_or(0));
+                    continue;
+                }
+                if event.global_seq <= forgotten {
+                    continue;
+                }
+                match event.name.as_str() {
+                    DEAD_LETTER => {
+                        let letter =
+                            serde_json::from_value::<DeadLetter>(event.data).map_err(|error| {
+                                StoreError::Backend(format!(
+                                    "the dead letter at version {} does not read: {error}",
+                                    event.version
+                                ))
+                            })?;
+                        ledger.letters.insert(ledger.offset + event.version, letter);
+                    }
+                    REPLAYED => {
+                        if let Some(id) = event.data.get("id").and_then(Value::as_u64) {
+                            ledger.letters.remove(&id);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if page.end_of_stream || read == 0 {
+                return Ok(ledger);
+            }
+        }
+    }
+
     /// What an append records about the command it is for ([`meta`]), its actor the actor of the
     /// caller its writes are attributed to ([`Provenance::sender`]) where the cause names one.
     /// The request id stays fresh for each append: a read of the feed tells one write from the
@@ -848,6 +1156,11 @@ impl<L: Log> LogStore<L> {
 
     /// Appends `appends` as one append group.
     fn append(&self, appends: Vec<StreamAppend>) -> Result<(), EventLogError> {
+        self.appended(appends).map(drop)
+    }
+
+    /// Appends `appends` as one append group, and answers where each landed.
+    fn appended(&self, appends: Vec<StreamAppend>) -> Result<AppendGroupResult, EventLogError> {
         let entries: Vec<&Vec<NewEvent>> = appends.iter().map(|append| &append.events).collect();
         let hash =
             request_hash(&entries).map_err(|error| EventLogError::Backend(error.to_string()))?;
@@ -856,9 +1169,9 @@ impl<L: Log> LogStore<L> {
             meta: self.attributed(hash),
             appends,
         };
-        let landed = self.call(self.log.append_group(&group))?;
+        let landed = self.grouped(&group)?;
         self.landed(&landed);
-        Ok(())
+        Ok(landed)
     }
 
     /// Records the feed position of the last event of an append group this store committed: a
@@ -971,6 +1284,21 @@ impl<L: Log> Reading for SharedReading<L> {
     fn events_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
         let _turn = self.turns.take()?;
         self.store.committed_after(position, limit)
+    }
+
+    /// Reads the feed through the store's own pool on a turn, as a scan does. Where the store is
+    /// fenced, its lease is checked before the read and again after it, so a read that a pause
+    /// past the lease interrupted, and that ran on once the process resumed, answers nothing.
+    fn events_placed_after(
+        &self,
+        position: u64,
+        limit: usize,
+    ) -> Result<Vec<(u64, Committed)>, StoreError> {
+        self.store.current()?;
+        let _turn = self.turns.take()?;
+        let placed = self.store.placed_after(position, limit)?;
+        self.store.current()?;
+        Ok(placed)
     }
 
     /// Reads the feed through the store's own pool on a turn, as a scan does.
@@ -1182,21 +1510,36 @@ struct Group {
     outcome: Option<String>,
     /// The instances its `spindle.written` events name, by entity and identity text.
     instances: BTreeMap<(String, String), Value>,
-    events: Vec<crate::Event>,
+    /// Each event of a command, with its own feed position.
+    events: Vec<(u64, crate::Event)>,
 }
 
 impl<L: Log> LogStore<L> {
     /// The events committed by the append groups after the one ending at feed position
     /// `position`, in commit order, group by group up to the one that brings them to `limit`
     /// ([`crate::whole_writes`]), each at its group's last feed position, attributed to the
-    /// command its group's `spindle.written` events name. The rows, removals and entity versions
-    /// the groups appended are left out, so a group that committed no event of a command answers
-    /// nothing. Read once the feed answers every write this store committed
-    /// ([`LogStore::published`]).
+    /// command its group's `spindle.written` events name. The rows, removals, entity versions and
+    /// dead letters ([`DEAD_LETTERS`]) the groups appended are left out, so a group that committed
+    /// no event of a command answers nothing. Read once the feed answers every write this store
+    /// committed ([`LogStore::published`]).
     ///
     /// Where the read stops before the feed's end, a reset mark ([`RESET`]) past where it stopped
     /// forgets every event it read: the feed is then read again from the last mark.
     fn committed_after(&self, position: u64, limit: usize) -> Result<Vec<Committed>, StoreError> {
+        Ok(self
+            .placed_after(position, limit)?
+            .into_iter()
+            .map(|(_, committed)| committed)
+            .collect())
+    }
+
+    /// [`LogStore::committed_after`], each event with its own feed position
+    /// ([`Reading::events_placed_after`]).
+    fn placed_after(
+        &self,
+        position: u64,
+        limit: usize,
+    ) -> Result<Vec<(u64, Committed)>, StoreError> {
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -1222,12 +1565,17 @@ impl<L: Log> LogStore<L> {
                     .into_iter()
                     .map(|((entity, _), identity)| (entity, identity))
                     .collect();
-                group.events.into_iter().map(move |event| Committed {
-                    position,
-                    origin: origin.clone(),
-                    outcome: outcome.clone(),
-                    instances: instances.clone(),
-                    event,
+                group.events.into_iter().map(move |(placed, event)| {
+                    (
+                        placed,
+                        Committed {
+                            position,
+                            origin: origin.clone(),
+                            outcome: outcome.clone(),
+                            instances: instances.clone(),
+                            event,
+                        },
+                    )
                 })
             })
             .collect())
@@ -1378,7 +1726,13 @@ impl<L: Log> LogStore<L> {
                     }
                     continue;
                 }
-                if stream == MARKS || event.name == ROW || event.name == REMOVED {
+                if stream == MARKS
+                    || stream == SPECIFICATION
+                    || stream == DEAD_LETTERS
+                    || event.name == ROW
+                    || event.name == REMOVED
+                    || (event.stream_type == MARKS.0 && event.stream_id.starts_with(EGRESS))
+                {
                     continue;
                 }
                 let Value::Object(payload) = event.data else {
@@ -1388,10 +1742,13 @@ impl<L: Log> LogStore<L> {
                         event.name, event.version, event.stream_type, event.stream_id
                     )));
                 };
-                group.events.push(crate::Event {
-                    name: event.name,
-                    payload,
-                });
+                group.events.push((
+                    event.global_seq,
+                    crate::Event {
+                        name: event.name,
+                        payload,
+                    },
+                ));
                 count += 1;
             }
             if !page.has_more {
@@ -1490,6 +1847,85 @@ impl<L: Log> LogStore<L> {
             counts.extend(self.count_log(&unnamed)?);
         }
         Ok(counts)
+    }
+}
+
+impl<L: Log> LogStore<L> {
+    /// The specification the store was last written under ([`SPECIFICATION`]), or `None` for a
+    /// store that records none: an empty one, or one a release before this one wrote.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the log cannot be read or its record does not read.
+    pub fn recorded(&self) -> Result<Option<crate::Shapes>, StoreError> {
+        let (kind, id) = SPECIFICATION;
+        let stream = StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?;
+        self.last(&stream)?
+            .map(|(_, event)| {
+                serde_json::from_value(event.data).map_err(|error| {
+                    StoreError::Backend(format!("the recorded specification: {error}"))
+                })
+            })
+            .transpose()
+    }
+
+    /// Checks the rows the store holds against `current`, the specification a run is about to
+    /// serve them under (`story:spec-change-over-stored-rows`), writing nothing:
+    /// [`crate::Fit::Same`] where the store was last written under `current` (the same digest),
+    /// [`crate::Fit::Misfits`] naming every row the specification cannot read
+    /// ([`crate::Shapes::misfits`]), and otherwise [`crate::Fit::Fits`]. A store that records no
+    /// specification fits unchecked, saying whether it held rows.
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read.
+    pub fn check(&mut self, current: &crate::Shapes) -> Result<crate::Fit, StoreError> {
+        Ok(match self.recorded()? {
+            Some(recorded) if recorded.digest == current.digest => crate::Fit::Same,
+            Some(recorded) => {
+                let misfits = current.misfits(&recorded, self)?;
+                if misfits.is_empty() {
+                    crate::Fit::Fits { unrecorded: false }
+                } else {
+                    crate::Fit::Misfits(misfits)
+                }
+            }
+            None => crate::Fit::Fits {
+                unrecorded: current.held(self)?,
+            },
+        })
+    }
+
+    /// Appends one event recording `current` as the specification the store is written under
+    /// from now on ([`SPECIFICATION`]).
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be written.
+    pub fn record(&mut self, current: &crate::Shapes) -> Result<(), StoreError> {
+        let body = serde_json::to_value(current).map_err(|error| {
+            StoreError::Backend(format!("recording the specification: {error}"))
+        })?;
+        let event = NewEvent::new(SPECIFIED, SCHEMA, body).map_err(backend)?;
+        let (kind, id) = SPECIFICATION;
+        self.append(vec![StreamAppend {
+            stream: StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?,
+            expected: Expected::Any,
+            events: vec![event],
+        }])
+        .map_err(backend)
+    }
+
+    /// [`LogStore::check`], then, where the rows fit a specification the store does not record
+    /// yet ([`crate::Fit::Fits`]), [`LogStore::record`]: what a run that opens one store does
+    /// before it serves (D3: the record is written at open, after the check passes, and only
+    /// where the recorded digest differs).
+    ///
+    /// # Errors
+    /// [`StoreError::Backend`] when the store cannot be read or written.
+    pub fn fit(&mut self, current: &crate::Shapes) -> Result<crate::Fit, StoreError> {
+        let fit = self.check(current)?;
+        if let crate::Fit::Fits { .. } = fit {
+            self.record(current)?;
+        }
+        Ok(fit)
     }
 }
 
@@ -2184,6 +2620,14 @@ impl Reading for SqliteReading {
         self.with(|connection| connection.committed_after(position, limit))
     }
 
+    fn events_placed_after(
+        &self,
+        position: u64,
+        limit: usize,
+    ) -> Result<Vec<(u64, Committed)>, StoreError> {
+        self.with(|connection| connection.placed_after(position, limit))
+    }
+
     fn events_head(&self) -> Result<u64, StoreError> {
         self.with(|connection| connection.feed_end())
     }
@@ -2375,8 +2819,13 @@ pub(crate) fn meta(request_hash: String) -> CommandMeta {
     }
 }
 
+/// `error` as the store's: a fence's refusal by its code alone, which names what refused the
+/// write ([`LogStore::fence`]).
 pub(crate) fn backend(error: EventLogError) -> StoreError {
-    StoreError::Backend(error.to_string())
+    match error {
+        EventLogError::GuardRefused { code } => StoreError::Backend(code),
+        other => StoreError::Backend(other.to_string()),
+    }
 }
 
 #[cfg(all(test, feature = "sqlite"))]

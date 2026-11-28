@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://beyond10x.github.io/spindle/schema/types/spindle.console.ReplayAnswer.schema.json",
+  "$ref": "#/$defs/spindle.console.ReplayAnswer",
+  "x-ess-provenance": {
+    "system": "spindle",
+    "specification_version": "v1",
+    "contract_digest": "slice-sha256/2:41c2ff30e4c6e246fafa12d3c7fadffd0ec8cb491b65ffb5bbe47bbb644e783d",
+    "regenerate": "ess generate"
+  },
+  "$defs": {
+    "spindle.console.ReplayAnswer": {
+      "title": "ReplayAnswer",
+      "description": "The answer of `POST /api/dead-letters/replay`, `200`, once the command ran: once, without the retries or the escalation of its binding, attributed to its binding as the first run was. The dead letter is marked replayed before the command runs, so it is replayed at most once, after a restart too. `400`: the body is no `spindle.console.Replay`. `404`: no dead letter with this id waits for a replay in that component, because none was kept, it was replayed, a reset forgot it, or the component is not running. `500`: a store could not be read or written. A refusal answers `{\"refused\": <why>}`.",
+      "x-ess-name": "spindle.console.ReplayAnswer",
+      "x-ess-kind": "struct",
+      "type": "object",
+      "properties": {
+        "component": {
+          "description": "The component that kept the dead letter and ran the command.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The id of the dead letter replayed.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "command": {
+          "description": "The qualified name of the command.",
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/$defs/spindle.console.ReplayResult"
+        },
+        "outcome": {
+          "description": "The outcome the command took; absent where the kernel rejected it.",
+          "type": "string"
+        },
+        "dead_letter": {
+          "description": "The id of the new dead letter a refused or failed replay is kept as, in the same component; absent where the command ran.",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "component",
+        "id",
+        "command",
+        "result"
+      ],
+      "additionalProperties": false,
+      "x-ess-invariants": [
+        "id >= 1"
+      ]
+    },
+    "spindle.console.ReplayResult": {
+      "title": "ReplayResult",
+      "description": "What the replayed command did. `ran`: it took effect, and what its events lead to ran after it. `refused`: an outcome that declares an error refused it. `failed`: the kernel rejected it. A refused or failed replay is kept as a new dead letter.",
+      "x-ess-name": "spindle.console.ReplayResult",
+      "x-ess-kind": "enum",
+      "type": "string",
+      "enum": [
+        "ran",
+        "refused",
+        "failed"
+      ]
+    }
+  }
+}

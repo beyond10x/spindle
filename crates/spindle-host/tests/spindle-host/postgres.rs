@@ -86,10 +86,16 @@ fn every_read_beside_the_host_is_the_state_after_a_prefix_of_the_commands_on_one
     prefixes_read("postgres", &|_: &Path| host(1));
 }
 
+/// 10 resets from 5 loans to 50, where the memory store's case makes 20 to 300: on PostgreSQL a
+/// reset writes each loan of its world in a commit of its own and empties each one the last
+/// world left, about 3.3 ms a loan, so 20 resets each way over 300 loans took 27 of the case's
+/// 29 s. A count handed to the readers before the reset ends is one of the 1 to 49 loans written
+/// so far, or the 0 of the emptied store, which a reset of 50 shows as surely as one of 300:
+/// the sampler reads several hundred thousand counts a second.
 #[test]
 #[ignore = "needs SPINDLE_TEST_DATABASE_URL, a loopback PostgreSQL: task check:postgres"]
 fn a_reader_counts_the_rows_before_a_reset_or_after_it_never_between() {
-    reset_counted_whole(host(4));
+    reset_counted_whole(host(4), 10, 50);
 }
 
 #[test]

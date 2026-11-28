@@ -126,6 +126,15 @@ impl Reading for Gated {
         self.reading.events_after(position, limit)
     }
 
+    fn events_placed_after(
+        &self,
+        position: u64,
+        limit: usize,
+    ) -> Result<Vec<(u64, Committed)>, StoreError> {
+        let _passed = self.gate.enter();
+        self.reading.events_placed_after(position, limit)
+    }
+
     fn events_head(&self) -> Result<u64, StoreError> {
         let _passed = self.gate.enter();
         self.reading.events_head()
@@ -395,5 +404,77 @@ impl Store for Counted {
 
     fn events_id(&mut self) -> Result<u64, StoreError> {
         self.store.events_id()
+    }
+
+    fn keep_dead_letter(&mut self, letter: &spindle_kernel::DeadLetter) -> Result<u64, StoreError> {
+        self.store.keep_dead_letter(letter)
+    }
+
+    fn dead_letters(&mut self) -> Result<Vec<(u64, spindle_kernel::DeadLetter)>, StoreError> {
+        self.store.dead_letters()
+    }
+
+    fn take_dead_letter(
+        &mut self,
+        id: u64,
+    ) -> Result<Option<spindle_kernel::DeadLetter>, StoreError> {
+        self.store.take_dead_letter(id)
+    }
+
+    fn last_dead_letter_id(&mut self) -> Result<u64, StoreError> {
+        self.store.last_dead_letter_id()
+    }
+
+    fn continue_dead_letter_ids(&mut self, after: u64) -> Result<(), StoreError> {
+        self.store.continue_dead_letter_ids(after)
+    }
+}
+
+#[cfg(all(test, feature = "sqlite"))]
+mod tests {
+    //! The reading handle a reset passes a gate through ([`Gated`]), on a SQLite store.
+
+    use serde_json::Map;
+    use spindle_kernel::SqliteStore;
+
+    use super::*;
+
+    fn event(name: &str) -> Event {
+        Event {
+            name: name.to_owned(),
+            payload: Map::new(),
+        }
+    }
+
+    /// `story:event-egress-webhook`: an event that is not the last of its write is read through
+    /// the gated handle at the position the store's own handle answers, the one its egress posts.
+    #[test]
+    fn a_gated_handle_answers_each_event_s_own_position() {
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let mut store = SqliteStore::open(&directory.path().join("store.sqlite")).expect("a store");
+        store
+            .commit_events(&[event("a.First"), event("a.Second")], &[])
+            .expect("one write of two events");
+        let own = store
+            .reading()
+            .expect("a reading handle")
+            .events_placed_after(0, 10)
+            .expect("the events");
+        let counted = Counted::new(Box::new(store), Vec::new(), true);
+        let gated = counted
+            .shared
+            .reading()
+            .expect("a gated handle")
+            .events_placed_after(0, 10)
+            .expect("the events");
+        let placed = |events: &[(u64, Committed)]| -> Vec<(String, u64)> {
+            events
+                .iter()
+                .map(|(placed, committed)| (committed.event.name.clone(), *placed))
+                .collect()
+        };
+        assert_eq!(own.len(), 2, "{own:?}");
+        assert!(own[0].0 < own[1].0, "{own:?}");
+        assert_eq!(placed(&gated), placed(&own));
     }
 }

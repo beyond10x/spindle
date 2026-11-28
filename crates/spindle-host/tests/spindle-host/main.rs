@@ -41,6 +41,8 @@ mod adversary_w30_u6;
 mod adversary_w30_u7;
 #[cfg(target_os = "linux")]
 mod adversary_w30_u8;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod adversary_w31_u8;
 mod adversary_wasm;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod adversary_world_integers;
@@ -60,6 +62,8 @@ mod connect;
 mod console;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod cross_component_reads;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+mod dead_letters;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 mod event_caller;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]

@@ -65,6 +65,21 @@ pub const FORMAT: &str = "spindle-environment/1";
 /// [decisions]
 /// file = "decisions/answers.toml"
 /// ```
+///
+/// `[egress]` binds a published event, by its qualified name, to an `[http.<name>]` call the
+/// document declares, with method `POST`: a served `run` posts each such event there
+/// ([`Environment::egress_of`]). A call an egress names is used, whether or not an `external.` key
+/// names it too:
+///
+/// ```toml
+/// [egress]
+/// "shop.order.OrderPlaced" = "orders-hook"
+///
+/// [http.orders-hook]
+/// method = "POST"
+/// url = "https://hooks.example.org/orders"
+/// timeout_ms = 2000
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Environment {
@@ -89,6 +104,22 @@ pub struct Environment {
     /// from, where `--decisions` names none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decisions: Option<DecisionsFile>,
+    /// `[egress]`: each published event, by qualified name, to the `[http.<name>]` call it is
+    /// posted to.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub egress: BTreeMap<String, String>,
+}
+
+/// One published event an `[egress]` table binds to a call, with the component that publishes
+/// it ([`Environment::egress_of`]).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Egress {
+    /// The event's qualified name.
+    pub event: String,
+    /// The component that publishes it: its events are read from that component's store.
+    pub component: String,
+    /// The `[http.<name>]` call it is posted to.
+    pub call: String,
 }
 
 /// The implementation that answers an external cause from a decisions file.
@@ -150,9 +181,10 @@ pub enum EnvironmentError {
         /// The capability.
         capability: String,
     },
-    /// An HTTP call no `external.` key names.
+    /// An HTTP call no `external.` key and no `[egress]` entry names.
     #[error(
-        "[http.{name}] is named by no `external.` key of provides, so it would never be called"
+        "[http.{name}] is named by no `external.` key of provides and no [egress] entry, so it \
+         would never be called"
     )]
     HttpUnused {
         /// The call.
@@ -221,6 +253,29 @@ pub enum EnvironmentError {
         /// The call.
         name: String,
     },
+    /// An `[egress]` entry naming a call the document does not declare.
+    #[error("[egress] posts {event} to `{call}`, but no [http.{call}] table declares that call")]
+    EgressCall {
+        /// The event.
+        event: String,
+        /// The call it names.
+        call: String,
+    },
+    /// An `[egress]` call whose method is not `POST`: an event is posted.
+    #[error("[http.{call}] is named by [egress], which posts each event: its method must be POST")]
+    EgressMethod {
+        /// The call.
+        call: String,
+    },
+    /// An `[egress]` entry naming an event no component of the specification publishes.
+    #[error(
+        "[egress] posts {event}, but no component of the specification publishes an event of \
+         that name"
+    )]
+    EgressUnpublished {
+        /// The event.
+        event: String,
+    },
 }
 
 impl From<toml::de::Error> for EnvironmentError {
@@ -247,6 +302,7 @@ impl Environment {
                 capability: capability.clone(),
             });
         }
+        environment.check_egress()?;
         environment.check_http()?;
         if let Some(decisions) = &environment.decisions
             && !environment
@@ -266,9 +322,57 @@ impl Environment {
         Ok(environment)
     }
 
-    /// Refuses an `[http.<name>]` table no `external.` key names or another key names, one with
-    /// no time to answer or more than [`MAX_TIMEOUT_MS`], a URL carrying userinfo, a plain
-    /// `http://` URL off loopback or with a `ca_file`, and a `secret_env` that is no variable name.
+    /// Refuses an `[egress]` entry naming a call the document does not declare, or one whose
+    /// method is not `POST`.
+    fn check_egress(&self) -> Result<(), EnvironmentError> {
+        for (event, call) in &self.egress {
+            let Some(declared) = self.http.get(call) else {
+                return Err(EnvironmentError::EgressCall {
+                    event: event.clone(),
+                    call: call.clone(),
+                });
+            };
+            if !declared.method.eq_ignore_ascii_case("POST") {
+                return Err(EnvironmentError::EgressMethod { call: call.clone() });
+            }
+        }
+        Ok(())
+    }
+
+    /// Each event the `[egress]` table binds, with the component of `ir` that publishes it and
+    /// the call it is posted to, in event order.
+    ///
+    /// # Errors
+    /// [`EnvironmentError::EgressUnpublished`] for an event no component of `ir` publishes.
+    pub fn egress_of(&self, ir: &ess_compiler::EssIr) -> Result<Vec<Egress>, EnvironmentError> {
+        self.egress
+            .iter()
+            .map(|(event, call)| {
+                let component = ir
+                    .components()
+                    .values()
+                    .find(|component| {
+                        component
+                            .publishes
+                            .iter()
+                            .any(|published| published.to_string() == *event)
+                    })
+                    .ok_or_else(|| EnvironmentError::EgressUnpublished {
+                        event: event.clone(),
+                    })?;
+                Ok(Egress {
+                    event: event.clone(),
+                    component: component.name.as_str().to_owned(),
+                    call: call.clone(),
+                })
+            })
+            .collect()
+    }
+
+    /// Refuses an `[http.<name>]` table no `external.` key and no `[egress]` entry names, one
+    /// another key names, one with no time to answer or more than [`MAX_TIMEOUT_MS`], a URL
+    /// carrying userinfo, a plain `http://` URL off loopback or with a `ca_file`, and a
+    /// `secret_env` that is no variable name.
     fn check_http(&self) -> Result<(), EnvironmentError> {
         for (name, call) in &self.http {
             let naming: Vec<&String> = self
@@ -286,7 +390,7 @@ impl Environment {
                     capability: (*capability).clone(),
                 });
             }
-            if naming.is_empty() {
+            if naming.is_empty() && !self.egress.values().any(|egress| egress == name) {
                 return Err(EnvironmentError::HttpUnused { name: name.clone() });
             }
             if !(1..=MAX_TIMEOUT_MS).contains(&call.timeout_ms) {

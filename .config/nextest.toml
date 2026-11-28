@@ -5,3 +5,21 @@ fail-fast = false
 
 [profile.default.junit]
 path = "junit.xml"
+
+[test-groups]
+postgres-heavy = { max-threads = 3 }
+
+[profile.postgres]
+test-threads = 12
+
+[[profile.postgres.overrides]]
+filter = "binary_id(=spindle-kernel::spindle-kernel) and (test(~adversary_w31_u1::) or test(~adversary_postgres_scan::) or test(~adversary_postgres_named::) or test(~adversary_state_move::a_moved_log) or test(=postgres::a_long_scan_lets_another_process_commit))"
+priority = 20
+test-group = "postgres-heavy"
+
+[[profile.postgres.overrides]]
+filter = "binary_id(=spindle-host::spindle-host) or (binary_id(=spindle-cli::spindle-cli) and (test(~adversary_state_move::) or test(~a_leader_paused_inside_a_write)))"
+priority = 10
+
+[profile.postgres.junit]
+path = "junit.xml"

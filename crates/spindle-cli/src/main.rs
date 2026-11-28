@@ -6,7 +6,9 @@ mod conform;
 mod database;
 mod decisions;
 mod deploy;
+mod egress;
 mod lines;
+mod listener_tls;
 mod log;
 mod replay;
 mod scaled;
@@ -14,6 +16,7 @@ mod seed;
 mod serve;
 mod state;
 mod state_lock;
+mod token;
 mod world;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -237,12 +240,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
             http,
             port,
             address,
+            tls,
             console,
             drop_retries,
             fixed_actor,
             fixed_caller,
             trusted_caller_header,
             trusted_caller_secret,
+            caller_token,
             observe,
             observe_requests,
             observe_series,
@@ -262,6 +267,15 @@ fn run(cli: Cli) -> Result<ExitCode> {
             http: http.as_deref(),
             port,
             address,
+            tls: tls
+                .tls_cert
+                .as_deref()
+                .zip(tls.tls_key.as_deref())
+                .map(|(cert, key)| listener_tls::Files {
+                    cert,
+                    key,
+                    client_ca: tls.tls_client_ca.as_deref(),
+                }),
             console,
             drop_retries,
             callers: serve::callers(fixed_actor, fixed_caller)?,
@@ -269,6 +283,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             observe_series,
             caller_header: trusted_caller_header.as_deref(),
             caller_secret: trusted_caller_secret.as_deref(),
+            caller_token: caller_token.as_deref(),
             seed: seed.as_deref(),
             drain: Duration::from_secs(drain),
             clock,
@@ -616,6 +631,9 @@ struct Execute<'a> {
     port: Option<u16>,
     /// `--address`: the IP address to serve on, 127.0.0.1 without it.
     address: Option<std::net::IpAddr>,
+    /// `--tls-cert` with `--tls-key`, and `--tls-client-ca`: the files a served run listens
+    /// with over TLS; plain HTTP without them.
+    tls: Option<listener_tls::Files<'a>>,
     /// `--console` (`SPINDLE_SETTING_CONSOLE`): whether the console routes are served, decided
     /// with the address where not given ([`spindle_cli::cli::console_served`]).
     console: Option<spindle_cli::cli::Switch>,
@@ -629,6 +647,8 @@ struct Execute<'a> {
     caller_header: Option<&'a str>,
     /// `--trusted-caller-secret`: the file holding the secret the proxy presents.
     caller_secret: Option<&'a Path>,
+    /// `--caller-token`: the mapping file each request's bearer token is verified and mapped by.
+    caller_token: Option<&'a Path>,
     /// `--seed`: the seed file to submit at every start, in place of the environment's.
     seed: Option<&'a Path>,
     /// `--drain`: how long a served run answers the requests waiting when a signal arrives.
@@ -653,6 +673,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         http,
         port,
         address,
+        tls,
         console,
         drop_retries,
         ref callers,
@@ -660,13 +681,43 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         observe_series,
         caller_header,
         caller_secret,
+        caller_token,
         seed,
         drain,
         clock,
         mint_seed,
         log_format,
     } = *arguments;
+    // Off loopback a verified token takes the place of the proxy's header and secret, and is
+    // carried only over the listener's TLS (`story:verified-caller-token`, D3 B).
+    if let (Some(address), Some(mapping)) = (
+        address.filter(|address| spindle_ingress::exposed(*address)),
+        caller_token,
+    ) && tls.is_none()
+    {
+        log::error(format!(
+            "--address {address} is not loopback, so --caller-token {} is served only over TLS, \
+             so no bearer token crosses the network in the clear: give --tls-cert <FILE> with \
+             --tls-key <FILE>",
+            mapping.display()
+        ))
+        .write();
+        return Ok(ExitCode::from(USAGE));
+    }
+    if let Some(mapping) = caller_token
+        && console == Some(spindle_cli::cli::Switch::On)
+    {
+        log::error(format!(
+            "--console on and --caller-token {} are given together: on a token run the console \
+             routes are off, since a reset or a model read must not answer every holder of a \
+             token",
+            mapping.display()
+        ))
+        .write();
+        return Ok(ExitCode::from(USAGE));
+    }
     if let Some(address) = address.filter(|address| spindle_ingress::exposed(*address))
+        && caller_token.is_none()
         && (caller_header.is_none() || caller_secret.is_none())
     {
         log::error(format!(
@@ -677,12 +728,40 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         .write();
         return Ok(ExitCode::from(USAGE));
     }
+    // A certificate, key or CA file that cannot be served is a mistake on the command line: it
+    // exits as clap exits on one, before anything is loaded or listens.
+    let listening_tls = match tls.map(listener_tls::server_config).transpose() {
+        Ok(config) => config,
+        Err(refused) => {
+            log::error(refused).write();
+            return Ok(ExitCode::from(USAGE));
+        }
+    };
     if let (Some(header), Some(caller)) = (caller_header, callers.first()) {
         bail!(
             "--trusted-caller-header {header} and --fixed-actor {} are given together: each \
              request proves its own caller, or one is fixed for the run, not both",
             caller.actor
         );
+    }
+    // One caller source per run (`story:verified-caller-token`, D2 A).
+    if let Some(mapping) = caller_token {
+        if let Some(header) = caller_header {
+            bail!(
+                "--caller-token {} and --trusted-caller-header {header} are given together: \
+                 each request proves its caller by one source, a verified token or a proxy's \
+                 header, not both",
+                mapping.display()
+            );
+        }
+        if let Some(caller) = callers.first() {
+            bail!(
+                "--caller-token {} and --fixed-actor {} are given together: each request proves \
+                 its own caller, or one is fixed for the run, not both",
+                mapping.display(),
+                caller.actor
+            );
+        }
     }
     let proxy_secret = match (caller_header, caller_secret) {
         (Some(_), Some(path)) => Some((path, serve::proxy_secret(path)?)),
@@ -734,6 +813,16 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
     }
     let calls = calls::Calls::bind(&parsed, bindings)
         .with_context(|| format!("in {}", environment.display()))?;
+    let egress = match egress::plan(&loaded.ir, &parsed)
+        .with_context(|| format!("in {}", environment.display()))?
+    {
+        None => None,
+        Some(Ok(plan)) => Some(plan),
+        Some(Err(refusal)) => {
+            log::error(refusal).write();
+            return Ok(ExitCode::from(REFUSED));
+        }
+    };
     let seed_path = seed.map(Path::to_owned).or_else(|| {
         parsed
             .seed
@@ -775,6 +864,11 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         let seed = seed_path
             .map(|path| seed::load(&path, &loaded.ir))
             .transpose()?;
+        // The key set is fetched now, before anything listens: a run that cannot fetch it
+        // exits 1 (`story:verified-caller-token`, D5 A).
+        let tokens = caller_token
+            .map(|path| token::Verifier::start(path, &loaded.ir).map(|verifier| (path, verifier)))
+            .transpose()?;
         let address = address.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
         return serve::serve(
             loaded.ir,
@@ -787,7 +881,7 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 port: port.unwrap_or(0),
                 address,
                 ingress: ingress.implementation.as_str(),
-                console: spindle_cli::cli::console_served(console, address),
+                console: tokens.is_none() && spindle_cli::cli::console_served(console, address),
                 drop_retries,
                 decides,
                 answers: answers.calling(calls),
@@ -796,10 +890,13 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
                 observe_series,
                 caller_header,
                 proxy_secret,
+                tokens,
+                tls: listening_tls,
                 seed,
                 drain,
                 clock,
                 mint_seed,
+                egress,
             },
         );
     }
@@ -821,6 +918,13 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
             path.display()
         );
     }
+    if egress.is_some() {
+        bail!(
+            "{unserved}, so the [egress] of {} would never post an event: an event is posted by a \
+             run serving HTTP",
+            environment.display()
+        );
+    }
     if observe.is_some() {
         bail!("{unserved}, so --observe would be ignored");
     }
@@ -839,6 +943,12 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
     if let Some(header) = caller_header {
         bail!("{unserved}, so --trusted-caller-header {header} would be ignored");
     }
+    if let Some(path) = caller_token {
+        bail!(
+            "{unserved}, so --caller-token {} would be ignored",
+            path.display()
+        );
+    }
     if let Some(path) = http {
         bail!("{unserved}, so --http {} would be ignored", path.display());
     }
@@ -847,6 +957,12 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
     }
     if let Some(address) = address {
         bail!("{unserved}, so --address {address} would be ignored");
+    }
+    if let Some(files) = tls {
+        bail!(
+            "{unserved}, so --tls-cert {} would be ignored",
+            files.cert.display()
+        );
     }
     let bindings = lines::Bindings::new(spec, &loaded.ir, drop_retries)?;
     let scratch;
@@ -866,7 +982,13 @@ fn execute(arguments: &Execute<'_>) -> Result<ExitCode> {
         ),
         (Some("sqlite"), Some(path)) => {
             _lock = state_lock::file(path)?;
-            Box::new(SqliteStore::open(path)?)
+            let mut store = SqliteStore::open(path)?;
+            let named = format!("the state file {}", path.display());
+            let fit = store.fit(&spindle_kernel::Shapes::of(&loaded.ir))?;
+            if let Err(error) = database::fitting(fit, &named, &path.display().to_string()) {
+                return database::misfit_refused(error);
+            }
+            Box::new(store)
         }
         (Some("sqlite"), None) => {
             scratch = tempfile::tempdir().context("creating a temporary state directory")?;

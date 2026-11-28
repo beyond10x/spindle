@@ -1,23 +1,102 @@
-//! `store.durable` bound to `postgres`: the settings that reach the database, one store per
-//! component bound to it, and `store migrate`, which creates their tables.
+//! `store.durable` bound to `postgres`: the settings that reach the database, the lease of each
+//! component's tables a served run leads under, one store per component bound to it, and `store
+//! migrate`, which creates their tables.
 //!
 //! Settings are read as every setting is, `SPINDLE_SETTING_<NAME>`: `database_url` (required),
-//! `database_ca`, `database_schema` (`public`), `database_pool` (4) and `database_connections`
+//! `database_ca`, `database_schema` (`public`), `database_pool` (4), `database_connections`
 //! (required with `database_ca`: the database's connection budget available to this deployment,
-//! not the serving role's `CONNECTION LIMIT`). A URL is never printed: it holds a password.
+//! not the serving role's `CONNECTION LIMIT`) and `database_lease` (not given by default: the
+//! seconds a lease is held from its last renewal). A URL is never printed: it holds a password.
+//!
+//! Several `run` processes of one specification given `database_lease` may share one database
+//! (`story:several-writers-one-postgres`): each takes the lease of every component's tables in
+//! name order ([`Leases`]), and the one that holds them all leads, the one writer of those tables;
+//! the others stand by until the leader is gone. Each writes only under its lease: a store it
+//! opens refuses a write once another process took the lease
+//! ([`spindle_kernel::PostgresStore::open`]). Without `database_lease` a run takes no lease and
+//! opens no connection for one, so two such processes on one store both write.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use spindle_capability::{Capability, Environment};
 use spindle_host::Stores;
-use spindle_kernel::{Database, PostgresStore, postgres_prefix};
+use spindle_kernel::{Database, Fit, Lease, Misfit, PostgresStore, Shapes, postgres_prefix};
 use spindle_spec::EssIr;
 use spindle_target::{ENV_SETTING_PREFIX, env_name};
 
 /// The implementation of `store.durable` this module opens.
 pub(crate) const POSTGRES: &str = "postgres";
+
+/// A durable store holds rows the specification `run` serves cannot read
+/// (`story:spec-change-over-stored-rows`): `run` prints it on stdout and exits 3 before
+/// listening. `store` says which store, as [`spindle_host::HostError::Misfit`] does.
+#[derive(Debug)]
+pub(crate) struct Misfitted {
+    store: String,
+    misfits: Vec<Misfit>,
+}
+
+impl std::fmt::Display for Misfitted {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "refused: {} holds rows this specification cannot read",
+            self.store
+        )?;
+        for misfit in &self.misfits {
+            write!(formatter, "\n  {misfit}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for Misfitted {}
+
+/// What `run` exits with for `error`: 3 with the misfit printed on stdout where it is
+/// [`Misfitted`].
+///
+/// # Errors
+/// `error` itself where it is not [`Misfitted`].
+pub(crate) fn misfit_refused(error: anyhow::Error) -> Result<ExitCode> {
+    let misfitted = error.downcast::<Misfitted>()?;
+    println!("{misfitted}");
+    Ok(ExitCode::from(crate::REFUSED))
+}
+
+/// The line `run` logs for a store, named by `store`, that held rows and recorded no
+/// specification: it now records the one served, unchecked (D2).
+pub(crate) fn unrecorded(store: &str) -> String {
+    format!(
+        "the store of {store} recorded no specification it was written under; it now records \
+         this one, its rows unchecked"
+    )
+}
+
+/// What `run` does with `fit`, the check of the store `store` names against the specification it
+/// serves ([`spindle_kernel::LogStore::check`]): nothing where it fits, a line where it recorded no
+/// specification before, and [`Misfitted`] where the specification cannot read a row.
+///
+/// # Errors
+/// [`Misfitted`].
+pub(crate) fn fitting(fit: Fit, store: &str, named: &str) -> Result<()> {
+    match fit {
+        Fit::Same | Fit::Fits { unrecorded: false } => Ok(()),
+        Fit::Fits { unrecorded: true } => {
+            crate::log::info(unrecorded(named)).write();
+            Ok(())
+        }
+        Fit::Misfits(misfits) => Err(Misfitted {
+            store: store.to_owned(),
+            misfits,
+        }
+        .into()),
+    }
+}
 
 /// The environment variable carrying the setting `name`.
 fn variable(name: &str) -> String {
@@ -97,10 +176,46 @@ pub(crate) fn components(
 /// `database_pool`, which the database checks when a store opens.
 ///
 /// # Errors
-/// A setting missing or malformed, a budget too small, or a store the database refused, naming it.
+/// A setting missing or malformed, a budget too small, or a store the database refused, naming it;
+/// [`Misfitted`] where a store holds rows the specification cannot read, every store opened
+/// before it closed again.
 pub(crate) fn stores(ir: &EssIr, environment: &Environment) -> Result<Stores> {
     let database = database()?;
     let components = components(ir, environment).map_err(|refusal| anyhow::anyhow!("{refusal}"))?;
+    budgeted(&database, &components)?;
+    // Every store is checked before any records the specification, so a misfit in one leaves
+    // every record as it was.
+    let mut checked = Vec::new();
+    for component in &components {
+        let mut store = PostgresStore::open(&database, component, components.len())
+            .with_context(|| format!("opening the PostgreSQL store of {component}"))?;
+        let shapes = Shapes::owned(ir, component);
+        let fit = store
+            .check(&shapes)
+            .with_context(|| format!("checking the PostgreSQL store of {component}"))?;
+        let records = matches!(fit, Fit::Fits { .. });
+        fitting(fit, &format!("the store of {component}"), component)?;
+        checked.push((component, store, records.then_some(shapes)));
+    }
+    let mut stores = Stores::new();
+    for (component, mut store, shapes) in checked {
+        if let Some(shapes) = shapes {
+            store
+                .record(&shapes)
+                .with_context(|| format!("recording the specification of {component}"))?;
+        }
+        stores.insert(component.clone(), Box::new(store));
+    }
+    Ok(stores)
+}
+
+/// The connection budget checked before anything connects: `database_connections`, where given,
+/// must hold every component's `database_pool` and one reserved connection, the one each process
+/// holds for its leases ([`Lease`]); with `database_ca` it is required.
+///
+/// # Errors
+/// A budget too small or missing, naming both numbers.
+fn budgeted(database: &Database, components: &[String]) -> Result<()> {
     let share = components.len().saturating_mul(database.pool);
     let needed = share.saturating_add(spindle_kernel::POSTGRES_RESERVED);
     match database.connections {
@@ -125,13 +240,319 @@ pub(crate) fn stores(ir: &EssIr, environment: &Environment) -> Result<Stores> {
         ),
         _ => {}
     }
-    let mut stores = Stores::new();
-    for component in &components {
-        let store = PostgresStore::open(&database, component, components.len())
-            .with_context(|| format!("opening the PostgreSQL store of {component}"))?;
-        stores.insert(component.clone(), Box::new(store));
+    Ok(())
+}
+
+/// `database_lease`: how long a lease is held from its last renewal, in whole seconds above 0;
+/// `None` where it is not given, and the run takes no lease (D9 C).
+fn lease_term() -> Result<Option<Duration>> {
+    let Some(seconds) = count("database_lease")? else {
+        return Ok(None);
+    };
+    match u64::try_from(seconds) {
+        Ok(seconds) if seconds <= spindle_kernel::LEASE_MAX.as_secs() => {
+            Ok(Some(Duration::from_secs(seconds)))
+        }
+        _ => bail!(
+            "database_lease ({}) is {seconds}, above the longest lease, {} seconds (a day)",
+            variable("database_lease"),
+            spindle_kernel::LEASE_MAX.as_secs()
+        ),
     }
-    Ok(stores)
+}
+
+/// How soon a renewal that did not land is first tried again; each further try waits twice as
+/// long, at most [`Leases::renewal`], so a database that refuses at once is not asked in a loop.
+const RETRY: Duration = Duration::from_millis(50);
+
+/// The leases of every component of a served run bound to `postgres`, taken in name order through
+/// one connection of their own, which reads and takes only the lease rows and opens no store.
+pub(crate) struct Leases {
+    lease: Lease,
+    /// The components, in name order.
+    components: Vec<String>,
+    /// The token of each lease taken, by component.
+    held: BTreeMap<String, u64>,
+    /// The trouble of the lease connection last told on stderr ([`Leases::told`]).
+    told: Option<String>,
+}
+
+impl Leases {
+    /// Checks the settings and the connection budget, then connects for the leases of every
+    /// component of `ir` bound to `postgres` on `environment`; `None`, connecting to nothing,
+    /// where `database_lease` is not given.
+    ///
+    /// # Errors
+    /// A setting missing or malformed, a budget too small, or a database that cannot be reached.
+    pub(crate) fn connect(ir: &EssIr, environment: &Environment) -> Result<Option<Self>> {
+        let database = database()?;
+        let Some(term) = lease_term()? else {
+            return Ok(None);
+        };
+        let mut components =
+            components(ir, environment).map_err(|refusal| anyhow::anyhow!("{refusal}"))?;
+        components.sort();
+        budgeted(&database, &components)?;
+        let lease = Lease::connect(&database, term).context("connecting for the leases")?;
+        Ok(Some(Self {
+            lease,
+            components,
+            held: BTreeMap::new(),
+            told: None,
+        }))
+    }
+
+    /// How often a standby asks for the leases: a third of the lease.
+    pub(crate) fn poll(&self) -> Duration {
+        self.lease.term() / 3
+    }
+
+    /// How often the leader renews the leases: a fifth of the lease, so a renewal queued behind a
+    /// write that holds a lease row for up to four fifths of the lease lands before it runs out.
+    fn renewal(&self) -> Duration {
+        self.lease.term() / 5
+    }
+
+    /// Renews each lease held and takes, in name order, each one not held yet, stopping at the
+    /// first another process holds: `None` once every one is held, else the component whose
+    /// lease another process holds.
+    ///
+    /// # Errors
+    /// A lease that cannot be read or written, or one held that another process took.
+    pub(crate) fn take(&mut self) -> Result<Option<String>> {
+        let taken = self.asked();
+        self.told();
+        taken
+    }
+
+    /// Prints a warning naming the leases and the connection error when the lease connection
+    /// cannot be made or was closed, once per change of that error, and a line once it is made
+    /// again: a process standing by reads the leases as held meanwhile, and cannot take over.
+    fn told(&mut self) {
+        let trouble = self.lease.trouble().map(str::to_owned);
+        if trouble == self.told {
+            return;
+        }
+        let leases = self.components.join(", ");
+        match &trouble {
+            Some(why) => crate::log::warn(format!(
+                "the connection for the leases of {leases} cannot be made, so this run cannot \
+                 take them over while it stands by; it tries again every {} ms: {why}",
+                self.poll().as_millis()
+            ))
+            .field("error", why.as_str())
+            .write(),
+            None => {
+                crate::log::info(format!(
+                    "the connection for the leases of {leases} is made again"
+                ))
+                .write();
+            }
+        }
+        self.told = trouble;
+    }
+
+    /// [`Leases::take`], without telling the connection's trouble.
+    fn asked(&mut self) -> Result<Option<String>> {
+        for component in &self.components {
+            match self.held.get(component) {
+                Some(&token) => match self.lease.renew(component, token) {
+                    Ok(true) => {}
+                    // Another process took it while this one stood by: this one stands by on.
+                    Ok(false) => {
+                        self.held.remove(component);
+                        return Ok(Some(component.clone()));
+                    }
+                    // A renewal that did not land, as one waiting out a lock, leaves the lease
+                    // held until its end: the run stands by and asks again.
+                    Err(_) => return Ok(Some(component.clone())),
+                },
+                None => match self.lease.take(component)? {
+                    Some(token) => {
+                        self.held.insert(component.clone(), token);
+                    }
+                    None => return Ok(Some(component.clone())),
+                },
+            }
+        }
+        Ok(None)
+    }
+
+    /// The components, in name order.
+    pub(crate) fn components(&self) -> &[String] {
+        &self.components
+    }
+
+    /// Keeps every lease held on a thread of its own, renewing each every [`Leases::renewal`], until
+    /// the [`Kept`] is dropped, which releases them.
+    ///
+    /// # Errors
+    /// The thread cannot start.
+    pub(crate) fn keep(self) -> Result<Kept> {
+        let term = self.lease.term();
+        let tokens = self.held.clone();
+        let shared = Arc::new(Mutex::new(Renewal {
+            lost: None,
+            renewed: Instant::now(),
+        }));
+        let (stop, stopped) = mpsc::channel::<()>();
+        let noted = Arc::clone(&shared);
+        let thread = std::thread::Builder::new()
+            .name("spindle-lease".to_owned())
+            .spawn(move || self.renewing(&stopped, &noted))
+            .context("starting the lease thread")?;
+        Ok(Kept {
+            shared,
+            term,
+            tokens,
+            stop: Some(stop),
+            thread: Some(thread),
+        })
+    }
+
+    /// Renews every lease held until `stopped` reads, then releases them; notes on `shared` when
+    /// each renewal began that landed, and why a lease was lost: another process took it, or no
+    /// renewal landed for a whole lease.
+    fn renewing(mut self, stopped: &mpsc::Receiver<()>, shared: &Mutex<Renewal>) {
+        let term = self.lease.term();
+        let mut renewed = Instant::now();
+        let lose = |why: String| {
+            shared.lock().unwrap_or_else(PoisonError::into_inner).lost = Some(why);
+        };
+        // Renewals start every fifth of the lease from the start of the last that landed; one that
+        // did not land, as one that waited out a lock on the row, is tried again after a pause
+        // from [`RETRY`] doubling up to a fifth of the lease, so a renewal queued behind a write
+        // holding the row lands as the write ends.
+        let mut next = Instant::now() + self.renewal();
+        let mut retry = RETRY;
+        // A message or a dropped sender stops the renewals.
+        while let Err(mpsc::RecvTimeoutError::Timeout) =
+            stopped.recv_timeout(next.saturating_duration_since(Instant::now()))
+        {
+            let began = Instant::now();
+            let mut failed = None;
+            for (component, &token) in &self.held {
+                match self.lease.renew(component, token) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        lose(format!(
+                            "the lease of {component} was taken by another process, or its session \
+                             ended, so this one writes nothing more and exits"
+                        ));
+                        return;
+                    }
+                    Err(error) => failed = Some(format!("{component}: {error}")),
+                }
+            }
+            match failed {
+                None => {
+                    renewed = began;
+                    next = began + self.renewal();
+                    retry = RETRY;
+                    shared
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .renewed = began;
+                }
+                Some(why) if renewed.elapsed() >= term => {
+                    lose(format!(
+                        "no renewal of the lease of {} landed for {term:?}, so another process may \
+                         hold it, and this one exits: {why}",
+                        self.components.join(", ")
+                    ));
+                    return;
+                }
+                Some(_) => {
+                    next = Instant::now() + retry;
+                    retry = retry.saturating_mul(2).min(self.renewal());
+                }
+            }
+        }
+        for (component, &token) in &self.held {
+            if let Err(error) = self.lease.release(component, token) {
+                crate::log::warn(format!(
+                    "the lease of {component} was not released, so a process standing by takes it \
+                     once it runs out: {error}"
+                ))
+                .write();
+            }
+        }
+    }
+}
+
+/// What the lease thread notes for the run's thread ([`Kept`]).
+struct Renewal {
+    /// Why a lease was lost, once one was.
+    lost: Option<String>,
+    /// When the last renewal that landed began.
+    renewed: Instant,
+}
+
+/// The leases a leading run holds, renewed beside it; dropping it releases them.
+pub(crate) struct Kept {
+    shared: Arc<Mutex<Renewal>>,
+    term: Duration,
+    /// The token of each lease, by component, as this run took it.
+    tokens: BTreeMap<String, u64>,
+    stop: Option<mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Kept {
+    /// Why a lease was lost, once one was, waiting first where the last renewal that landed
+    /// began two thirds of the lease ago or longer, as after the process was paused: until the
+    /// lease thread renews them all or finds one lost, at most two leases. A write is fenced by
+    /// its lease's token either way; this lets the run answer a request `503` rather than with
+    /// the store's refusal of the write. A write the fence refused ([`Kept::fenced`]) is a lease
+    /// lost at once.
+    pub(crate) fn confirmed(&self) -> Option<String> {
+        let stale = self.term.saturating_mul(2) / 3;
+        let deadline = Instant::now() + self.term.saturating_mul(2);
+        loop {
+            if let Some(fenced) = Self::fenced() {
+                return Some(fenced);
+            }
+            {
+                let renewal = self.shared.lock().unwrap_or_else(PoisonError::into_inner);
+                if renewal.lost.is_some() {
+                    return renewal.lost.clone();
+                }
+                if renewal.renewed.elapsed() < stale || Instant::now() >= deadline {
+                    return None;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Why a write of this run was refused by its lease's fence, once one was, as when the
+    /// database session holding the lease ended and another process took it before the next
+    /// renewal: the lease is lost, so the run writes nothing more and exits.
+    pub(crate) fn fenced() -> Option<String> {
+        spindle_kernel::fenced().map(|why| {
+            format!("a write was refused, so this run writes nothing more and exits: {why}")
+        })
+    }
+
+    /// The first component, in name order, whose lease this run took at a token above the
+    /// first, with that token: a lease another process held before.
+    pub(crate) fn taken_again(&self) -> Option<(&str, u64)> {
+        self.tokens
+            .iter()
+            .find(|(_, token)| **token > 1)
+            .map(|(component, token)| (component.as_str(), *token))
+    }
+}
+
+impl Drop for Kept {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 /// `store migrate`: creates the tables of every component of `spec` bound to `postgres` on

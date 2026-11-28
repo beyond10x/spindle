@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 fn main() {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("cargo sets it"));
     let dist = manifest.join("../../ui/dist");
-    println!("cargo:rerun-if-changed={}", dist.display());
+    println!("cargo:rerun-if-changed={}", watched(&dist).display());
     let mut files = Vec::new();
     if dist.is_dir() {
         collect(&dist, &dist, &mut files);
@@ -29,6 +29,15 @@ fn main() {
     table.push_str("];\n");
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets it"));
     fs::write(out.join("ui.rs"), table).expect("writing ui.rs");
+}
+
+/// What cargo watches for `path`: `path` itself, or while it is missing its nearest existing
+/// parent (`ui/`), whose change a later build of `path` is. Cargo reruns a build script on every
+/// build while a path it watches is missing, and with it compiles the crate again.
+fn watched(path: &Path) -> &Path {
+    path.ancestors()
+        .find(|ancestor| ancestor.exists())
+        .unwrap_or(path)
 }
 
 fn collect(root: &Path, dir: &Path, files: &mut Vec<(String, String)>) {

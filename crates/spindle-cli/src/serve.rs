@@ -13,11 +13,13 @@ use anyhow::{Context, Result, bail};
 use ess_gen::http::Binding;
 use spindle_capability::{Capability, Environment};
 use spindle_host::{
-    Cause, Clock, Escalated, Escalation, Host, HostError, ManualClock, Retries, SystemClock,
+    Cause, Clock, Escalated, Escalation, Failed, Host, HostError, ManualClock, RefusedCommand,
+    Retries, SystemClock,
 };
 use spindle_ingress::console::{self, Worlds};
 use spindle_ingress::{
-    Answer, Caller, Console, Exchange, Listener, Recorder, SeedState, Surface, Unfixed,
+    Answer, Caller, Console, Exchange, Listener, Recorder, SeedPhase, SeedProgress, SeedState,
+    Surface, Unfixed,
 };
 use spindle_spec::EssIr;
 
@@ -93,7 +95,8 @@ pub(crate) struct Serving<'a> {
     pub port: u16,
     /// `--address`: the IP address the listener binds, 127.0.0.1 by default; off loopback only
     /// with `caller_header`, every request without the proxy's secret refused before it is read
-    /// ([`Listener::bind_reading_on`]).
+    /// ([`Listener::bind_reading_on`]), or with `tokens` over `tls`, every request without a
+    /// valid token refused before it is read.
     pub address: std::net::IpAddr,
     /// What `ingress.network` is bound to; `http-loopback` adds the console routes where
     /// `console` holds.
@@ -131,6 +134,14 @@ pub(crate) struct Serving<'a> {
     /// `--trusted-caller-secret`: the file, and the secret read from it ([`proxy_secret`]), that
     /// the proxy presents in [`Surface::SECRET_HEADER`]; given exactly when `caller_header` is.
     pub proxy_secret: Option<(&'a Path, String)>,
+    /// `--caller-token`: the mapping file, and the verifier of each request's bearer token its
+    /// key set was fetched for ([`crate::token::Verifier::start`], [`Surface::verifying_tokens`]);
+    /// never with `callers` or `caller_header`.
+    pub tokens: Option<(&'a Path, Arc<crate::token::Verifier>)>,
+    /// `--tls-cert` with `--tls-key`, and `--tls-client-ca`: the TLS every connection is served
+    /// over, a client certificate required where it verifies clients
+    /// ([`Listener::bind_reading_on_tls`]); plain HTTP without it.
+    pub tls: Option<std::sync::Arc<rustls::ServerConfig>>,
     /// The seed file read and checked before listening ([`crate::seed::load`]): its entries are
     /// submitted once listening, one between each two exchanges ([`crate::seed::Seeding`]), and
     /// again, all before the answer, after each reset with no world ([`reset_seeded`]).
@@ -145,6 +156,9 @@ pub(crate) struct Serving<'a> {
     /// `--mint-seed`: the host mints from this seed from its first command, and again after each
     /// reset whose world carries no mint ([`Host::seeded`]).
     pub mint_seed: Option<u64>,
+    /// The environment's `[egress]`, checked and its calls resolved: each bound event is posted
+    /// to its call beside the run's thread once the host is open ([`crate::egress`]).
+    pub egress: Option<crate::egress::Plan>,
 }
 
 /// The secret in the file `path` (`--trusted-caller-secret`), one trailing newline (`\n` or
@@ -334,8 +348,35 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         }
         (Some(other), _) => bail!("this build has no `{other}` store for store.durable"),
     };
+    // On PostgreSQL with `database_lease` the run leads only under the lease of every component's
+    // tables (`story:several-writers-one-postgres`): it opens the stores once it holds them all,
+    // here where it took them at once, or later, standing by, where another process holds one.
+    // Without `database_lease` it takes no lease and opens them as before (D9 C).
+    let mut standby = None;
+    let mut kept = None;
     let stores = match serving.durable {
-        Some(crate::database::POSTGRES) => crate::database::stores(&ir, environment)?,
+        Some(crate::database::POSTGRES) => {
+            let leases = crate::database::Leases::connect(&ir, environment)?;
+            let held = match leases {
+                Some(mut leases) => match leases.take()? {
+                    None => {
+                        kept = Some(leases.keep()?);
+                        None
+                    }
+                    Some(held) => Some((leases, held)),
+                },
+                None => None,
+            };
+            if held.is_some() {
+                standby = held;
+                spindle_host::Stores::new()
+            } else {
+                match crate::database::stores(&ir, environment) {
+                    Ok(stores) => stores,
+                    Err(error) => return crate::database::misfit_refused(error),
+                }
+            }
+        }
         _ => spindle_host::Stores::new(),
     };
     match serving.callers.as_slice() {
@@ -370,18 +411,28 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         .map(|component| component.name.as_str().to_owned())
         .collect();
     let reaching = Surface::reaching(&reached);
-    let surface = match (serving.caller_header, &serving.proxy_secret) {
-        (Some(header), Some((_, secret))) => reaching.proving_callers(
+    let surface = match (
+        serving.caller_header,
+        &serving.proxy_secret,
+        &serving.tokens,
+    ) {
+        (None, _, Some((_, verifier))) => reaching.verifying_tokens(
+            &ir,
+            &serving.components,
+            serving.binding.as_ref(),
+            Arc::clone(verifier) as Arc<dyn spindle_ingress::CallerToken>,
+        )?,
+        (Some(header), Some((_, secret)), _) => reaching.proving_callers(
             &ir,
             &serving.components,
             serving.binding.as_ref(),
             header,
             secret,
         )?,
-        (Some(header), None) => {
+        (Some(header), None, _) => {
             bail!("--trusted-caller-header {header} needs --trusted-caller-secret <FILE>")
         }
-        (None, _) => reaching.fixing_callers(
+        (None, _, None) => reaching.fixing_callers(
             &ir,
             &serving.components,
             serving.binding.as_ref(),
@@ -404,6 +455,9 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             Surface::SECRET_HEADER
         ))
         .write();
+    }
+    if let Some((_, verifier)) = &serving.tokens {
+        log::info(verifier.describe()).write();
     }
     let surface = match (serving.observe, PANEL) {
         (Some(capacity), Some(page)) => surface
@@ -439,7 +493,7 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             "a command that reads caller attributes is served where the run fixes its caller \
              (--fixed-actor with --fixed-caller), a test backend, or where each request proves \
              its caller through a trusted proxy (--trusted-caller-header with \
-             --trusted-caller-secret)",
+             --trusted-caller-secret) or by a verified bearer token (--caller-token)",
         )
         .write();
     }
@@ -464,6 +518,39 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         Some(manual) => Arc::clone(manual) as Arc<dyn Clock>,
         None => Arc::new(SystemClock),
     };
+    // Standing by, the run listens before any host exists, and opens the stores once it holds
+    // every lease (`story:several-writers-one-postgres`).
+    let mut stores = stores;
+    let mut surface = Some(surface);
+    let mut standing = None;
+    if let Some((leases, held)) = standby {
+        let waiting = Listener::bind_standing_by_on(
+            serving.address,
+            serving.port,
+            surface.take().context("the surface")?,
+            serving.tls.clone(),
+        )
+        .context("binding the HTTP listener")?;
+        stopping_on(&waiting.stopping())?;
+        listening(&waiting, &serving.components)?;
+        match stand_by(&waiting, leases, &held, &signalled)? {
+            Ok(leading) => {
+                kept = Some(leading);
+                stores = match crate::database::stores(&ir, environment) {
+                    Ok(stores) => stores,
+                    Err(error) => {
+                        waiting.close(CLOSE_GRACE);
+                        return crate::database::misfit_refused(error);
+                    }
+                };
+                standing = Some(waiting);
+            }
+            Err(code) => {
+                waiting.close(CLOSE_GRACE);
+                return Ok(code);
+            }
+        }
+    }
     let opened = Host::with_stores(ir, environment, clock, directory, decider, retries, stores)
         .map(|host| match stepping {
             Some(manual) => host.stepping(manual),
@@ -479,8 +566,21 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             println!("{refusal}");
             return Ok(ExitCode::from(REFUSED));
         }
+        Err(misfit @ HostError::Misfit { .. }) => {
+            println!("{misfit}");
+            return Ok(ExitCode::from(REFUSED));
+        }
         Err(error) => return Err(error.into()),
     };
+    for component in host.unrecorded() {
+        log::info(crate::database::unrecorded(component)).write();
+    }
+    // Each bound event is posted beside this thread; the cursors are saved on it, between two
+    // exchanges and once more as the run ends (`story:event-egress-webhook`).
+    let mut egress = serving
+        .egress
+        .map(|plan| crate::egress::Egress::start(plan, directory))
+        .transpose()?;
     if serving.drop_retries {
         for binding in &retried {
             log::info(format!(
@@ -493,7 +593,27 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     }
     // Where a `--state` records the seed applied to it (`seed.json`), a seed it does not record
     // stops the run here, before listening.
+    let taken_again = kept.as_ref().and_then(crate::database::Kept::taken_again);
     let mut seeding = match (serving.seed, published) {
+        // The seed runs only under the first token of each lease: a run that took one at a later
+        // token, standing by first or not, skips it (`story:several-writers-one-postgres`, D5).
+        (Some(seed), Some(published)) if taken_again.is_some() => {
+            let (component, token) = taken_again.unwrap_or_default();
+            log::info(format!(
+                "seed {} is not submitted: this run took the lease of {component} at token \
+                 {token}, and the seed runs only under a lease's first token",
+                seed.path().display()
+            ))
+            .field("component", component)
+            .field("token", token)
+            .write();
+            published.publish(SeedProgress {
+                phase: SeedPhase::Ended,
+                left: 0,
+                ..SeedProgress::starting(published.read().entries)
+            });
+            None
+        }
         (Some(seed), Some(published)) => Some(crate::seed::begin(
             seed,
             serving.state,
@@ -503,28 +623,41 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
         )?),
         _ => None,
     };
-    let listener = Listener::bind_reading_on(serving.address, serving.port, surface, host.reader())
-        .context("binding the HTTP listener")?;
-    // The signal itself stops the listener taking work, while a command may hold this thread.
+    let listener = match (standing, surface) {
+        (Some(standing), _) => {
+            // The listener standing by leads: it reads through the host from now on.
+            standing.lead(host.reader());
+            standing
+        }
+        (None, surface) => {
+            let surface = surface.context("the surface")?;
+            let listener = match serving.tls {
+                Some(tls) => Listener::bind_reading_on_tls(
+                    serving.address,
+                    serving.port,
+                    surface,
+                    host.reader(),
+                    tls,
+                ),
+                None => {
+                    Listener::bind_reading_on(serving.address, serving.port, surface, host.reader())
+                }
+            }
+            .context("binding the HTTP listener")?;
+            // The signal itself stops the listener taking work, while a command may hold this
+            // thread.
+            stopping_on(&listener.stopping())?;
+            listening(&listener, &serving.components)?;
+            listener
+        }
+    };
     let stopping = listener.stopping();
-    stopping_on(&stopping)?;
     let worlds = |ir: &EssIr, body: &serde_json::Value| {
         crate::world::read(ir, body, |table| {
             decisions::deciding(&answers, Some(table), recorder.as_ref()).boxed()
         })
         .map_err(|error| format!("{error:#}"))
     };
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-    writeln!(
-        out,
-        "{}",
-        serde_json::json!({
-            "listening": listener.local_addr().to_string(),
-            "components": serving.components,
-        })
-    )?;
-    out.flush()?;
     // The exit status a signal asks for, once one arrived.
     let signal_exit = || {
         let signal = signalled.load(Ordering::SeqCst);
@@ -541,6 +674,16 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     // entry, and before the wait for an exchange. From then on the loop takes only the exchanges
     // already queued, none once the drain bound has passed, and sends no seed entry.
     let code = loop {
+        if let Some(egress) = egress.as_mut() {
+            egress.tend();
+        }
+        // A leader that lost a lease writes nothing more: every request still queued is answered
+        // `503` below and the run exits 1, for its supervisor to start it again
+        // (`story:several-writers-one-postgres`, D4).
+        if let Some(lost) = kept.as_ref().and_then(crate::database::Kept::confirmed) {
+            log::error(lost).write();
+            break ExitCode::FAILURE;
+        }
         match draining {
             Some((code, Some(until))) if Instant::now() >= until => break code,
             Some(_) => {}
@@ -579,6 +722,14 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
                 None => continue,
             }
         };
+        // The wait for the exchange may have outlasted the lease, as in a process paused: the
+        // exchange runs only once the leases are known still held, and is answered `503` where
+        // one was lost (D4).
+        if let Some(lost) = kept.as_ref().and_then(crate::database::Kept::confirmed) {
+            exchange.respond(Answer::refusal(503, LEASE_LOST));
+            log::error(lost).write();
+            break ExitCode::FAILURE;
+        }
         if exchange.console() == Some(Console::Reset)
             && (draining.is_some() || stopping.load(Ordering::SeqCst))
         {
@@ -587,6 +738,13 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             // they are (`story:health-and-graceful-drain`).
             exchange.respond(Answer::refusal(503, "the run is stopping on a signal"));
             continue;
+        }
+        if exchange.console() == Some(Console::Reset)
+            && let Some(egress) = egress.as_mut()
+        {
+            // The egress reads the stores the reset empties: it stops before, and starts again
+            // on the emptied stores at the top of the next turn.
+            egress.pause();
         }
         if exchange.console() == Some(Console::Reset)
             && let Some(seeding) = seeding.as_mut()
@@ -617,7 +775,19 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
             exchange.respond(answer);
             continue;
         }
-        let failures = exchange.serve_with(&mut host, &worlds);
+        // A write the lease's fence refused, as once the session holding the lease ended and
+        // another process took it, answers `503`; so does a write that failed committing nothing
+        // where the lease is then found lost, as one whose database session a process taking
+        // over ended. The loop then exits 1 (D4).
+        let failures = if let Some(held) = kept.as_ref() {
+            exchange.serve_with_unless(&mut host, &worlds, |uncommitted| {
+                crate::database::Kept::fenced()
+                    .or_else(|| uncommitted.then(|| held.confirmed()).flatten())
+                    .map(|_| Answer::refusal(503, LEASE_LOST))
+            })
+        } else {
+            exchange.serve_with(&mut host, &worlds)
+        };
         let mut escalations = host.take_escalated();
         for failed in failures {
             let bound = match &failed.cause {
@@ -625,11 +795,6 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
                 Cause::Submitted => None,
             };
             let binding = bound.unwrap_or("the request");
-            let attempts = if failed.attempts > 1 {
-                format!(" after {} attempts", failed.attempts)
-            } else {
-                String::new()
-            };
             // The escalation of this attempt, where its binding escalated it rather than drop it.
             let escalated = escalations
                 .iter()
@@ -640,21 +805,41 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
                         && escalated.command == failed.command
                 })
                 .map(|at| escalations.remove(at));
-            let fate = match &escalated {
-                Some(escalated) => escalation(escalated),
-                None => "dropped".to_owned(),
-            };
-            let mut line = log::warn(format!(
-                "{} did not run {} ({binding}), {fate}{attempts}: {}",
-                failed.component, failed.command, failed.error
-            ))
-            .field("component", failed.component.as_str())
-            .field("command", failed.command.as_str());
+            let mut line = log::warn(did_not_run(&failed, binding, escalated.as_ref()))
+                .field("component", failed.component.as_str())
+                .field("command", failed.command.as_str());
             if let Some(binding) = bound {
                 line = line.field("binding", binding);
             }
+            if let Some(id) = failed.dead_letter {
+                line = line.field("dead_letter", id);
+            }
+            if let Some(why) = &failed.not_kept {
+                line = line.field("not_kept", why.as_str());
+            }
             line.field("attempts", failed.attempts)
                 .field("error", failed.error.as_str())
+                .write();
+        }
+        // A refused command its store kept as a dead letter prints nothing, as before; one its
+        // store could not keep prints why (story:dead-letters-kept-and-replayed).
+        for refused in host.take_unkept() {
+            let bound = match &refused.cause {
+                Cause::Delivered { binding } | Cause::Tick { binding } => Some(binding.as_str()),
+                Cause::Submitted => None,
+            };
+            let mut line = log::warn(refused_not_kept(&refused, bound.unwrap_or("the request")))
+                .field("component", refused.component.as_str())
+                .field("command", refused.command.as_str());
+            if let Some(binding) = bound {
+                line = line.field("binding", binding);
+            }
+            if let Some(why) = &refused.not_kept {
+                line = line.field("not_kept", why.as_str());
+            }
+            line.field("outcome", refused.outcome.as_str())
+                .field("attempts", refused.attempts)
+                .field("error", refused.error.name.as_str())
                 .write();
         }
         for escalated in escalations {
@@ -676,7 +861,80 @@ pub(crate) fn serve(ir: EssIr, serving: Serving<'_>) -> Result<ExitCode> {
     // the run exits; readiness reads 503 meanwhile.
     stopping.store(true, Ordering::SeqCst);
     listener.close(CLOSE_GRACE);
+    // The lanes stop, each after its post under way, and the cursors they handed back are saved.
+    drop(egress);
     Ok(code)
+}
+
+/// Prints the line a served run prints once it listens:
+/// `{"listening": "<address>", "components": [...]}`.
+fn listening(listener: &Listener, components: &[String]) -> Result<()> {
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    writeln!(
+        out,
+        "{}",
+        serde_json::json!({
+            "listening": listener.local_addr().to_string(),
+            "components": components,
+        })
+    )?;
+    out.flush()?;
+    Ok(())
+}
+
+/// Stands by on `listener` until this run holds every lease of `leases`
+/// (`story:several-writers-one-postgres`): it asks for them every [`crate::database::Leases::poll`],
+/// a third of the lease, answering each request handed to it meanwhile `503`, and prints one line
+/// per component once it took them all. Answers the leases kept from then on, or the exit status a
+/// signal asks for, which stops the standby.
+///
+/// # Errors
+/// A lease that cannot be read or written, or the lease thread that cannot start.
+fn stand_by(
+    listener: &Listener,
+    mut leases: crate::database::Leases,
+    held: &str,
+    signalled: &std::sync::atomic::AtomicUsize,
+) -> Result<std::result::Result<crate::database::Kept, ExitCode>> {
+    log::info(format!(
+        "standing by: another process holds the lease of {held}, so this run serves nothing \
+         until it takes the leases of {}",
+        leases.components().join(", ")
+    ))
+    .field("component", held)
+    .write();
+    let mut asked = Instant::now();
+    loop {
+        let signal = signalled.load(Ordering::SeqCst);
+        if signal != 0 {
+            let signal = u8::try_from(signal).unwrap_or(u8::MAX - SIGNALLED);
+            return Ok(Err(ExitCode::from(SIGNALLED.saturating_add(signal))));
+        }
+        let wait = leases
+            .poll()
+            .saturating_sub(asked.elapsed())
+            .min(SIGNAL_POLL);
+        if let Some(exchange) = listener.next(wait) {
+            exchange.respond(Answer::refusal(
+                503,
+                "the run is on standby: another process holds the lease of its store",
+            ));
+            continue;
+        }
+        if asked.elapsed() < leases.poll() {
+            continue;
+        }
+        asked = Instant::now();
+        if leases.take()?.is_none() {
+            for component in leases.components() {
+                log::info(format!("took the lease of {component}"))
+                    .field("component", component.as_str())
+                    .write();
+            }
+            return Ok(Ok(leases.keep()?));
+        }
+    }
 }
 
 /// Each line of [`Surface::report`], as it is written, with the operation it names: the route of
@@ -710,6 +968,46 @@ fn reported(surface: &Surface) -> Vec<(String, Option<&ess_http::Operation>)> {
 
 /// What a served run says an escalation did: published its event, or, unmet, published nothing,
 /// naming the binding, the event and what the command's input lacks.
+/// The line a served run prints for `failed`, a command `binding` invoked that did not execute:
+/// its escalation where its binding escalated it (`escalated`), else the dead letter its store
+/// kept it as (story:dead-letters-kept-and-replayed), else dropped, naming why its store did not
+/// keep it where it is one the store could not keep.
+fn did_not_run(failed: &Failed, binding: &str, escalated: Option<&Escalated>) -> String {
+    let attempts = if failed.attempts > 1 {
+        format!(" after {} attempts", failed.attempts)
+    } else {
+        String::new()
+    };
+    let fate = match (escalated, failed.dead_letter) {
+        (Some(escalated), _) => escalation(escalated),
+        (None, Some(id)) => format!("kept as dead letter {id}"),
+        (None, None) => "dropped".to_owned(),
+    };
+    let unkept = match (escalated, &failed.not_kept) {
+        (None, Some(why)) => format!(", not kept as a dead letter: {why}"),
+        _ => String::new(),
+    };
+    format!(
+        "{} did not run {} ({binding}), {fate}{attempts}{unkept}: {}",
+        failed.component, failed.command, failed.error
+    )
+}
+
+/// The line a served run prints for `refused`, a command `binding` invoked that its model refused
+/// and whose dead letter its store could not keep: dropped, naming the store's reason.
+fn refused_not_kept(refused: &RefusedCommand, binding: &str) -> String {
+    let attempts = if refused.attempts > 1 {
+        format!(" after {} attempts", refused.attempts)
+    } else {
+        String::new()
+    };
+    let why = refused.not_kept.as_deref().unwrap_or("no reason given");
+    format!(
+        "{} refused {} ({binding}) with {}, dropped{attempts}, not kept as a dead letter: {why}: {}",
+        refused.component, refused.command, refused.outcome, refused.error.name
+    )
+}
+
 fn escalation(escalated: &Escalated) -> String {
     match &escalated.escalation {
         Escalation::Published(_) => format!("escalated into {}", escalated.event),
@@ -722,6 +1020,9 @@ fn escalation(escalated: &Escalated) -> String {
 
 /// How long the run waits, once it stops, for the answers it handed back to be written.
 const CLOSE_GRACE: Duration = Duration::from_secs(2);
+
+/// The refusal of a request taken by a leader that lost a lease of its store (D4).
+const LEASE_LOST: &str = "the run lost the lease of its store to another process and exits";
 
 /// Answers `exchange`, a `POST /api/reset` on a run with a seed: every store emptied and the world
 /// its body carries loaded, as [`console::reset`] answers it, and the reset counted on `recorder`
@@ -767,4 +1068,81 @@ fn reset_seeded(
         }
     }
     exchange.respond(answer);
+}
+
+#[cfg(test)]
+mod tests {
+    use spindle_host::{Cause, Failed, RefusedCommand};
+    use spindle_kernel::DeclaredError;
+
+    use super::{did_not_run, refused_not_kept};
+
+    fn failed(dead_letter: Option<u64>, not_kept: Option<&str>) -> Failed {
+        Failed {
+            component: "shipping".to_owned(),
+            command: "depot.shipping.Ship".to_owned(),
+            cause: Cause::Delivered {
+                binding: "ship-on-order".to_owned(),
+            },
+            caused_by: Some("depot.orders.PlaceOrder".to_owned()),
+            error: "the cause is undecided".to_owned(),
+            kind: Some("undecided"),
+            attempts: 5,
+            dead_letter,
+            not_kept: not_kept.map(str::to_owned),
+        }
+    }
+
+    /// A dead letter its store could not keep is printed dropped, with the store's reason
+    /// (story:dead-letters-kept-and-replayed).
+    #[test]
+    fn a_dead_letter_its_store_could_not_keep_is_printed_dropped_with_why() {
+        assert_eq!(
+            did_not_run(
+                &failed(None, Some("store: the disk is full")),
+                "ship-on-order",
+                None
+            ),
+            "shipping did not run depot.shipping.Ship (ship-on-order), dropped after 5 attempts, \
+             not kept as a dead letter: store: the disk is full: the cause is undecided"
+        );
+        assert_eq!(
+            did_not_run(&failed(Some(3), None), "ship-on-order", None),
+            "shipping did not run depot.shipping.Ship (ship-on-order), kept as dead letter 3 \
+             after 5 attempts: the cause is undecided"
+        );
+        assert_eq!(
+            did_not_run(&failed(None, None), "ship-on-order", None),
+            "shipping did not run depot.shipping.Ship (ship-on-order), dropped after 5 attempts: \
+             the cause is undecided"
+        );
+    }
+
+    /// A refused command whose dead letter its store could not keep is printed dropped, with the
+    /// store's reason (story:dead-letters-kept-and-replayed).
+    #[test]
+    fn a_refused_command_its_store_could_not_keep_is_printed_dropped_with_why() {
+        let refused = RefusedCommand {
+            component: "shipping".to_owned(),
+            command: "depot.shipping.Ship".to_owned(),
+            cause: Cause::Delivered {
+                binding: "ship-on-order".to_owned(),
+            },
+            caused_by: Some("depot.orders.PlaceOrder".to_owned()),
+            outcome: "busy".to_owned(),
+            error: DeclaredError {
+                name: "depot.shipping.Busy".to_owned(),
+                fields: serde_json::Map::new(),
+                unknown_instance: false,
+            },
+            attempts: 5,
+            dead_letter: None,
+            not_kept: Some("store: the disk is full".to_owned()),
+        };
+        assert_eq!(
+            refused_not_kept(&refused, "ship-on-order"),
+            "shipping refused depot.shipping.Ship (ship-on-order) with busy, dropped after 5 \
+             attempts, not kept as a dead letter: store: the disk is full: depot.shipping.Busy"
+        );
+    }
 }

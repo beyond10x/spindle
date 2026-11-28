@@ -37,7 +37,8 @@ use tokio_postgres::error::SqlState;
 
 use crate::postgres::{Database, PostgresStore, prefix, session};
 use crate::sqlite::{
-    ENTITY, Log, MARKS, PREFIX, REMOVED, TENANT, WRITTEN, WRITTEN_SCHEMA, Written, backend, meta,
+    DEAD_LETTERS, ENTITY, Log, MARKS, PREFIX, REMOVED, SPECIFICATION, TENANT, WRITTEN,
+    WRITTEN_SCHEMA, Written, backend, meta,
 };
 use crate::store::StoreError;
 
@@ -255,7 +256,8 @@ impl Target {
 
     /// Whether the tables hold no stream a move of `source` could land on: neither the stream
     /// of any entity in `declared` (those the specification declares) or in the file, nor the
-    /// mark of a log holding writes that recorded no entity's version ([`MARKS`]).
+    /// mark of a log holding writes that recorded no entity's version ([`MARKS`]), nor the stream
+    /// of its dead letters ([`DEAD_LETTERS`]): tables holding only dead letters are not empty.
     ///
     /// Every write of a PostgreSQL store appends to the stream of each entity it writes, and a
     /// move to the mark before anything else, so tables holding any of Spindle's writes hold
@@ -271,12 +273,13 @@ impl Target {
             .chain(&source.read()?.entities)
             .map(String::as_str)
             .collect();
-        let mut streams = Vec::with_capacity(entities.len() + 1);
+        let mut streams = Vec::with_capacity(entities.len() + 2);
         for entity in entities {
             streams.push(StreamId::new(self.tenant.clone(), ENTITY, entity).map_err(backend)?);
         }
-        let (kind, id) = MARKS;
-        streams.push(StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?);
+        for (kind, id) in [MARKS, DEAD_LETTERS] {
+            streams.push(StreamId::new(self.tenant.clone(), kind, id).map_err(backend)?);
+        }
         for stream in &streams {
             let version = self
                 .runtime
@@ -540,9 +543,16 @@ fn group(tenant: &TenantId, events: &[RecordedEvent]) -> Result<AppendGroup, Sto
             Some(append) => append.events.push(new),
             None => appends.push(StreamAppend {
                 stream,
-                expected: match event.version {
-                    0 | 1 => Expected::NoStream,
-                    version => Expected::Exact(version - 1),
+                // The record of the specification lands after any the tables hold already (a
+                // `run` that opened them empty recorded one), so its last is the file's.
+                expected: if (event.stream_type.as_str(), event.stream_id.as_str()) == SPECIFICATION
+                {
+                    Expected::Any
+                } else {
+                    match event.version {
+                        0 | 1 => Expected::NoStream,
+                        version => Expected::Exact(version - 1),
+                    }
                 },
                 events: vec![new],
             }),

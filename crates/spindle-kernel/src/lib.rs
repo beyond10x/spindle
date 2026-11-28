@@ -55,6 +55,7 @@ pub mod contract;
 mod decider;
 mod execute;
 mod facts;
+mod fit;
 mod grant;
 mod mint;
 #[cfg(feature = "postgres")]
@@ -78,10 +79,12 @@ pub use execute::execute_reaching;
 pub use execute::{
     Invocation, at_rest, execute, execute_as, execute_at, execute_minting, execute_refusing,
 };
+pub use fit::{Fit, Misfit, Model, Shape, Shapes};
 pub use mint::{Identity, Mint, Seeded, Uuid, UuidV4};
 #[cfg(feature = "postgres")]
 pub use postgres::{
-    Database, PostgresStore, RESERVED as POSTGRES_RESERVED, prefix as postgres_prefix,
+    Database, LEASE_MAX, Lease, PostgresStore, RESERVED as POSTGRES_RESERVED, fenced,
+    prefix as postgres_prefix,
 };
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 pub use sqlite::LogStore;
@@ -90,8 +93,9 @@ pub use sqlite::SqliteStore;
 #[cfg(all(feature = "sqlite", feature = "postgres"))]
 pub use state_move::{Lock as StateLock, Moved, Source as StateSource, Target as StateTarget};
 pub use store::{
-    Change, Committed, EVERY_INSTANCE, MemoryStore, Origin, Position, Provenance, Reading, Removal,
-    Row, Scan, Scanned, Sender, Store, StoreError, Stored, Write, instances_of, whole_writes,
+    Change, Committed, DeadLetter, EVERY_INSTANCE, MemoryStore, Origin, Position, Provenance,
+    Reading, Removal, Row, Scan, Scanned, Sender, Store, StoreError, Stored, Write, instances_of,
+    whole_writes,
 };
 pub use supported::{check as runs, selects, takes};
 pub use supported::{check_reaching as runs_reaching, takes_reaching};

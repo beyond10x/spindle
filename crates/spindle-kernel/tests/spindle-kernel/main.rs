@@ -58,6 +58,12 @@ mod adversary_w30_u11;
 mod adversary_w30_u3;
 mod adversary_w30_u4;
 mod adversary_w30_u6;
+#[cfg(all(feature = "postgres", feature = "sqlite"))]
+mod adversary_w31_u1;
+#[cfg(feature = "sqlite")]
+mod adversary_w31_u5;
+#[cfg(all(feature = "postgres", feature = "sqlite"))]
+mod adversary_w31_u8;
 mod affects_each;
 mod before_row;
 mod caller;
@@ -68,12 +74,16 @@ mod deployment;
 mod error_fields;
 mod existing_instance;
 mod expressions;
+#[cfg(feature = "sqlite")]
+mod fit;
 mod generated;
 mod guard_reads_now;
 mod guards;
 mod held_null;
 mod integer_identity;
 mod list_append;
+#[cfg(feature = "sqlite")]
+mod log_streams;
 mod map_input_guard;
 mod mint;
 mod placement;

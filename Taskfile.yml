@@ -4,7 +4,7 @@ env:
   ESS_TOOLCHAIN: '0.99.2'
 
 vars:
-  OBSERVE_ROOTS: --root spindle.observe.Deployment --root spindle.observe.Catalogue --root spindle.observe.Sample --root spindle.observe.StateChange --root spindle.observe.RequestLog --root spindle.observe.MetricFamilies --root spindle.observe.Topology --root spindle.observe.ServedOperations --root spindle.observe.SeedState --root spindle.observe.Readiness --root spindle.observe.Liveness
+  OBSERVE_ROOTS: --root spindle.observe.Deployment --root spindle.observe.Catalogue --root spindle.observe.Sample --root spindle.observe.StateChange --root spindle.observe.RequestLog --root spindle.observe.MetricFamilies --root spindle.observe.Topology --root spindle.observe.ServedOperations --root spindle.observe.SeedState --root spindle.observe.Readiness --root spindle.observe.Liveness --root spindle.observe.DeadLetters
   OBSERVE_SCHEMAS: ess/generated/jsonschema/schema/types
 
 tasks:
@@ -47,7 +47,7 @@ tasks:
       - sh scripts/gate-scripts.adversary-test.sh
 
   check:the_release_binary_checks_refuse_what_they_must:
-    desc: scripts/release-linux-binary.sh, the release job's glibc floor, static and image checks, refuses a binary over the floor, one that is not static and an image not pinned by digest, on stub tools; and release.yml's target lists equal its build matrix
+    desc: scripts/release-linux-binary.sh, the release job's glibc floor, static, base image and Spindle image checks, refuses a binary over the floor, one that is not static, an image not pinned by digest, a Containerfile that is not pinned, numeric non-root and copy-only or sets a setuid bit, an image that answers another version, runs as root or answers no request with the secret from outside the container, a manifest list without both checked images on their platforms and an IMAGES line not pinned by digest, on stub tools; and release.yml's target lists equal its build matrix, its image rows are the gnu rows, nothing pushes on a pull request, a tag already in ghcr.io is left or refused and never moved, and a commit without a Containerfile publishes without IMAGES
     cmds:
       - sh scripts/release-linux-binary.adversary-test.sh
 
@@ -66,9 +66,11 @@ tasks:
       - sh scripts/within.sh 120 cargo nextest run --workspace --locked
 
   test:slowest:
-    desc: The ten slowest tests of the last nextest run, read from its JUnit report
+    desc: The ten slowest tests of the last nextest run of the profile NEXTEST_PROFILE, default unless given, read from its JUnit report
+    vars:
+      NEXTEST_PROFILE: '{{.NEXTEST_PROFILE | default "default"}}'
     cmds:
-      - if [ -f target/nextest/default/junit.xml ]; then echo "the ten slowest tests:"; sed -n 's/.*<testcase name="\([^"]*\)" classname="\([^"]*\)".* time="\([0-9.]*\)".*/\3 s  \2 \1/p' target/nextest/default/junit.xml | sort -rn | head -n 10; fi
+      - if [ -f target/nextest/{{.NEXTEST_PROFILE}}/junit.xml ]; then echo "the ten slowest tests:"; sed -n 's/.*<testcase name="\([^"]*\)" classname="\([^"]*\)".* time="\([0-9.]*\)".*/\3 s  \2 \1/p' target/nextest/{{.NEXTEST_PROFILE}}/junit.xml | sort -rn | head -n 10; fi
 
   check:conformance:
     desc: Spindle runs the suite ESS synthesises from ess/ with the scenarios ess-inputs.yaml lists, every executed scenario passing and its counts held
@@ -176,17 +178,23 @@ tasks:
       - pnpm build
 
   check:postgres:
-    desc: The PostgreSQL store's and the state move's tests against the database SPINDLE_TEST_DATABASE_URL names (loopback, a role that may create schemas, roles and tables), the hosted cases over TLS verified against SPINDLE_TEST_DATABASE_CA
+    desc: The PostgreSQL store's and the state move's tests against the database SPINDLE_TEST_DATABASE_URL names (loopback, a role that may create schemas, roles and tables), the hosted cases over TLS verified against SPINDLE_TEST_DATABASE_CA, under cargo-nextest's postgres profile, each killed at 60 s by .config/nextest.toml; the run after the build ends within 120 s and prints its ten slowest tests
     requires:
       vars: [SPINDLE_TEST_DATABASE_URL, SPINDLE_TEST_DATABASE_CA]
+    vars:
+      NEXTEST: cargo nextest run --locked --profile postgres -p spindle-kernel -p spindle-host -p spindle-cli --test spindle-kernel --test spindle-host --test spindle-cli
+      TESTS: >-
+        (binary_id(=spindle-kernel::spindle-kernel) and (test(~postgres::) or test(~state_move::)
+        or test(~on_postgres) or test(~adversary_w21_store::)
+        or ((test(~adversary_postgres_named::) or test(~adversary_postgres_scan::))
+        and not test(~adv2_sqlite_scans_the_same_long_logs)
+        and not test(~adv3_a_scan_of_1300_rows_of_a_mebibyte_each))))
+        or (binary_id(=spindle-host::spindle-host) and test(~postgres::))
+        or (binary_id(=spindle-cli::spindle-cli) and (test(~postgres::) or test(~state_move::)))
     cmds:
-      - 'cargo test --locked -p spindle-kernel --test spindle-kernel -- --include-ignored postgres::'
-      - 'cargo test --locked -p spindle-kernel --test spindle-kernel -- --include-ignored state_move::'
-      - 'cargo test --locked -p spindle-kernel --test spindle-kernel -- --include-ignored on_postgres adversary_w21_store::'
-      - 'cargo test --locked -p spindle-kernel --test spindle-kernel -- --include-ignored adversary_postgres_named:: adversary_postgres_scan:: --skip adv2_sqlite_scans_the_same_long_logs --skip adv3_a_scan_of_1300_rows_of_a_mebibyte_each'
-      - 'cargo test --locked -p spindle-host --test spindle-host -- --include-ignored postgres::'
-      - 'cargo test --locked -p spindle-cli --test spindle-cli -- --include-ignored postgres::'
-      - 'cargo test --locked -p spindle-cli --test spindle-cli -- --include-ignored state_move::'
+      - '{{.NEXTEST}} --no-run'
+      - defer: { task: test:slowest, vars: { NEXTEST_PROFILE: postgres } }
+      - "sh scripts/within.sh 120 {{.NEXTEST}} --run-ignored all -E '{{.TESTS}}'"
 
   check:vm:
     desc: The VM tests, on a host with KVM
@@ -294,7 +302,7 @@ tasks:
         sh: mktemp -d
     cmds:
       - defer: rm -rf {{.BUNDLES}}
-      - for: [Deployment, Catalogue, Sample, StateChange, RequestLog, MetricFamilies, Topology, ServedOperations, SeedState, Readiness, Liveness]
+      - for: [Deployment, Catalogue, Sample, StateChange, RequestLog, MetricFamilies, Topology, ServedOperations, SeedState, Readiness, Liveness, DeadLetters]
         cmd: ess generate schema import-document --path {{.OBSERVE_SCHEMAS}}/spindle.observe.{{.ITEM}}.schema.json --root spindle.observe.{{.ITEM}}.document --dialect draft-2020-12 --out {{.BUNDLES}}/{{.ITEM}}.json
       - ess generate schema validate-bundle --bundle {{.BUNDLES}}/Deployment.json --root spindle.observe.Deployment.document ess/fixtures/observe/deployment.json
       - ess generate schema validate-bundle --bundle {{.BUNDLES}}/Catalogue.json --root spindle.observe.Catalogue.document ess/fixtures/observe/catalogue/*.json
@@ -307,3 +315,4 @@ tasks:
       - ess generate schema validate-bundle --bundle {{.BUNDLES}}/SeedState.json --root spindle.observe.SeedState.document ess/fixtures/observe/seed/state-*.json
       - ess generate schema validate-bundle --bundle {{.BUNDLES}}/Readiness.json --root spindle.observe.Readiness.document ess/fixtures/observe/seed/ready-*.json
       - ess generate schema validate-bundle --bundle {{.BUNDLES}}/Liveness.json --root spindle.observe.Liveness.document ess/fixtures/observe/seed/live-*.json
+      - ess generate schema validate-bundle --bundle {{.BUNDLES}}/DeadLetters.json --root spindle.observe.DeadLetters.document ess/fixtures/observe/dead-letters/*.json

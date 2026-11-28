@@ -159,7 +159,13 @@ fn console_answers(served: &Served) -> Vec<(Console, u16, Value)> {
         .into_iter()
         .map(|console| {
             let world = json!({"rows": []});
-            let body = (console == Console::Reset).then_some(&world);
+            // A replay names a dead letter no run keeps (story:dead-letters-kept-and-replayed).
+            let letter = json!({"component": "none", "id": 1});
+            let body = match console {
+                Console::Reset => Some(&world),
+                Console::Replay => Some(&letter),
+                _ => None,
+            };
             let method = console.method().as_str().to_uppercase();
             let path = match console {
                 Console::History => format!(
@@ -174,13 +180,20 @@ fn console_answers(served: &Served) -> Vec<(Console, u16, Value)> {
         .collect()
 }
 
-/// The status a served console route answers here: `409` for both methods of `/api/clock`, which
-/// a run without `--clock` serves and refuses to step (`story:served-clock-steps`), `200` for
-/// every other.
-fn served_status(console: Console) -> u16 {
+/// Whether `console` answered as a route the run serves: `409` for both methods of `/api/clock`,
+/// which a run without `--clock` serves and refuses to step (`story:served-clock-steps`), `404`
+/// naming the letter, not the path, for the replay of a dead letter no run keeps
+/// (story:dead-letters-kept-and-replayed), `200` for every other.
+fn served_answer(console: Console, status: u16, answer: &Value) -> bool {
     match console {
-        Console::Clock | Console::Step => 409,
-        _ => 200,
+        Console::Clock | Console::Step => status == 409,
+        Console::Replay => {
+            status == 404
+                && answer["refused"]
+                    .as_str()
+                    .is_some_and(|why| why.starts_with("no dead letter 1 of none"))
+        }
+        _ => status == 200,
     }
 }
 
@@ -209,20 +222,18 @@ fn off_loopback_the_run_itself_serves_no_console_route_by_default() {
 
     let flagged = serve(TRUSTED, &[address[0], address[1], "--console", "on"], None);
     for (console, status, answer) in console_answers(&flagged) {
-        assert_eq!(
-            status,
-            served_status(console),
-            "--console on off loopback, {console}: {answer}"
+        assert!(
+            served_answer(console, status, &answer),
+            "--console on off loopback, {console}: {status} {answer}"
         );
     }
     drop(flagged);
 
     let set = serve(TRUSTED, &address, Some("on"));
     for (console, status, answer) in console_answers(&set) {
-        assert_eq!(
-            status,
-            served_status(console),
-            "setting on off loopback, {console}: {answer}"
+        assert!(
+            served_answer(console, status, &answer),
+            "setting on off loopback, {console}: {status} {answer}"
         );
     }
     drop(set);

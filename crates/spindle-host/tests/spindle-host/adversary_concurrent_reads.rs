@@ -132,13 +132,13 @@ fn sample(reader: &Reader, phase: &AtomicU8, stop: &AtomicBool) -> Vec<usize> {
 #[test]
 fn adversary_a_reader_counts_the_rows_before_a_reset_or_after_it_never_between() {
     let state = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("a state");
-    reset_counted_whole(host("memory", state.path()));
+    reset_counted_whole(host("memory", state.path()), 20, 300);
 }
 
-/// [`adversary_a_reader_counts_the_rows_before_a_reset_or_after_it_never_between`] on `host`.
-pub(crate) fn reset_counted_whole(mut host: Host) {
+/// [`adversary_a_reader_counts_the_rows_before_a_reset_or_after_it_never_between`] on `host`:
+/// `rounds` resets from 5 loans to `after` loans, each counted while it runs.
+pub(crate) fn reset_counted_whole(mut host: Host, rounds: usize, after: usize) {
     const BEFORE: usize = 5;
-    const AFTER: usize = 300;
     let reader = host.reader();
     let phase = Arc::new(AtomicU8::new(IDLE));
     let stop = Arc::new(AtomicBool::new(false));
@@ -146,11 +146,11 @@ pub(crate) fn reset_counted_whole(mut host: Host) {
         let (phase, stop) = (Arc::clone(&phase), Arc::clone(&stop));
         std::thread::spawn(move || sample(&reader, &phase, &stop))
     };
-    for _ in 0..20 {
+    for _ in 0..rounds {
         host.reset_to(world("before", BEFORE, "reader-0"))
             .expect("the small world loads");
         phase.store(WATCHED, Ordering::SeqCst);
-        host.reset_to(world("after", AFTER, "reader-0"))
+        host.reset_to(world("after", after, "reader-0"))
             .expect("the large world loads");
         phase.store(IDLE, Ordering::SeqCst);
     }
@@ -162,11 +162,11 @@ pub(crate) fn reset_counted_whole(mut host: Host) {
     );
     let between = kept
         .iter()
-        .filter(|count| **count != BEFORE && **count != AFTER)
+        .filter(|count| **count != BEFORE && **count != after)
         .collect::<Vec<_>>();
     assert!(
         between.is_empty(),
-        "{} of {} counts read during a reset from {BEFORE} to {AFTER} loans were neither: {:?}",
+        "{} of {} counts read during a reset from {BEFORE} to {after} loans were neither: {:?}",
         between.len(),
         kept.len(),
         between.iter().take(20).collect::<Vec<_>>()

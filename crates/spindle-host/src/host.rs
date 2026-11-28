@@ -16,9 +16,9 @@ use spindle_channel::{
     in_process,
 };
 use spindle_kernel::{
-    Change, Committed, Decider, DeclaredError, Event, ExecuteError, Executed, MemoryStore, Mint,
-    NoExternals, Origin, Provenance, Reading, Row, Scanned, Seeded, Store, StoreError, Stored,
-    Uuid, UuidV4,
+    Change, Committed, DeadLetter, Decider, DeclaredError, Event, ExecuteError, Executed,
+    MemoryStore, Mint, NoExternals, Origin, Provenance, Reading, Row, Scanned, Seeded, Store,
+    StoreError, Stored, Uuid, UuidV4,
 };
 use spindle_telemetry::{Counters, CountingStore, Retried, Sink};
 use spindle_timer::{
@@ -74,7 +74,8 @@ pub struct Ran {
 
 /// One command a tick or a binding invoked that did not execute. Nothing was written, and the
 /// host does not run it again: a binding's command is given up after its last attempt
-/// (at most [`RETRY_ATTEMPTS`] for a binding that retries, else 1).
+/// (at most [`RETRY_ATTEMPTS`] for a binding that retries, else 1), and kept as a dead letter
+/// where its binding did not escalate it ([`Failed::dead_letter`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failed {
     /// The component that was to run it.
@@ -96,10 +97,20 @@ pub struct Failed {
     /// How many times it was run: 0 for a binding whose input was unmet, so its command was
     /// never sent.
     pub attempts: u32,
+    /// The id of the dead letter its component's store keeps it as ([`Host::dead_letters`]):
+    /// `None` for a command [`Host::submit`] was asked to run, one whose binding escalated it,
+    /// one whose input was unmet, and one whose store keeps no dead letters or could not keep
+    /// this one.
+    pub dead_letter: Option<u64>,
+    /// Why its component's store did not keep it as a dead letter, where it is one and that store
+    /// could not keep it ([`Store::keep_dead_letter`]): the store's reason. `None` where it was
+    /// kept, and where it is no dead letter.
+    pub not_kept: Option<String>,
 }
 
 /// One command a tick or a binding invoked that the model refused: its outcome declares an error.
-/// Nothing was written, and the host does not run it again, as for [`Failed`].
+/// Nothing was written, and the host does not run it again, as for [`Failed`]; it is kept as a
+/// dead letter alike ([`RefusedCommand::dead_letter`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefusedCommand {
     /// The component that ran it.
@@ -117,6 +128,44 @@ pub struct RefusedCommand {
     pub error: DeclaredError,
     /// How many times it was run.
     pub attempts: u32,
+    /// The id of the dead letter its component's store keeps it as, as [`Failed::dead_letter`].
+    pub dead_letter: Option<u64>,
+    /// Why its component's store did not keep it as a dead letter, as [`Failed::not_kept`].
+    pub not_kept: Option<String>,
+}
+
+/// What [`Host::replayed`] ran: the replay's own run, and everything the call settled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Replayed {
+    /// The replay's own run of the command, as the report lists it.
+    pub own: Attempted,
+    /// Everything the call ran: the replay's own run first in its list, then what its events led
+    /// to and any envelope a peer process sent that the call settled.
+    pub report: Report,
+}
+
+/// How one run of a command ended ([`Replayed::own`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Attempted {
+    /// It executed and was not refused.
+    Ran(Ran),
+    /// The model refused it.
+    Refused(RefusedCommand),
+    /// It did not execute.
+    Failed(Failed),
+}
+
+/// A dead letter a component's store keeps ([`Host::dead_letters`]): a command a binding or a
+/// tick invoked whose last attempt was refused or did not execute, and that its binding did not
+/// escalate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Undelivered {
+    /// The component that accepts the command, whose store keeps the dead letter.
+    pub component: String,
+    /// Its id in that store, which [`Host::replay`] names.
+    pub id: u64,
+    /// What was kept.
+    pub letter: DeadLetter,
 }
 
 /// One command a binding invoked whose last attempt did not take effect and whose failure policy
@@ -270,6 +319,18 @@ pub enum HostError {
     /// The environment cannot run every component.
     #[error("{0}")]
     Refused(Refusal),
+    /// A component's durable store holds rows the specification cannot read: it was last written
+    /// under another specification (`story:spec-change-over-stored-rows`). Nothing was written.
+    #[error(
+        "refused: the store of {component} holds rows this specification cannot read{}",
+        misfits.iter().map(|misfit| format!("\n  {misfit}")).collect::<String>()
+    )]
+    Misfit {
+        /// The component.
+        component: String,
+        /// Every row the specification cannot read, by entity and field or state.
+        misfits: Vec<spindle_kernel::Misfit>,
+    },
     /// The specification, or a binding of the environment, uses something this host does not
     /// run.
     #[error("unsupported: {0}")]
@@ -554,8 +615,11 @@ impl Store for Tallied<'_> {
 /// component owns is checked against its owner's version, then left out of what the running
 /// component's store checks, which holds no row of it. The check and the commit are two steps,
 /// which no other write comes between while this host is the one writer of the owner's store: a
-/// memory store, or a SQLite state directory, which `run` locks. Two processes writing one
-/// PostgreSQL owner store can keep a stale decision (`docs/design/spindle.md` § 11).
+/// memory store, a SQLite state directory, which `run` locks, or PostgreSQL tables, which `run`
+/// writes only under their lease: a second `run` stands by, and a write of one that lost the
+/// lease is refused inside its own transaction (`story:several-writers-one-postgres`). Two hosts
+/// writing one supplied store outside `run` can keep a stale decision
+/// (`docs/design/spindle.md` § 11).
 struct Routed<'a> {
     ir: &'a EssIr,
     running: Tallied<'a>,
@@ -799,6 +863,26 @@ impl Store for Supplied {
     fn events_id(&mut self) -> Result<u64, StoreError> {
         self.0.events_id()
     }
+
+    fn keep_dead_letter(&mut self, letter: &DeadLetter) -> Result<u64, StoreError> {
+        self.0.keep_dead_letter(letter)
+    }
+
+    fn dead_letters(&mut self) -> Result<Vec<(u64, DeadLetter)>, StoreError> {
+        self.0.dead_letters()
+    }
+
+    fn take_dead_letter(&mut self, id: u64) -> Result<Option<DeadLetter>, StoreError> {
+        self.0.take_dead_letter(id)
+    }
+
+    fn last_dead_letter_id(&mut self) -> Result<u64, StoreError> {
+        self.0.last_dead_letter_id()
+    }
+
+    fn continue_dead_letter_ids(&mut self, after: u64) -> Result<(), StoreError> {
+        self.0.continue_dead_letter_ids(after)
+    }
 }
 
 struct Component {
@@ -810,6 +894,9 @@ struct Component {
     position: u64,
     counters: Arc<Counters>,
     sink: Sink,
+    /// Set while its store is lost: a reset could not empty it nor reopen it ([`Lost`]), so
+    /// every read and write of it fails until a reset opens it again.
+    lost: bool,
 }
 
 struct Periodic {
@@ -876,6 +963,12 @@ pub struct Host {
     /// Every escalation since the last [`Host::take_escalated`], at most [`ESCALATIONS_KEPT`],
     /// the oldest forgotten first: what a caller that sees only part of a [`Report`] reports.
     escalations: Vec<Escalated>,
+    /// The components whose SQLite store held rows and recorded no specification when it opened
+    /// ([`Host::unrecorded`]).
+    unrecorded: Vec<String>,
+    /// Every refused command whose dead letter its store could not keep since the last
+    /// [`Host::take_unkept`], at most [`ESCALATIONS_KEPT`], the oldest forgotten first.
+    unkept: Vec<RefusedCommand>,
 }
 
 impl std::fmt::Debug for Host {
@@ -1109,6 +1202,7 @@ impl Host {
             .map(|route| (route.binding.clone(), Arc::new(route.clone())))
             .collect();
         let mut components = BTreeMap::new();
+        let mut files: Option<Files> = None;
         for (name, bindings) in placements.iter() {
             for binding in bindings {
                 let capability = binding.capability.as_str();
@@ -1155,7 +1249,14 @@ impl Host {
                     None | Some("memory") => (opened(None, &sink)?, Kept::Memory),
                     Some("sqlite") if cfg!(feature = "sqlite") => {
                         let file = state.join(format!("{name}.sqlite"));
-                        (opened(Some(&file), &sink)?, Kept::File(file))
+                        // Every component's file is checked before any records, at the first.
+                        let mut checked = match files.take() {
+                            Some(checked) => checked,
+                            None => Files::checked(&ir, state, &placements)?,
+                        };
+                        let store = checked.take(name, &file, &sink)?;
+                        files = Some(checked);
+                        (store, Kept::File(file))
                     }
                     Some(other) => match stores.remove(name) {
                         Some(store) => (
@@ -1181,6 +1282,7 @@ impl Host {
                     position: 0,
                     counters,
                     sink,
+                    lost: false,
                 },
             );
         }
@@ -1285,6 +1387,8 @@ impl Host {
             answering,
             staged_by: BTreeMap::new(),
             escalations: Vec::new(),
+            unrecorded: files.map(|files| files.unrecorded).unwrap_or_default(),
+            unkept: Vec::new(),
         };
         if seeded { host.seeded(0) } else { Ok(host) }
     }
@@ -1429,6 +1533,106 @@ impl Host {
     /// of the call that made it too; this is for a caller handed only part of that report.
     pub fn take_escalated(&mut self) -> Vec<Escalated> {
         std::mem::take(&mut self.escalations)
+    }
+
+    /// Every refused command since the last call whose dead letter its store could not keep
+    /// ([`RefusedCommand::not_kept`]), in the order refused, each returned once; at most
+    /// [`ESCALATIONS_KEPT`], the oldest forgotten first. Each is in the [`Report`] of the call
+    /// that ran it too; this is for a caller handed only the commands that did not execute, such
+    /// as a served run, which prints it.
+    pub fn take_unkept(&mut self) -> Vec<RefusedCommand> {
+        std::mem::take(&mut self.unkept)
+    }
+
+    /// Every dead letter the components' stores keep and no replay took ([`Undelivered`]),
+    /// component by component in name order, each component's by id: each command a binding or a
+    /// tick invoked whose last attempt was refused or did not execute, and that its binding did
+    /// not escalate (`--drop-retries`'s drops included; a binding whose input was unmet ran no
+    /// attempt and keeps none). Read from the stores, so a store in SQLite or PostgreSQL answers
+    /// those of an earlier process too; a reset forgets them with the events. A store that keeps
+    /// no dead letters answers none.
+    ///
+    /// # Errors
+    /// [`HostError::Store`] when a store cannot be read.
+    pub fn dead_letters(&mut self) -> Result<Vec<Undelivered>, HostError> {
+        let mut letters = Vec::new();
+        for (name, component) in &mut self.components {
+            letters.extend(
+                component
+                    .store
+                    .dead_letters()?
+                    .into_iter()
+                    .map(|(id, letter)| Undelivered {
+                        component: name.clone(),
+                        id,
+                        letter,
+                    }),
+            );
+        }
+        Ok(letters)
+    }
+
+    /// Runs the dead letter `id` of `component` once more and everything its events lead to, and
+    /// answers what ran ([`Report`]), as [`Host::replayed`] answers it without telling the
+    /// replay's own run apart. The store records the letter taken before the command runs
+    /// ([`Store::take_dead_letter`]), so it is replayed at most once, after a restart too. The
+    /// command runs with the input it was kept with, once, without its binding's retries or
+    /// escalation, attributed to its binding as its first run was ([`Provenance::Binding`] with no
+    /// trigger, or [`Provenance::Tick`] for a periodic binding's); a replay that is refused or
+    /// does not execute is kept as a new dead letter. `None`, and nothing runs, where no dead
+    /// letter with this id waits in that component: never kept, replayed already, forgotten by a
+    /// reset, or no component of that name.
+    ///
+    /// # Errors
+    /// [`HostError::Store`] when the store cannot be read or record the take, and as
+    /// [`Host::submit`] for what the command leads to.
+    pub fn replay(&mut self, component: &str, id: u64) -> Result<Option<Report>, HostError> {
+        Ok(self
+            .replayed(component, id)?
+            .map(|replayed| replayed.report))
+    }
+
+    /// [`Host::replay`], answering the replay's own run ([`Replayed::own`]) apart from what
+    /// settled after it: taken from the report before anything else is delivered, so an envelope
+    /// a peer process sent meanwhile, settled in the same call, is never taken for it.
+    ///
+    /// # Errors
+    /// As [`Host::replay`].
+    pub fn replayed(&mut self, component: &str, id: u64) -> Result<Option<Replayed>, HostError> {
+        let Some(held) = self.components.get_mut(component) else {
+            return Ok(None);
+        };
+        let Some(letter) = held.store.take_dead_letter(id)? else {
+            return Ok(None);
+        };
+        let binding = letter.binding;
+        let cause = match letter.event {
+            Some(_) => Cause::Delivered { binding },
+            None => Cause::Tick { binding },
+        };
+        let mut report = Report::default();
+        self.attempt(
+            component,
+            &letter.command,
+            &letter.input,
+            cause,
+            None,
+            None,
+            &mut report,
+        )?;
+        let own = if let Some(ran) = report.ran.first() {
+            Attempted::Ran(ran.clone())
+        } else if let Some(refused) = report.refused.first() {
+            Attempted::Refused(refused.clone())
+        } else if let Some(failed) = report.failed.first() {
+            Attempted::Failed(failed.clone())
+        } else {
+            return Err(HostError::Store(StoreError::Backend(format!(
+                "the replay of dead letter {id} of {component} reported no run of its command"
+            ))));
+        };
+        self.settle(&mut report, &mut Deliveries::default())?;
+        Ok(Some(Replayed { own, report }))
     }
 
     /// Every event a command committed since its component's store was last
@@ -1603,6 +1807,9 @@ impl Host {
     /// moved files are removed only once the empty store is open. A store the host was given is
     /// emptied in place and records that its events so far are forgotten
     /// ([`Store::forget_events`]), so a host opened on it later does not read them either.
+    /// The dead letters are forgotten with the events, and their ids are not given again: an
+    /// empty store continues after the last id the store it replaces answered
+    /// ([`Store::continue_dead_letter_ids`]), so a replay naming a forgotten one runs nothing.
     /// Periodic bindings keep running, and the counters keep their counts. The answers and
     /// the mint of the world an earlier [`Host::reset_to`] loaded are dropped; the run's seed
     /// ([`Host::seeded`]) mints again from its first draw.
@@ -1726,6 +1933,7 @@ impl Host {
                     component.store.replace(Box::new(Lost(format!(
                         "{name}'s store was lost in a reset: {error}"
                     ))));
+                    component.lost = true;
                     return Err(HostError::Reset {
                         component: name.clone(),
                         error,
@@ -1734,18 +1942,21 @@ impl Host {
                 }
             } else if let Kept::File(file) = &component.kept {
                 let file = file.clone();
+                let after = last_dead_letter_id(name, component)?;
                 let closed = component
                     .store
                     .replace(Box::new(Lost(format!("{name}'s store is being reset"))));
                 drop(closed);
-                match emptied_file(&file, &component.sink) {
+                match emptied_file(&file, &self.ir, name, &component.sink, after) {
                     Ok(store) => {
                         component.store.replace(store);
+                        component.lost = false;
                     }
                     Err(error) => {
                         let restored = match opened(Some(&file), &component.sink) {
                             Ok(store) => {
                                 component.store.replace(store);
+                                component.lost = false;
                                 true
                             }
                             Err(again) => {
@@ -1754,6 +1965,7 @@ impl Host {
                                      failed: {again}",
                                     file.display()
                                 ))));
+                                component.lost = true;
                                 false
                             }
                         };
@@ -1765,7 +1977,17 @@ impl Host {
                     }
                 }
             } else {
-                component.store.replace(opened(None, &component.sink)?);
+                let after = last_dead_letter_id(name, component)?;
+                let mut store = opened(None, &component.sink)?;
+                store
+                    .continue_dead_letter_ids(after)
+                    .map_err(|error| HostError::Reset {
+                        component: name.clone(),
+                        error: format!("continuing the dead letter ids after {after}: {error}"),
+                        restored: true,
+                    })?;
+                component.store.replace(store);
+                component.lost = false;
             }
             emptied.push(name.clone());
         }
@@ -1775,6 +1997,13 @@ impl Host {
     /// What admission bound for each component.
     pub fn placements(&self) -> &Placements {
         &self.placements
+    }
+
+    /// The components whose SQLite store held rows and recorded no specification when the host
+    /// opened it, as a store an earlier release wrote: each now records this specification,
+    /// recorded without a check (`story:spec-change-over-stored-rows`, D2).
+    pub fn unrecorded(&self) -> &[String] {
+        &self.unrecorded
     }
 
     /// The counters of `component`, laid out by its catalogue; `None` when no such component
@@ -1794,9 +2023,10 @@ impl Host {
     /// ([`Store::counts`]). Only where that count failed are they counted again when read.
     ///
     /// They see only the writes this host lands: a store has one writer, as a state directory has
-    /// one Spindle process. A second writer on the same store, another host on the same SQLite
-    /// files or on a shared supplied store, moves its rows without moving these, until the store is
-    /// next opened.
+    /// one Spindle process and PostgreSQL tables the one `run` that holds their lease
+    /// (`story:several-writers-one-postgres`). A second writer on the same store, another host on
+    /// the same SQLite files or on a shared supplied store, moves its rows without moving these,
+    /// until the store is next opened.
     ///
     /// # Errors
     /// [`HostError::Store`] when the rows had to be counted and a store could not be read, as a
@@ -2432,20 +2662,55 @@ impl Host {
                 let escalation = route.escalate(&self.ir, refusal, input)?;
                 Some((route, refusal.map(str::to_owned), escalation))
             });
+            // The last attempt of a bound command that did not take effect and that its binding
+            // did not escalate: kept as a dead letter (story:dead-letters-kept-and-replayed).
+            let lettered = |outcome: Option<&str>, error: String| {
+                let binding = match &cause {
+                    Cause::Tick { binding } | Cause::Delivered { binding } => binding,
+                    Cause::Submitted => return None,
+                };
+                escalation.is_none().then(|| DeadLetter {
+                    binding: binding.clone(),
+                    event: matches!(cause, Cause::Delivered { .. })
+                        .then(|| bound_event(&self.ir, binding))
+                        .flatten(),
+                    command: command.to_owned(),
+                    input: input.clone(),
+                    outcome: outcome.map(str::to_owned),
+                    error,
+                    attempts,
+                })
+            };
             match result {
                 Ok(Executed {
                     outcome,
                     error: Some(error),
                     ..
-                }) => report.refused.push(RefusedCommand {
-                    component: component.to_owned(),
-                    command: command.to_owned(),
-                    cause,
-                    caused_by,
-                    outcome,
-                    error,
-                    attempts,
-                }),
+                }) => {
+                    let letter = lettered(Some(&outcome), error.name.clone());
+                    let (dead_letter, not_kept) = self.keep(component, letter);
+                    report.refused.push(RefusedCommand {
+                        component: component.to_owned(),
+                        command: command.to_owned(),
+                        cause,
+                        caused_by,
+                        outcome,
+                        error,
+                        attempts,
+                        dead_letter,
+                        not_kept,
+                    });
+                    if let Some(refused) = report
+                        .refused
+                        .last()
+                        .filter(|refused| refused.not_kept.is_some())
+                    {
+                        if self.unkept.len() >= ESCALATIONS_KEPT {
+                            self.unkept.remove(0);
+                        }
+                        self.unkept.push(refused.clone());
+                    }
+                }
                 Ok(executed) => report.ran.push(Ran {
                     component: component.to_owned(),
                     command: command.to_owned(),
@@ -2453,15 +2718,21 @@ impl Host {
                     executed,
                     attempts,
                 }),
-                Err(error) => report.failed.push(Failed {
-                    component: component.to_owned(),
-                    command: command.to_owned(),
-                    cause,
-                    caused_by,
-                    error: error.to_string(),
-                    kind: Some(error.kind()),
-                    attempts,
-                }),
+                Err(error) => {
+                    let letter = lettered(None, error.kind().to_owned());
+                    let (dead_letter, not_kept) = self.keep(component, letter);
+                    report.failed.push(Failed {
+                        component: component.to_owned(),
+                        command: command.to_owned(),
+                        cause,
+                        caused_by,
+                        error: error.to_string(),
+                        kind: Some(error.kind()),
+                        attempts,
+                        dead_letter,
+                        not_kept,
+                    });
+                }
             }
             if let Some((route, outcome, escalation)) = escalation {
                 let (event, escalation) = match escalation {
@@ -2494,6 +2765,26 @@ impl Host {
             }
             self.unmet(component, command, report);
             return Ok(());
+        }
+    }
+
+    /// Keeps `letter`, where the command is one, in the store of `component`
+    /// ([`Store::keep_dead_letter`]): its id, or why the store did not keep it, for the command's
+    /// report ([`Failed::dead_letter`], [`Failed::not_kept`]). Neither for no letter.
+    fn keep(
+        &mut self,
+        component: &str,
+        letter: Option<DeadLetter>,
+    ) -> (Option<u64>, Option<String>) {
+        let Some(letter) = letter else {
+            return (None, None);
+        };
+        let Some(held) = self.components.get_mut(component) else {
+            return (None, Some(format!("no component {component} keeps it")));
+        };
+        match held.store.keep_dead_letter(&letter) {
+            Ok(id) => (Some(id), None),
+            Err(error) => (None, Some(error.to_string())),
         }
     }
 
@@ -2548,6 +2839,8 @@ impl Host {
                 error: unmet.error.to_string(),
                 kind: None,
                 attempts: 0,
+                dead_letter: None,
+                not_kept: None,
             }));
     }
 
@@ -2715,6 +3008,116 @@ fn opened(file: Option<&Path>, sink: &Sink) -> Result<Box<dyn Store>, HostError>
     })
 }
 
+/// The SQLite stores of a host's components that keep their state in a file, each opened and its
+/// rows checked against the specification the host serves before any records it
+/// (`story:spec-change-over-stored-rows`): a misfit in one leaves every record as it was.
+#[derive(Default)]
+struct Files {
+    /// Each checked store, by component, recorded.
+    #[cfg(feature = "sqlite")]
+    checked: BTreeMap<String, spindle_kernel::SqliteStore>,
+    /// The components whose store held rows and recorded no specification ([`Host::unrecorded`]).
+    unrecorded: Vec<String>,
+}
+
+impl Files {
+    /// The store of each component of `placements` whose state is bound to `sqlite`, in its file
+    /// under `state`, checked against the entities of `ir` the component owns
+    /// ([`spindle_kernel::LogStore::check`]); once every one fits, each whose record differs
+    /// records the specification ([`spindle_kernel::LogStore::record`]).
+    ///
+    /// # Errors
+    /// [`HostError::Misfit`] for the first store holding a row the specification cannot read,
+    /// nothing recorded; [`HostError::Store`] where a store cannot be opened, read or written.
+    fn checked(ir: &EssIr, state: &Path, placements: &Placements) -> Result<Self, HostError> {
+        #[cfg_attr(not(feature = "sqlite"), allow(unused_mut))]
+        let mut files = Self::default();
+        #[cfg(feature = "sqlite")]
+        {
+            let mut fitting = Vec::new();
+            for (name, bindings) in placements.iter() {
+                let bound = |capability: &str| {
+                    bindings
+                        .iter()
+                        .find(|binding| binding.capability.as_str() == capability)
+                        .map(|binding| binding.implementation.as_str())
+                };
+                if bound(Capability::STORE_DURABLE).or_else(|| bound("store.ephemeral"))
+                    != Some("sqlite")
+                {
+                    continue;
+                }
+                let mut store =
+                    spindle_kernel::SqliteStore::open(&state.join(format!("{name}.sqlite")))?;
+                let shapes = spindle_kernel::Shapes::owned(ir, name);
+                match store.check(&shapes)? {
+                    spindle_kernel::Fit::Same => {}
+                    spindle_kernel::Fit::Fits { unrecorded } => {
+                        if unrecorded {
+                            files.unrecorded.push(name.clone());
+                        }
+                        fitting.push((name.clone(), shapes));
+                    }
+                    spindle_kernel::Fit::Misfits(misfits) => {
+                        return Err(HostError::Misfit {
+                            component: name.clone(),
+                            misfits,
+                        });
+                    }
+                }
+                files.checked.insert(name.clone(), store);
+            }
+            for (name, shapes) in fitting {
+                if let Some(store) = files.checked.get_mut(&name) {
+                    store.record(&shapes)?;
+                }
+            }
+        }
+        #[cfg(not(feature = "sqlite"))]
+        let _ = (ir, state, placements);
+        Ok(files)
+    }
+
+    /// The checked store of the component `name`, counted into `sink`; one opened at `file`
+    /// where none was checked.
+    fn take(&mut self, name: &str, file: &Path, sink: &Sink) -> Result<Box<dyn Store>, HostError> {
+        #[cfg(feature = "sqlite")]
+        if let Some(store) = self.checked.remove(name) {
+            return Ok(Box::new(CountingStore::new(store, sink.clone())));
+        }
+        let _ = name;
+        opened(Some(file), sink)
+    }
+}
+
+/// The empty SQLite store a reset opens at `file` for the component `name`, counted into `sink`,
+/// recording the specification of `ir` ([`spindle_kernel::LogStore::fit`]).
+fn recorded_empty(
+    file: &Path,
+    ir: &EssIr,
+    name: &str,
+    sink: &Sink,
+) -> Result<Box<dyn Store>, HostError> {
+    #[cfg(feature = "sqlite")]
+    {
+        let mut store = spindle_kernel::SqliteStore::open(file)?;
+        if let spindle_kernel::Fit::Misfits(misfits) =
+            store.fit(&spindle_kernel::Shapes::owned(ir, name))?
+        {
+            return Err(HostError::Misfit {
+                component: name.to_owned(),
+                misfits,
+            });
+        }
+        Ok(Box::new(CountingStore::new(store, sink.clone())))
+    }
+    #[cfg(not(feature = "sqlite"))]
+    {
+        let _ = (ir, name);
+        opened(Some(file), sink)
+    }
+}
+
 /// The store of a component whose store is closed: every read and write fails, naming why, so
 /// the component never answers from a store its binding does not name.
 struct Lost(String);
@@ -2735,6 +3138,49 @@ impl Store for Lost {
     fn scan(&mut self, _: &str) -> Result<spindle_kernel::Scan, StoreError> {
         Err(StoreError::Backend(self.0.clone()))
     }
+
+    fn keep_dead_letter(&mut self, _: &DeadLetter) -> Result<u64, StoreError> {
+        Err(StoreError::Backend(self.0.clone()))
+    }
+
+    fn dead_letters(&mut self) -> Result<Vec<(u64, DeadLetter)>, StoreError> {
+        Err(StoreError::Backend(self.0.clone()))
+    }
+
+    fn take_dead_letter(&mut self, _: u64) -> Result<Option<DeadLetter>, StoreError> {
+        Err(StoreError::Backend(self.0.clone()))
+    }
+
+    fn last_dead_letter_id(&mut self) -> Result<u64, StoreError> {
+        Err(StoreError::Backend(self.0.clone()))
+    }
+
+    fn continue_dead_letter_ids(&mut self, _: u64) -> Result<(), StoreError> {
+        Err(StoreError::Backend(self.0.clone()))
+    }
+}
+
+/// The last id `store`, the store of `component` a reset replaces, answered for a dead letter
+/// ([`Store::last_dead_letter_id`]), which the empty store replacing it continues after: a
+/// replay naming a dead letter the reset forgot then finds none. A store that cannot answer it
+/// is kept as it is, and the reset fails naming why: as it was before the reset, or, for a store
+/// an earlier reset lost, still lost.
+fn last_dead_letter_id(name: &str, component: &mut Component) -> Result<u64, HostError> {
+    component
+        .store
+        .last_dead_letter_id()
+        .map_err(|error| HostError::Reset {
+            component: name.to_owned(),
+            error: if component.lost {
+                format!(
+                    "reading the last dead letter id: {error}; its store was lost in an earlier \
+                     reset and is still lost"
+                )
+            } else {
+                format!("reading the last dead letter id: {error}")
+            },
+            restored: !component.lost,
+        })
 }
 
 /// The SQLite files a store at `file` keeps: the database and its side files.
@@ -2757,10 +3203,18 @@ fn aside(path: &Path) -> PathBuf {
 }
 
 /// An empty SQLite store at `file`, whose store is closed: its files are moved aside, an empty
-/// one is opened, and only then are the moved files removed. On failure every file is where it
-/// was and the error names what failed; a file that could not be moved back is named with where
-/// it is.
-fn emptied_file(file: &Path, sink: &Sink) -> Result<Box<dyn Store>, String> {
+/// one is opened, recording the specification of `ir` for the component `name`, and told to
+/// continue the dead letter ids after `after`, the last id the closed store answered
+/// ([`Store::continue_dead_letter_ids`]), and only then are the moved files removed. On failure
+/// every file is where it was and the error names what failed; a file that could not be moved
+/// back is named with where it is.
+fn emptied_file(
+    file: &Path,
+    ir: &EssIr,
+    name: &str,
+    sink: &Sink,
+    after: u64,
+) -> Result<Box<dyn Store>, String> {
     let mut moved = Vec::new();
     let restore = |moved: &[PathBuf], why: String| {
         let mut why = why;
@@ -2787,23 +3241,39 @@ fn emptied_file(file: &Path, sink: &Sink) -> Result<Box<dyn Store>, String> {
             }
         }
     }
-    match opened(Some(file), sink) {
+    let continued = recorded_empty(file, ir, name, sink)
+        .map_err(|error| format!("opening an empty store at {}: {error}", file.display()))
+        .and_then(|mut store| match store.continue_dead_letter_ids(after) {
+            Ok(()) => Ok(store),
+            Err(error) => Err(format!(
+                "continuing the dead letter ids after {after} in the empty store at {}: {error}",
+                file.display()
+            )),
+        });
+    match continued {
         Ok(store) => {
             for path in &moved {
                 let _ = std::fs::remove_file(aside(path));
             }
             Ok(store)
         }
-        Err(error) => {
+        Err(why) => {
             for path in sqlite_files(file) {
                 let _ = std::fs::remove_file(path);
             }
-            Err(restore(
-                &moved,
-                format!("opening an empty store at {}: {error}", file.display()),
-            ))
+            Err(restore(&moved, why))
         }
     }
+}
+
+/// The qualified event the event binding `binding` is caused by; `None` for a periodic binding
+/// and one `ir` does not declare.
+fn bound_event(ir: &EssIr, binding: &str) -> Option<String> {
+    ir.bindings()
+        .values()
+        .find(|bound| bound.name.as_str() == binding)
+        .and_then(|bound| bound.cause.event())
+        .map(ToString::to_string)
 }
 
 /// Whether any component lists `event` under `publishes:`. An event no component publishes is

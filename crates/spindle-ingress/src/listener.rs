@@ -2,13 +2,15 @@
 //! ([`Listener::bind_reading_on`]), hyper on a thread of its own, and every request for
 //! a route handed to the caller's thread as an [`Exchange`], answered there by the router
 //! ([`crate::route`]); on a listener given the host's [`Reader`], every read answered through it
-//! on a blocking thread of its own instead ([`Listener::bind_reading`]).
+//! on a blocking thread of its own instead ([`Listener::bind_reading`]); over TLS, with or without
+//! a client certificate required, where it is given a TLS configuration
+//! ([`Listener::bind_reading_on_tls`]).
 
 use std::convert::Infallible;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, OnceLock, mpsc};
 use std::time::{Duration, Instant, SystemTime};
 
 use ess_http::Operation;
@@ -31,7 +33,7 @@ use crate::console::{Console, Worlds};
 use crate::health::{LIVENESS, Probed, SeedState};
 use crate::observe::{Answered, By, Note, Reserved, Target};
 use crate::router::{Asked, BODY_LIMIT, Pending, Response as Reply};
-use crate::surface::{Caller, Route, Surface};
+use crate::surface::{Caller, Route, Surface, Unverified};
 
 /// How long a connection may take to send a request's head; a slower one is closed.
 pub const HEADER_READ: Duration = Duration::from_secs(10);
@@ -117,6 +119,29 @@ impl Exchange {
         self.serve_loading(host, Some(worlds))
     }
 
+    /// [`Exchange::serve_with`], its answer replaced, once the request was served, by the one
+    /// `instead` gives where it gives one: a run whose store refused a write because another
+    /// process took the store's lease answers `503`, not the store's refusal
+    /// (`story:several-writers-one-postgres`). `instead` is told whether the answer served is a
+    /// failure that committed nothing (a status of `500` or above with `committed: false`), as a
+    /// write whose database session was ended.
+    pub fn serve_with_unless(
+        self,
+        host: &mut Host,
+        worlds: Worlds<'_>,
+        instead: impl FnOnce(bool) -> Option<Answer>,
+    ) -> Vec<Failed> {
+        let (reply, failed, answered) = self.pending.serve(host, Some(worlds));
+        let uncommitted = reply.status >= 500
+            && serde_json::from_str::<Value>(&reply.body)
+                .ok()
+                .and_then(|body| body.get("committed").and_then(Value::as_bool))
+                == Some(false);
+        let reply = instead(uncommitted).map_or(reply, Into::into);
+        let _ = self.reply.send((reply, answered));
+        failed
+    }
+
     fn serve_loading(self, host: &mut Host, worlds: Option<Worlds<'_>>) -> Vec<Failed> {
         let (reply, failed, answered) = self.pending.serve(host, worlds);
         let _ = self.reply.send((reply, answered));
@@ -129,10 +154,13 @@ struct Served {
     exchanges: mpsc::Sender<Exchange>,
     guard: Option<Guard>,
     /// The host's reader, where the listener answers reads beside the host's thread
-    /// ([`Listener::bind_reading`]).
-    reader: Option<Reader>,
+    /// ([`Listener::bind_reading`]); set once a listener standing by leads ([`Listener::lead`]).
+    reader: Arc<OnceLock<Reader>>,
     /// What the health routes read beside the caller's thread.
     health: Arc<Health>,
+    /// The TLS each connection is served over, where the listener serves TLS
+    /// ([`Listener::bind_reading_on_tls`]).
+    tls: Option<tokio_rustls::TlsAcceptor>,
 }
 
 /// What `GET /__spindle/live` and `GET /__spindle/ready` read beside the caller's thread
@@ -152,6 +180,9 @@ struct Health {
     bound: AtomicU64,
     /// Set once the run stops taking work ([`Listener::stopping`]).
     stopping: Arc<AtomicBool>,
+    /// Set while the run stands by for another process's lease, until it leads
+    /// ([`Listener::bind_standing_by_on`], [`Listener::lead`]).
+    standby: AtomicBool,
 }
 
 impl Health {
@@ -162,7 +193,12 @@ impl Health {
             holding: AtomicBool::new(false),
             bound: AtomicU64::new(millis(LIVENESS)),
             stopping: Arc::new(AtomicBool::new(false)),
+            standby: AtomicBool::new(false),
         }
+    }
+
+    fn standby(&self) -> bool {
+        self.standby.load(Ordering::SeqCst)
     }
 
     /// The caller asks for a request now.
@@ -181,6 +217,7 @@ impl Health {
         Probed {
             seed,
             stopping: self.stopping(),
+            standby: self.standby(),
             holding: self.holding.load(Ordering::SeqCst),
             idle: self.since.elapsed().saturating_sub(asked),
             bound: Duration::from_millis(self.bound.load(Ordering::SeqCst)),
@@ -290,6 +327,8 @@ pub struct Listener {
     shutdown: Option<oneshot::Sender<Stop>>,
     server: Option<std::thread::JoinHandle<io::Result<()>>>,
     health: Arc<Health>,
+    /// The host's reader the server answers reads through, once it has one ([`Listener::lead`]).
+    reader: Arc<OnceLock<Reader>>,
 }
 
 /// How the server thread stops.
@@ -358,17 +397,28 @@ impl Listener {
     /// As [`Listener::bind_reading`], bound to `ip`, IPv4 or IPv6, instead of 127.0.0.1. Off
     /// loopback ([`exposed`]) the surface must be made [`Surface::proving_callers`], and is served
     /// [`Surface::requiring_secret`]: every request without the proxy's secret is refused `403`
-    /// before anything else of it is read. On loopback each request is checked as on 127.0.0.1.
+    /// before anything else of it is read. A surface made [`Surface::verifying_tokens`] is served
+    /// off loopback only over TLS ([`Listener::bind_reading_on_tls`]). On loopback each request is
+    /// checked as on 127.0.0.1.
     ///
     /// # Errors
     /// [`io::ErrorKind::InvalidInput`], before anything is bound, for a surface without the
-    /// proxy's secret off loopback; otherwise as [`Listener::bind`].
+    /// proxy's secret off loopback, or one verifying tokens; otherwise as [`Listener::bind`].
     pub fn bind_reading_on(
         ip: IpAddr,
         port: u16,
         surface: Surface,
         reader: Reader,
     ) -> io::Result<Self> {
+        if exposed(ip) && surface.verifies_tokens() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "{ip} is not loopback, and a surface verifying bearer tokens is served there \
+                     only over TLS, so no token crosses the network in the clear"
+                ),
+            ));
+        }
         let surface = if exposed(ip) {
             surface.requiring_secret()
         } else {
@@ -377,11 +427,94 @@ impl Listener {
         Self::serve(SocketAddr::new(ip, port), surface, None, Some(reader))
     }
 
+    /// As [`Listener::bind_reading_on`], every connection served over TLS as `tls` says
+    /// (`story:listener-tls`): its certificate and key, and, where it verifies clients, the
+    /// client certificate it requires. Each connection's handshake runs on that connection's own
+    /// task, bounded by [`HEADER_READ`] and given up once the listener closes, so a client that
+    /// stalls it holds neither the accept loop nor the drain; one that fails it, a plain HTTP
+    /// request included, is closed with no HTTP read or written. Every route is behind it, the
+    /// run's own under `/__spindle/` included. Off loopback a surface made
+    /// [`Surface::verifying_tokens`] is served as it is: its token takes the place of the proxy's
+    /// secret, every request without a valid one refused `401` before anything else is read.
+    ///
+    /// # Errors
+    /// As [`Listener::bind_reading_on`], but for a surface verifying tokens off loopback.
+    pub fn bind_reading_on_tls(
+        ip: IpAddr,
+        port: u16,
+        surface: Surface,
+        reader: Reader,
+        tls: Arc<rustls::ServerConfig>,
+    ) -> io::Result<Self> {
+        let surface = if exposed(ip) && !surface.verifies_tokens() {
+            surface.requiring_secret()
+        } else {
+            surface
+        };
+        Self::serve_over(
+            SocketAddr::new(ip, port),
+            surface,
+            None,
+            Some(reader),
+            Some(tokio_rustls::TlsAcceptor::from(tls)),
+        )
+    }
+
+    /// As [`Listener::bind_reading_on`], over TLS where `tls` is given
+    /// ([`Listener::bind_reading_on_tls`]), bound before the host exists, for a run standing by
+    /// for another process's lease (`story:several-writers-one-postgres`): `GET /__spindle/live`
+    /// answers as on any listener, `GET /__spindle/ready` `503` with `standby: true`, and every
+    /// other request `503` at once, none handed to [`Listener::next`], until the run leads
+    /// ([`Listener::lead`]).
+    ///
+    /// # Errors
+    /// As [`Listener::bind_reading_on`].
+    pub fn bind_standing_by_on(
+        ip: IpAddr,
+        port: u16,
+        surface: Surface,
+        tls: Option<Arc<rustls::ServerConfig>>,
+    ) -> io::Result<Self> {
+        let surface = if exposed(ip) {
+            surface.requiring_secret()
+        } else {
+            surface
+        };
+        let listener = Self::serve_over(
+            SocketAddr::new(ip, port),
+            surface,
+            None,
+            None,
+            tls.map(tokio_rustls::TlsAcceptor::from),
+        )?;
+        listener.health.standby.store(true, Ordering::SeqCst);
+        Ok(listener)
+    }
+
+    /// A listener standing by ([`Listener::bind_standing_by_on`]) leads: from now on it answers
+    /// every read through the host's `reader`, hands every other request to [`Listener::next`],
+    /// and reads ready as any listener does. A listener that has its reader keeps it.
+    pub fn lead(&self, reader: Reader) {
+        let _ = self.reader.set(reader);
+        self.health.standby.store(false, Ordering::SeqCst);
+    }
+
     fn serve(
         address: SocketAddr,
         surface: Surface,
         token: Option<String>,
         reader: Option<Reader>,
+    ) -> io::Result<Self> {
+        Self::serve_over(address, surface, token, reader, None)
+    }
+
+    /// [`Listener::serve`], each connection over TLS where `tls` is given.
+    fn serve_over(
+        address: SocketAddr,
+        surface: Surface,
+        token: Option<String>,
+        reader: Option<Reader>,
+        tls: Option<tokio_rustls::TlsAcceptor>,
     ) -> io::Result<Self> {
         if surface.secret_required() && surface.caller_secret().is_none() {
             return Err(io::Error::new(
@@ -406,12 +539,14 @@ impl Listener {
         let (sender, exchanges) = mpsc::channel();
         let (shutdown, mut stopped) = oneshot::channel::<Stop>();
         let health = Arc::new(Health::new());
+        let reader = Arc::new(reader.map(OnceLock::from).unwrap_or_default());
         let served = Arc::new(Served {
             surface,
             exchanges: sender,
             guard,
-            reader,
+            reader: Arc::clone(&reader),
             health: Arc::clone(&health),
+            tls,
         });
         let server = std::thread::Builder::new()
             .name("spindle-ingress".to_owned())
@@ -456,6 +591,7 @@ impl Listener {
             shutdown: Some(shutdown),
             server: Some(server),
             health,
+            reader,
         })
     }
 
@@ -525,13 +661,35 @@ impl Drop for Listener {
     }
 }
 
-/// Serves one connection, HTTP/1.1, its heads bounded by [`HEADER_READ`]. Once `closing` reads
-/// `true`, the connection writes the answer it holds, if any, and closes.
+/// Serves one connection, HTTP/1.1, its heads bounded by [`HEADER_READ`]; over TLS where the
+/// listener serves it, once the handshake has completed within [`HEADER_READ`]. A handshake that
+/// fails or does not complete in time, or is under way once `closing` reads `true`, closes the
+/// connection with no HTTP read or written. Once `closing` reads `true`, the connection writes the
+/// answer it holds, if any, and closes.
 async fn connection(
     served: Arc<Served>,
     stream: tokio::net::TcpStream,
     mut closing: watch::Receiver<bool>,
 ) {
+    let Some(tls) = served.tls.clone() else {
+        return answering(served, stream, closing).await;
+    };
+    let handshake = tokio::time::timeout(HEADER_READ, tls.accept(stream));
+    let stream = tokio::select! {
+        shaken = handshake => match shaken {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(_)) | Err(_) => return,
+        },
+        _ = closing.wait_for(|closing| *closing) => return,
+    };
+    answering(served, stream, closing).await;
+}
+
+/// Serves HTTP/1.1 on `stream`, as [`connection`] says.
+async fn answering<S>(served: Arc<Served>, stream: S, mut closing: watch::Receiver<bool>)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     let service = hyper::service::service_fn(move |request| handle(Arc::clone(&served), request));
     let serving = hyper::server::conn::http1::Builder::new()
         .timer(TokioTimer::new())
@@ -589,6 +747,26 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
     {
         return (refusal.into(), unrouted(By::Ingress));
     }
+    // On a surface verifying bearer tokens, nothing of a request is read until its token
+    // verifies, but at the probes: not its route, its method, its body or its claims. A refusal
+    // is neither recorded nor counted, as the proxy's secret refusal is not
+    // (`story:verified-caller-token`, D7).
+    let verified = match served.surface.caller_token() {
+        Some(tokens) if !crate::surface::probe(reserved) => {
+            match bearer(request.headers()).map(|token| tokens.verifier().caller(token)) {
+                Some(Ok(caller)) => Some(caller),
+                Some(Err(Unverified)) | None => return (Answer::unauthenticated().into(), None),
+            }
+        }
+        _ => None,
+    };
+    // The run's own routes but the probes are operator tooling: a token that verifies and maps to
+    // no caller reads none of them, refused as a request authenticated as no caller and, as every
+    // answer under the prefix, neither recorded nor counted (`story:verified-caller-token`, F2).
+    let unmapped = verified.as_ref().is_some_and(Option::is_none);
+    if unmapped && reserved.is_some() {
+        return (Answer::not_proven().into(), None);
+    }
     // On a surface whose requests prove their caller, the run's own routes are operator tooling
     // behind the proxy: they answer the proxy's secret alone.
     let unproxied = served
@@ -608,6 +786,11 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
     // (`story:health-and-graceful-drain`); the run's own routes still answer, readiness `503`.
     if reserved.is_none() && served.health.stopping() {
         return (stopping().into(), None);
+    }
+    // A run standing by for another process's lease answers every request but its own routes
+    // `503` at once (`story:several-writers-one-postgres`).
+    if reserved.is_none() && served.health.standby() {
+        return (standing_by().into(), None);
     }
     if let Some(reserved) = reserved {
         let query = request.uri().query().unwrap_or_default();
@@ -696,6 +879,7 @@ async fn answer(served: &Served, request: Request<Incoming>) -> (Reply, Option<N
         served.surface.caller_header(),
         served.surface.caller_secret(),
     ) {
+        (Asked::Route(_), _, _) if verified.is_some() => verified.flatten(),
         (Asked::Route(_), Some(header), Some(secret)) => {
             proven(request.headers(), header, secret.expose())
         }
@@ -765,6 +949,15 @@ fn presents(headers: &HeaderMap, secret: &str) -> bool {
         .is_some_and(|presented| same(presented, secret))
 }
 
+/// The bearer token `headers` carry once in `Authorization` (`Bearer <token>`, the scheme in any
+/// case); `None` where the header is absent, given more than once, of another scheme, or empty.
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    let value = once(headers, AUTHORIZATION.as_str())?.to_str().ok()?;
+    let (scheme, token) = value.split_once(' ')?;
+    let token = token.trim_start_matches(' ');
+    (scheme.eq_ignore_ascii_case("bearer") && !token.is_empty()).then_some(token)
+}
+
 /// The one value of the header `name` in `headers`; `None` where it is absent or given more than
 /// once.
 fn once<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a HeaderValue> {
@@ -778,7 +971,7 @@ fn once<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a HeaderValue> {
 /// handed to the host's thread as an [`Exchange`]. The `503` refusal where the listener is
 /// stopping or stopped before answering, and `500` where a read stopped without an answer.
 async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), Answer> {
-    let pending = match &served.reader {
+    let pending = match served.reader.get() {
         Some(reader) if pending.reads(reader) => {
             let reader = reader.clone();
             match tokio::task::spawn_blocking(move || pending.read(&reader)).await {
@@ -793,6 +986,10 @@ async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), 
     if served.health.stopping() && !matches!(pending.asked, Asked::Hosted(_)) {
         return Err(stopping());
     }
+    // A standby has no host to answer the metrics or the topology.
+    if served.health.standby() {
+        return Err(standing_by());
+    }
     let (reply, replying) = oneshot::channel();
     if served.exchanges.send(Exchange { pending, reply }).is_err() {
         return Err(Answer::refusal(503, "the listener is stopping"));
@@ -805,6 +1002,14 @@ async fn handed(served: &Served, pending: Pending) -> Result<(Reply, Answered), 
 /// The refusal of a request that arrives once the run stops taking work.
 fn stopping() -> Answer {
     Answer::refusal(503, "the run is stopping")
+}
+
+/// The refusal of a request to a run standing by for another process's lease.
+fn standing_by() -> Answer {
+    Answer::refusal(
+        503,
+        "the run is on standby: another process holds the lease of its store",
+    )
 }
 
 /// What a record notes of a request for `asked`, answered as `answered` says: the route

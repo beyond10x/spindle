@@ -167,6 +167,21 @@ jobs:
           tar -xzf "$RUNNER_TEMP/task.tar.gz" -C "$RUNNER_TEMP/bin" task
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
+      - name: Install cargo-nextest
+        if: steps.paths.outputs.class == 'code'
+        env:
+          NEXTEST_VERSION: '0.9.143'
+          NEXTEST_SHA256: 66786b9abe23920d022a182d1416b1bbc8130dd4872a9553d76985a1708dcd1e
+        run: |
+          set -o pipefail
+          archive="cargo-nextest-$NEXTEST_VERSION-x86_64-unknown-linux-gnu.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 --output "$RUNNER_TEMP/$archive" \
+            "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-$NEXTEST_VERSION/$archive"
+          echo "$NEXTEST_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/bin" cargo-nextest
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         if: steps.paths.outputs.class == 'code'
 
@@ -187,7 +202,7 @@ jobs:
           docker run -d --name postgres -p 127.0.0.1:5432:5432 \
             -e POSTGRES_USER=owner -e POSTGRES_PASSWORD=owner -e POSTGRES_DB=spindle \
             -v "$dir:/certs:ro" --entrypoint sh postgres:17 -c \
-            'install -o postgres -g postgres -m 600 /certs/server.key /tmp/server.key && install -o postgres -g postgres -m 644 /certs/server.pem /tmp/server.pem && exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/tmp/server.pem -c ssl_key_file=/tmp/server.key -c max_locks_per_transaction=256'
+            'install -o postgres -g postgres -m 600 /certs/server.key /tmp/server.key && install -o postgres -g postgres -m 644 /certs/server.pem /tmp/server.pem && exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/tmp/server.pem -c ssl_key_file=/tmp/server.key -c max_locks_per_transaction=256 -c max_connections=300'
           for attempt in $(seq 1 60); do
             if docker exec postgres pg_isready -h 127.0.0.1 -U owner -d spindle >/dev/null 2>&1; then
               break

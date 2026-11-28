@@ -70,13 +70,20 @@ and a command's input may name what an earlier line answered, such as the identi
 with `{"$line": 1, "pointer": "/events/0/payload/<field>"}`.
 
 Where `run` serves HTTP, it also serves the console routes `POST /api/reset`, `GET /api/events`,
-`GET /api/model`, `GET /api/served`, `GET /api/history` and `GET` and `POST /api/clock`. With
-`--clock`, `POST /api/clock` `{"at": "<RFC 3339>"}` moves the run's clock forward between
-commands, and every record of `GET /api/events` carries its command's `at`. `--console off` (or
-`SPINDLE_SETTING_CONSOLE=off`) turns them off: each answers `404` as an unrouted path does,
-whatever secret the request carries. A run whose `--address` is off loopback serves them only
-with `--console on`. A route the specification publishes at a console path exits 1 before
-listening, the console on or off.
+`GET /api/model`, `GET /api/served`, `GET /api/history`, `GET` and `POST /api/clock`,
+`GET /api/dead-letters` and `POST /api/dead-letters/replay`. With `--clock`, `POST /api/clock`
+`{"at": "<RFC 3339>"}` moves the run's clock forward between commands, and every record of
+`GET /api/events` carries its command's `at`.
+A command a binding or a tick invoked whose last attempt was refused or did not run, and that its
+binding did not escalate, is kept as a dead letter in the store of the component that accepts it:
+`GET /api/dead-letters` lists each with its id, component, binding, event, command, outcome, error
+and attempts, never a value of its input; it survives a restart on the same `--state`, is no event
+of `GET /api/events`, and a reset forgets it. `POST /api/dead-letters/replay` with
+`{"component", "id"}` runs it once more, without the binding's retries, and a refused or failed
+replay is kept as a new dead letter; a letter is replayed at most once. `--console off` (or `SPINDLE_SETTING_CONSOLE=off`)
+turns them off: each answers `404` as an unrouted path does, whatever secret the request carries.
+A run whose `--address` is off loopback serves them only with `--console on`. A route the
+specification publishes at a console path exits 1 before listening, the console on or off.
 
 Where `run` serves HTTP, `--seed <file>` (or `[seed] file` in the environment document) submits a
 JSON array of commands, each with its input, actor, caller and request id, on every start: checked
@@ -203,6 +210,13 @@ against the platform's trust roots or the PEM file `ca_file` names. A plain `htt
 accepted only on loopback (`localhost`, `127.0.0.0/8`, `[::1]`). Any other URL is refused when
 the document is read.
 
+An `[egress]` table binds a published event to such a call (`"<qualified event>" = "<name>"`,
+method `POST`): a served `run` posts each such event there as one `spindle-egress/1` JSON body
+(`format`, `event`, `component`, `log`, `position`, `fields`), at least once, in commit order
+per component, and goes on after a restart from the position it keeps in the component's store;
+a component kept in `memory` is refused
+([published events posted to a webhook](https://beyond10x.github.io/spindle/docs/concepts/environment-and-admission#published-events-posted-to-a-webhook)).
+
 ## Node export
 
 `spindle-node` serves a specification inside a Node program, as an in-process fake backend:
@@ -262,7 +276,13 @@ Agents start at [`AGENTS.md`](AGENTS.md).
 Binaries for Linux and macOS (x86_64 and aarch64 each) are attached to each
 [GitHub release](https://github.com/beyond10x/spindle/releases) with a `SHA256SUMS` file. The Linux
 binaries need glibc 2.17 or newer; `x86_64-unknown-linux-musl` is a static build for hosts without
-glibc. Changes
+glibc. Each release also publishes the image `ghcr.io/beyond10x/spindle:<version>`, one manifest
+list for `linux/amd64` and `linux/arm64`: the release's gnu binary on `gcr.io/distroless/cc-debian12`
+(no shell), run as UID 65532, with `b10x-spindle` as the entrypoint. The release's `IMAGES` asset,
+listed in `SHA256SUMS`, names that list by digest (`ghcr.io/beyond10x/spindle:<version>@sha256:<digest>`);
+pull it by that line. A container port reaches `run` only on an address off loopback
+(`--address 0.0.0.0`), which needs `--trusted-caller-header` and `--trusted-caller-secret`, or
+`--caller-token` with `--tls-cert` and `--tls-key`. Changes
 are in [`CHANGELOG.md`](CHANGELOG.md), and the release steps in
 [`AGENTS.md`](AGENTS.md#cutting-a-release).
 

@@ -1,0 +1,21 @@
+format: ess/34
+system: archive
+version: v1
+summary: Books shelved and cards filed over the network, the specification a durable store is first written under.
+domains:
+  - archive.shelf
+components:
+  - component: archive
+    summary: Shelves books and files cards for callers outside the process.
+    owns:
+      domains:
+        - archive.shelf
+    accepts:
+      commands:
+        - archive.shelf.ShelveBook
+        - archive.shelf.FileCard
+    publishes:
+      events:
+        - archive.shelf.BookShelved
+        - archive.shelf.CardFiled
+    reached_by: network

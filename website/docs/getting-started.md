@@ -10,7 +10,12 @@ source: the build was run on 2026-11-10 in a checkout of 0.9.0 (main at 244fb60e
 Binaries for Linux and macOS, x86_64 and aarch64 each, are attached to each
 [GitHub release](https://github.com/beyond10x/spindle/releases) with a `SHA256SUMS` file. The Linux
 binaries need glibc 2.17 or newer; `x86_64-unknown-linux-musl` is a static build for hosts without
-glibc. This page builds `b10x-spindle` from source.
+glibc. Each release also publishes the image `ghcr.io/beyond10x/spindle:<version>` for `linux/amd64`
+and `linux/arm64`: the gnu binary on a distroless base with no shell, run as UID 65532, with
+`b10x-spindle` as the entrypoint. The release's `IMAGES` asset, listed in `SHA256SUMS`, names it by
+digest. In a container, `run` listens off loopback with `--address 0.0.0.0`, which needs
+`--trusted-caller-header` and `--trusted-caller-secret`. This page builds `b10x-spindle` from
+source.
 
 Each released binary carries its dependency list: it is built with
 [`cargo auditable`](https://github.com/rust-secure-code/cargo-auditable), which embeds the crates

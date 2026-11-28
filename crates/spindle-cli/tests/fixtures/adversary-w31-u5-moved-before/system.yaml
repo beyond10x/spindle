@@ -1,0 +1,32 @@
+format: ess/34
+system: archive
+version: v1
+summary: Books on one component and coins on another, each in a durable store of its own.
+domains:
+  - archive.shelf
+  - archive.vault
+components:
+  - component: archive
+    summary: Shelves books for callers outside the process.
+    owns:
+      domains:
+        - archive.shelf
+    accepts:
+      commands:
+        - archive.shelf.ShelveBook
+    publishes:
+      events:
+        - archive.shelf.BookShelved
+    reached_by: network
+  - component: vault
+    summary: Keeps coins for callers outside the process.
+    owns:
+      domains:
+        - archive.vault
+    accepts:
+      commands:
+        - archive.vault.KeepCoin
+    publishes:
+      events:
+        - archive.vault.CoinKept
+    reached_by: network

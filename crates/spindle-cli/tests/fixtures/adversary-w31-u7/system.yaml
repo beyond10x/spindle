@@ -1,0 +1,20 @@
+format: ess/34
+system: notes
+version: v1
+summary: Notes opened over the network, each opening publishing two events in one write.
+domains:
+  - notes.pad
+components:
+  - component: pad
+    summary: Opens notes for callers outside the process.
+    owns:
+      domains:
+        - notes.pad
+    accepts:
+      commands:
+        - notes.pad.OpenNote
+    publishes:
+      events:
+        - notes.pad.NoteOpened
+        - notes.pad.NoteCounted
+    reached_by: network

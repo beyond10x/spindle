@@ -68,6 +68,18 @@ impl Answer {
         }
     }
 
+    /// The refusal of a request whose bearer token is missing or does not verify, on a surface
+    /// made [`Surface::verifying_tokens`](crate::Surface::verifying_tokens): `401`
+    /// `{"refused": "unauthenticated"}` with `WWW-Authenticate: Bearer`, before anything else of
+    /// the request is read.
+    pub fn unauthenticated() -> Self {
+        Self {
+            status: 401,
+            body: Some(json!({"refused": "unauthenticated"})),
+            headers: vec![("www-authenticate".to_owned(), "Bearer".to_owned())],
+        }
+    }
+
     /// The `501` the contract declares on every command: the realization is unfinished.
     /// `committed` says whether the command's effect was written before it stopped.
     pub fn unfinished(detail: impl Into<String>, committed: bool) -> Self {
