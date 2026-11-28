@@ -2,7 +2,7 @@
 format: aep.planning-md/3
 id: story:conform-awaits-system-steps
 kind: story
-status: active
+status: implemented
 title: Conformance runs a scenario that awaits a system step
 relations:
 - serves: vision:spindle
@@ -23,10 +23,11 @@ scope:
   path: crates/spindle-conformance/tests/spindle-conformance/main.rs
 - confidence: inferred
   path: docs/design/spindle.md
-revision: 6
+revision: 7
 transitions:
 - {from: "draft", to: "proposed", at: "2026-11-28T04:16:53Z", actor: "human:operator", revision: 5, decided_on: {"recorded":{"review_outcome":11}}}
 - {from: "proposed", to: "active", at: "2026-11-28T04:16:53Z", actor: "human:operator", revision: 6, decided_on: {"recorded":{"review_outcome":11}}}
+- {from: "active", to: "implemented", at: "2026-11-28T08:49:47Z", actor: "human:operator", revision: 7, decided_on: {"recorded":{"test_result":2,"review_outcome":13}}}
 ---
 ## Outcome
 

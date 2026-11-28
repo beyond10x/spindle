@@ -6,6 +6,8 @@ are Spindle's releases.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-28
+
 ### Added
 
 - `conform`, `run --scenario` and `spindle_conformance::HostTarget` run a scenario that awaits a
