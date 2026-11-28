@@ -1,0 +1,21 @@
+format: ess/34
+system: archive
+version: v1
+summary: Books shelved with an optional note, lent or kept, the specification a durable store is first written under.
+domains:
+  - archive.shelf
+components:
+  - component: archive
+    summary: Shelves books for callers outside the process.
+    owns:
+      domains:
+        - archive.shelf
+    accepts:
+      commands:
+        - archive.shelf.ShelveBook
+        - archive.shelf.LendBook
+    publishes:
+      events:
+        - archive.shelf.BookShelved
+        - archive.shelf.BookLent
+    reached_by: network
